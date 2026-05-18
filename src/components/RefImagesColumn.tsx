@@ -23,6 +23,23 @@ function isMedia(path: string): boolean {
 export function RefImagesColumn() {
   const { currentModel, refImages, addRefs, removeRef, removeAllRefs, assignRole, reorderRefs } =
     useGenerationStore();
+  const expandedIdx = useGenerationStore((s) => s.expandedIdx);
+  const linksLen = useGenerationStore((s) => s.links.length);
+  const activeLink = useGenerationStore((s) =>
+    s.expandedIdx == null ? null : s.links[s.expandedIdx],
+  );
+  const setLinkConsumesPrev = useGenerationStore((s) => s.setLinkConsumesPrev);
+  const showChainPrev =
+    !!activeLink &&
+    activeLink.consumesPrev &&
+    expandedIdx != null &&
+    expandedIdx > 0 &&
+    linksLen > 1;
+  const prevLinkModel = useGenerationStore((s) =>
+    s.expandedIdx != null && s.expandedIdx > 0
+      ? (s.links[s.expandedIdx - 1]?.model ?? null)
+      : null,
+  );
 
   const [menu, setMenu] = useState<{ anchor: HTMLElement; ref: RefImage } | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -174,7 +191,7 @@ export function RefImagesColumn() {
         }`}
       >
         <div className="flex items-center text-sm font-semibold">
-          <span>REF_IMAGES</span>
+          <span>REF IMAGES</span>
           <span className="flex-1" />
           <span className="text-xs opacity-60 font-mono">{refImages.length}</span>
           <button
@@ -186,6 +203,12 @@ export function RefImagesColumn() {
           >[clear]</button>
         </div>
         <div className="flex flex-wrap gap-prompt-column-gap content-start overflow-y-auto thin-scroll bg-inset p-prompt-panel flex-1 min-h-0">
+          {showChainPrev && activeLink && (
+            <ChainPrevTile
+              modelName={prevLinkModel?.name ?? null}
+              onRemove={() => setLinkConsumesPrev(activeLink.id, false)}
+            />
+          )}
           {refImages.map((r, idx) => (
             <RefThumb
               key={r.path}
@@ -312,6 +335,45 @@ function RefThumb({
   );
 }
 
+function ChainPrevTile({
+  modelName,
+  onRemove,
+}: {
+  modelName: string | null;
+  onRemove: () => void;
+}) {
+  return (
+    <div
+      className="relative bg-bg/40 text-text overflow-hidden w-[109px] h-[109px] flex flex-col items-center justify-center p-[3px] outline-dashed outline-2 outline-accent/60"
+      title={modelName ? `Output of: ${modelName}` : "Output of previous link"}
+    >
+      <IconBtn
+        name="close"
+        size={16}
+        title="Don't consume previous link's output"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="absolute top-0 right-0"
+      />
+      <span
+        aria-hidden
+        className="material-symbols-outlined opacity-80"
+        style={{ fontSize: 32 }}
+      >
+        link
+      </span>
+      <div className="text-[10px] opacity-80 mt-1">prev link</div>
+      {modelName && (
+        <div className="text-[10px] opacity-60 text-center break-words leading-tight px-1">
+          {modelName}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RefAddTile({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="bg-surface w-[109px] h-[109px] flex items-center justify-center">
@@ -329,5 +391,6 @@ function roleLabel(r: RefImage): string {
     case "end": return "end";
     case "element": return `@Element${a.groupName}${a.frontal ? " ★" : ""}`;
     case "image": return `@Image${a.groupName}`;
+    case "chain_prev": return "prev link";
   }
 }

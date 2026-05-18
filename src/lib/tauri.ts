@@ -1,5 +1,6 @@
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import type {
+  ChainPreset,
   Config,
   AppState,
   ModelEntry,
@@ -24,6 +25,11 @@ export const cmd = {
   app_state_load: (): Promise<AppState | null> => rawInvoke("app_state_load"),
   app_state_save: (state: AppState): Promise<void> =>
     rawInvoke("app_state_save", { state }),
+
+  presets_load: (): Promise<{ presets: ChainPreset[] }> =>
+    rawInvoke("presets_load"),
+  presets_save: (data: { presets: ChainPreset[] }): Promise<void> =>
+    rawInvoke("presets_save", { data }),
 
   fal_key_get: (): Promise<string> => rawInvoke("fal_key_get"),
   fal_key_set: (key: string): Promise<void> =>

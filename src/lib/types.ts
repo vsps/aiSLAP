@@ -95,11 +95,48 @@ export type RoleAssignment =
   | { kind: "start" }
   | { kind: "end" }
   | { kind: "element"; groupName: string; frontal: boolean }
-  | { kind: "image"; groupName: string };
+  | { kind: "image"; groupName: string }
+  // Synthetic placeholder for the output of the previous chain link.
+  // Resolved at chain-run time to the upstream link's output path.
+  | { kind: "chain_prev" };
 
 export type RefImage = {
   path: string;
   roleAssignment: RoleAssignment | null;
+};
+
+// ---------- Prompt chains ----------
+
+export type ChainLink = {
+  id: string;
+  active: boolean;
+  model: ModelNode | null;
+  settings: Record<string, unknown>;
+  sequencePrompt: string;
+  shotPrompts: string[];
+  refImages: RefImage[];
+  // When true on a non-head link, a synthetic chain_prev ref is prepended
+  // at chain-run time. Default true for newly added links, false for the
+  // initial head link.
+  consumesPrev: boolean;
+};
+
+// ---------- Chain presets ----------
+
+/** One link's saved configuration — model + prompts only, no refs. */
+export type ChainPresetLink = {
+  modelId: string | null;
+  settings: Record<string, unknown>;
+  sequencePrompt: string;
+  shotPrompts: string[];
+};
+
+/** A named chain configuration the user can restore later. */
+export type ChainPreset = {
+  id: string;
+  name: string;
+  links: ChainPresetLink[];
+  createdAt: string; // ISO timestamp
 };
 
 // ---------- Gallery ----------
@@ -198,6 +235,19 @@ export type Job = {
   startedAt: number;
 };
 
+/** Persisted variant of ChainLink — model is stored by id and resolved
+ *  against the live registry at bootstrap. */
+export type ChainLinkPersisted = {
+  id: string;
+  active: boolean;
+  modelId: string | null;
+  settings: Record<string, unknown>;
+  sequencePrompt: string;
+  shotPrompts: string[];
+  refImages: RefImage[];
+  consumesPrev: boolean;
+};
+
 export type AppState = {
   projectPath: string;
   lastSequence: string;
@@ -213,6 +263,10 @@ export type AppState = {
   galleryHeight: number;
   thumbColWidth: number;
   logHeight: number;
+  /** When present, supersedes the flat sequencePrompt/shotPrompts/settings/refImages
+   *  fields (those are still written for back-compat with old loaders). */
+  chainLinks?: ChainLinkPersisted[];
+  chainExpandedIdx?: number | null;
 };
 
 export type SequenceSidecar = {
@@ -293,6 +347,22 @@ export type RefSnapshot = {
   roleAssignment: RoleAssignment | null;
 };
 
+/** Per-output snapshot of the chain that produced this media. Captured at
+ *  submit time so the full chain can be restored even if intermediate files
+ *  are deleted. */
+export type ChainMetadataBlock = {
+  chainId: string;
+  linkIndex: number;
+  linkCount: number;
+  /** Absolute path of the upstream link's output. Absent on the head. */
+  prevMediaPath?: string;
+  /** Absolute paths of downstream link outputs. Backfilled by the runner
+   *  as each downstream link finishes; may be missing on in-flight chains. */
+  nextMediaPaths?: string[];
+  /** Persisted snapshot of every link (active and inactive) in the chain. */
+  links: ChainLinkPersisted[];
+};
+
 export type ImageMetadata = {
   model: string;
   modelId: string;
@@ -314,6 +384,9 @@ export type ImageMetadata = {
   falResponse?: unknown;
   hueShift?: number;
   sourceImage?: string;
+  /** Chain provenance — present only when this media was produced as part
+   *  of a multi-link chain submission. */
+  chain?: ChainMetadataBlock;
 };
 
 // ---------- Generation events ----------

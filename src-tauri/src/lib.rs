@@ -20,6 +20,8 @@ pub fn run() {
             commands::config::fal_key_set,
             commands::config::provider_key_get,
             commands::config::provider_key_set,
+            commands::config::presets_load,
+            commands::config::presets_save,
             commands::models::models_load,
             commands::session::project_open,
             commands::session::sequence_open,

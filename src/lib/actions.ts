@@ -3,11 +3,12 @@
 import { cmd } from "./tauri";
 import { basename } from "./paths";
 import { confirmAction, showMessage } from "./dialog";
-import { useGenerationStore } from "../stores/generationStore";
+import { makeChainLink, useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import type {
+  ChainLink,
   ImageMetadata,
   RefImage,
   RefSnapshot,
@@ -66,13 +67,52 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
     if (await pathExists(r.path)) valid.push(r);
     else skipped++;
   }
-  useGenerationStore.setState({ refImages: valid });
+  gen.setRefImages(valid);
 
   if (typeof meta.iterationTotal === "number" && meta.iterationTotal > 0) {
     gen.setIterations(meta.iterationTotal);
   }
 
   return { skippedRefs: skipped };
+}
+
+/** Restore a full prompt chain into the work surface from a sidecar's
+ *  chain block. Missing models in the registry are kept as null on the link
+ *  (the preflight will flag them; the user can pick a replacement). */
+export async function restoreChainFromMetadata(
+  meta: ImageMetadata,
+): Promise<{ missingModels: number; skippedRefs: number }> {
+  if (!meta.chain) return { missingModels: 0, skippedRefs: 0 };
+  const models = useModelsStore.getState();
+  let missingModels = 0;
+  let skippedRefs = 0;
+  const restored: ChainLink[] = [];
+  for (const p of meta.chain.links) {
+    const model = p.modelId ? (models.findById(p.modelId) ?? null) : null;
+    if (p.modelId && !model) missingModels++;
+    const refs: RefImage[] = [];
+    for (const r of p.refImages ?? []) {
+      if (await pathExists(r.path)) refs.push(r);
+      else skippedRefs++;
+    }
+    restored.push(
+      makeChainLink({
+        id: p.id,
+        active: !!p.active,
+        model,
+        settings: p.settings ?? {},
+        sequencePrompt: p.sequencePrompt ?? "",
+        shotPrompts:
+          Array.isArray(p.shotPrompts) && p.shotPrompts.length > 0
+            ? p.shotPrompts
+            : [""],
+        refImages: refs,
+        consumesPrev: !!p.consumesPrev,
+      }),
+    );
+  }
+  useGenerationStore.getState().setChain(restored, null);
+  return { missingModels, skippedRefs };
 }
 
 /** Apply only the prompt fields from a sidecar (shot prompt gets the value). */
@@ -146,7 +186,8 @@ export type ImageAction =
   | "rename"
   | "edit"
   | "crop"
-  | "toggle_star";
+  | "toggle_star"
+  | "restore_chain";
 
 const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
 
@@ -277,6 +318,32 @@ export async function performImageAction(
             kind: "info",
           },
         );
+      }
+      return;
+    }
+    case "restore_chain": {
+      const meta = (await cmd
+        .image_metadata_read(path)
+        .catch(() => null)) as ImageMetadata | null;
+      if (!meta?.chain) {
+        await showMessage("No chain metadata for this image", { kind: "warning" });
+        return;
+      }
+      const ok = await confirmAction(
+        `Restore the ${meta.chain.linkCount}-link chain that produced ${basename(path)}? This overwrites the current chain.`,
+        { title: "Restore chain", kind: "warning" },
+      );
+      if (!ok) return;
+      const { missingModels, skippedRefs } =
+        await restoreChainFromMetadata(meta);
+      const parts: string[] = [];
+      if (missingModels)
+        parts.push(`${missingModels} model(s) no longer in registry`);
+      if (skippedRefs) parts.push(`${skippedRefs} ref(s) skipped (missing files)`);
+      if (parts.length > 0) {
+        await showMessage(`Chain restored. ${parts.join(" · ")}.`, {
+          kind: "info",
+        });
       }
       return;
     }

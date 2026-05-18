@@ -24,6 +24,10 @@ pub fn env_path() -> AppResult<PathBuf> {
     Ok(appdata_dir()?.join(".env"))
 }
 
+pub fn presets_path() -> AppResult<PathBuf> {
+    Ok(appdata_dir()?.join("presets.json"))
+}
+
 /// Locate `models/` — either sibling of the installed binary, or repo-root `models/`
 /// while developing. We try a few candidates.
 pub fn models_dir() -> AppResult<PathBuf> {

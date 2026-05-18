@@ -53,7 +53,7 @@ export function LatestImageColumn() {
   return (
     <div className="bg-surface border border-border p-prompt-column text-text flex-1 min-w-0 flex flex-col gap-prompt-column-gap shrink">
       <div className="flex items-center text-sm font-semibold">
-        <span>{timelineActive ? "TIMELINE" : "LATEST"}</span>
+        <span>{timelineActive ? "TIMELINE" : "PREVIEW"}</span>
         {!timelineActive && image && (
           <>
             <span className="flex-1" />

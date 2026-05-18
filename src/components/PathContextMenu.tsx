@@ -16,6 +16,7 @@ type Props = {
 const DEFAULT_ITEMS: MenuItem[] = [
   "add_to_refs",
   "copy_settings",
+  "restore_chain",
   "---",
   "zoom",
   "edit",
@@ -44,6 +45,7 @@ const LABELS: Record<AvailableAction, string> = {
   copy_to_global_src: "Copy to GLOBAL SRC",
   copy_prompt: "Copy prompt",
   copy_settings: "Reuse prompt",
+  restore_chain: "Restore chain",
   rename: "Rename...",
   edit: "Edit (draw)",
   crop: "Crop",
