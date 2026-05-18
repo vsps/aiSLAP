@@ -3,7 +3,7 @@
 A desktop GUI for [fal.ai](https://fal.ai) and now [replicate](https://replicate.com).
 Built around a **project / sequence / shot** file layout — meant for iterating on generative image & video shots as part of a larger production pipeline at speed while saving all media to disk.
 
-It features a built in NLE to quickly assemble rough edits and a prompt stacking mechanism to facilitate simple automation.
+It features a built in NLE to quickly assemble rough edits and a prompt linking mechanism to facilitate simple automation.
 
 This tool was designed as an antidote to overcomplicated node graphs which in many cases end up quite linear regardless. **Complexity is not a flex**.
 
@@ -21,6 +21,7 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 - full metadata sidecar saved with media.
 - **NEW** A simple NLE to edit bash sequences together
 - **NEW** Ability to create prompt chains to automate processes.
+- 
  
 ![aiSLAP](https://github.com/user-attachments/assets/dd66d818-f5a0-4ad3-b5e3-4c6ad7b881c9)
 
