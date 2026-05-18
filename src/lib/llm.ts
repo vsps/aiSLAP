@@ -19,7 +19,7 @@ export const DEFAULT_SYSTEM_PROMPT =
   "while preserving its core intent. Return only the rewritten prompt — " +
   "no preamble, no quotes, no explanation.";
 
-const LS_MODEL_KEY = "falpipe:llm-model";
+const LS_MODEL_KEY = "aislap:llm-model";
 
 export function loadLastLlmModel(): string {
   try {

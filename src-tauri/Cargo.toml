@@ -1,12 +1,12 @@
 [package]
-name = "falpipe"
+name = "aislap"
 version = "0.2.1"
-description = "falPipe— fal.ai desktop pipeline"
+description = "aiSLAP — AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
 
 [lib]
-name = "falpipe_lib"
+name = "aislap_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

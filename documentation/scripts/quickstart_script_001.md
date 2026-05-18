@@ -10,7 +10,7 @@ Companion video for [quickstart.md](../quickstart.md). ~80 words VO. Mix screen-
 
 | # | Time | Duration | Visual | VO |
 |---|------|----------|--------|----|
-| 1 | 0:00 | 3s | Gen-AI hero: falPipe logo glitches onto a moody studio desk. | "falPipe — a desktop GUI for fal dot ai." |
+| 1 | 0:00 | 3s | Gen-AI hero: aiSLAP logo glitches onto a moody studio desk. | "aiSLAP — a desktop GUI for fal dot ai." |
 | 2 | 0:03 | 3s | Screen-rec: terminal types `pnpm tauri dev`, app window opens. | "Install with pnpm, then launch." |
 | 3 | 0:06 | 3s | Screen-rec: gear icon click → Settings dialog → paste FAL_KEY → save. | "Drop your fal API key into Settings." |
 | 4 | 0:09 | 3s | Screen-rec: top bar → pick a project folder. Empty folder highlights. | "Point it at any folder — that's your project." |
@@ -25,11 +25,11 @@ Companion video for [quickstart.md](../quickstart.md). ~80 words VO. Mix screen-
 ## Production notes
 
 - **Screen-rec capture:** 1920×1080, 60fps, hide personal paths. Use a clean demo project named `demo/`.
-- **Gen-AI shots:** Shot 1 only. Generate with the app itself (eat the dogfood) — Nano Banana Pro, prompt: `falPipe logo glitching onto a moody cinematographer's desk, neon rim light, 35mm`.
+- **Gen-AI shots:** Shot 1 only. Generate with the app itself (eat the dogfood) — Nano Banana Pro, prompt: `aiSLAP logo glitching onto a moody cinematographer's desk, neon rim light, 35mm`.
 - **VO:** single take, conversational, ~155 wpm. Leave 0.2s headroom at cuts.
 - **Music:** low-bpm synth bed, duck under VO. Drop out on shot 9 for the reveal.
 - **Captions:** burn-in lowercase, bottom-third, mono font to match the README ascii vibe.
-- **End card:** 1s freeze on final frame + URL `falpipe.ai` / repo link. (Counts toward the 30s budget if added — trim shot 9 to 2s.)
+- **End card:** 1s freeze on final frame + URL `aislap` / repo link. (Counts toward the 30s budget if added — trim shot 9 to 2s.)
 
 ## Asset checklist
 

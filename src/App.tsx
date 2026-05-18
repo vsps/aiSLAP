@@ -35,7 +35,7 @@ export default function App() {
     getVersion()
       .then((v) => {
         setVersion(v);
-        return getCurrentWindow().setTitle(`falPipe ${v}`);
+        return getCurrentWindow().setTitle(`aiSLAP ${v}`);
       })
       .catch(() => {
         /* non-fatal — title/version just won't update */
@@ -104,19 +104,28 @@ export default function App() {
       <LogWindow height={logHeight} />
       <StatusBar ready={ready} bootError={bootError} />
       <ErrorPopup />
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsDialog onClose={() => setSettingsOpen(false)} />
+      )}
       <SplashScreen ready={ready} version={version} />
     </div>
   );
 }
 
-function StatusBar({ ready, bootError }: { ready: boolean; bootError: string | null }) {
+function StatusBar({
+  ready,
+  bootError,
+}: {
+  ready: boolean;
+  bootError: string | null;
+}) {
   const { entries, loaded } = useModelsStore();
   const jobs = useGenerationStore((s) => s.jobs);
   const { traceActive } = useSessionStore();
 
   const active = jobs.filter(
-    (j) => j.status !== "done" && j.status !== "failed" && j.status !== "cancelled",
+    (j) =>
+      j.status !== "done" && j.status !== "failed" && j.status !== "cancelled",
   );
   // Surface the latest active job's progress; with multi-job runs the badge in
   // RunColumn shows the full picture, the status bar just gives the gist.
@@ -130,7 +139,9 @@ function StatusBar({ ready, bootError }: { ready: boolean; bootError: string | n
       {latest && (
         <span className="text-text">
           {latest.progressMessage || "Generating..."}
-          {latest.iterations > 1 ? ` · ${latest.currentIteration}/${latest.iterations}` : ""}
+          {latest.iterations > 1
+            ? ` · ${latest.currentIteration}/${latest.iterations}`
+            : ""}
           {active.length > 1 ? ` · +${active.length - 1} more` : ""}
         </span>
       )}

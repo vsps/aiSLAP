@@ -147,7 +147,7 @@ export function SettingsDialog({ onClose }: Props) {
               </button>
             </div>
             <div className="text-xs text-dim mt-1">
-              Stored in <code>%APPDATA%/falPipe/.env</code>.
+              Stored in <code>%APPDATA%/aiSLAP/.env</code>.
             </div>
           </Field>
 

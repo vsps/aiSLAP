@@ -7,24 +7,24 @@ First generation with **Nano Banana Pro**.
 Prereqs: [Rust](https://rustup.rs/), [pnpm](https://pnpm.io/) 8+, Node 20+. Windows also needs MSVC Build Tools + WebView2.
 
 ```bash
-git clone -b dev https://github.com/vsps/falpipe.ai.git
-cd falpipe.ai
+git clone -b dev https://github.com/vsps/aiSLAP.git
+cd aiSLAP
 pnpm install
 pnpm tauri dev
 ```
 
-Or grab the Windows installer: https://github.com/vsps/falpipe.ai/releases
+Or grab the Windows installer: https://github.com/vsps/aiSLAP/releases
 
 ## 2. Set your API key
 
 - Get a key at https://fal.ai/dashboard/keys
 - Launch the app → gear icon (top-right) → paste key → save.
 
-Stored at `%APPDATA%\falPipe\.env` as `FAL_KEY=...`.
+Stored at `%APPDATA%\aiSLAP\.env` as `FAL_KEY=...`.
 
 ## 3. Pick a project
 
-Top bar → choose a project directory. Any empty or existing folder works — falPipe writes `sequence/shot/...` underneath.
+Top bar → choose a project directory. Any empty or existing folder works — aiSLAP writes `sequence/shot/...` underneath.
 
 ## 4. Sequence → shot
 

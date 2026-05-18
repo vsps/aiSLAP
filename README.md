@@ -1,10 +1,4 @@
-<pre>
-░█▀▀░█▀█░█░░░█▀█░▀█▀░█▀█░█▀▀░░░░█▀█░▀█▀
-░█▀▀░█▀█░█░░░█▀▀░░█░░█▀▀░█▀▀░░░░█▀█░░█░
-░▀░░░▀░▀░▀▀▀░▀░░░▀▀▀░▀░░░▀▀▀░▀░░▀░▀░▀▀▀
-</pre>
-
-# falPipe.ai
+# aiSLAP
 
 A desktop GUI for [fal.ai](https://fal.ai) and now [replicate](https://replicate.com).
 Built around a **project / sequence / shot** file layout — meant for iterating on generative image & video shots as part of a larger production pipeline at speed while saving all media to disk.
@@ -25,7 +19,7 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 - full metadata sidecar saved with media.
 - **NEW** A simple NLE to edit bash sequences together
 
-![falPipe](https://github.com/user-attachments/assets/dd66d818-f5a0-4ad3-b5e3-4c6ad7b881c9)
+![aiSLAP](https://github.com/user-attachments/assets/dd66d818-f5a0-4ad3-b5e3-4c6ad7b881c9)
 
 ## CURRENTLY AVAILABLE MODELS
 
@@ -65,8 +59,8 @@ Prereqs:
 Active development happens on the `dev` branch — that's where the latest features land. `main` is the stable baseline that lags behind. Clone `dev` to get everything new:
 
 ```bash
-git clone -b dev https://github.com/vsps/falpipe.ai.git
-cd falpipe.ai
+git clone -b dev https://github.com/vsps/aiSLAP.git
+cd aiSLAP
 pnpm install
 pnpm tauri dev       # run
 pnpm tauri build     # produce an installer in src-tauri/target/release/bundle
@@ -74,16 +68,16 @@ pnpm tauri build     # produce an installer in src-tauri/target/release/bundle
 
 To pull updates later: `git pull` from inside the `dev` branch.
 
-### A test build can be found here (WINDOWS ONLY): https://github.com/vsps/falpipe.ai/releases
+### A test build can be found here (WINDOWS ONLY): https://github.com/vsps/aiSLAP/releases
 
 Note: the build on releases tracks `main`, so it may not include the latest `dev` changes. Build from source for the freshest version.
 
 
 ## Configure
 
-On first launch the app creates `%APPDATA%\falPipe\` (Windows) or the equivalent config dir on other OSes with:
+On first launch the app creates `%APPDATA%\aiSLAP\` (Windows) or the equivalent config dir on other OSes with:
 
-- `.env` — holds `FAL_KEY=...`. Set it via the **Settings** dialog (gear icon, top-right) or drop it in manually.
+- `.env` — holds `FAL_KEY=...` and `REPLICATE_API_TOKEN=...`. Set them via the **Settings** dialog (gear icon, top-right) or drop them in manually.
 - `config.json` — project path, last-used sequence/shot/model, ffmpeg path.
 - `app-state.json` — prompts, settings, reference-image roles (restored on launch).
 
@@ -91,7 +85,7 @@ On first launch the app creates `%APPDATA%\falPipe\` (Windows) or the equivalent
 
 ## Basic usage
 
-1. Pick a **project directory** (top bar). This is any folder — falPipe creates `sequence/shot/{SRC,v001,…}` subdirectories as you go.
+1. Pick a **project directory** (top bar). This is any folder — aiSLAP creates `sequence/shot/{SRC,v001,…}` subdirectories as you go.
 2. Create or pick a **sequence**, then a **shot**.
 3. Choose a **model** from the left column. Its parameters appear below.
 4. Type a **SEQUENCE** and/or **SHOT** prompt. The sequence prompt is prepended to every shot in that sequence.
