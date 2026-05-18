@@ -40,6 +40,7 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
 - Veo 3.1
 - Kling 3
+- Seedance 2.0
 - Happy Horse
 - Topaz
 
