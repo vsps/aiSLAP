@@ -1,10 +1,17 @@
 <pre>
-░█▀▀░█▀█░█░░░█▀█░▀█▀░█▀█░█▀▀░░░░█▀█░▀█▀
-░█▀▀░█▀█░█░░░█▀▀░░█░░█▀▀░█▀▀░░░░█▀█░░█░
-░▀░░░▀░▀░▀▀▀░▀░░░▀▀▀░▀░░░▀▀▀░▀░░▀░▀░▀▀▀
+ ▄▄▄       ██▓       ██████  ██▓    ▄▄▄       ██▓███  
+▒████▄    ▓██▒     ▒██    ▒ ▓██▒   ▒████▄    ▓██░  ██▒
+▒██  ▀█▄  ▒██▒     ░ ▓██▄   ▒██░   ▒██  ▀█▄  ▓██░ ██▓▒
+░██▄▄▄▄██ ░██░       ▒   ██▒▒██░   ░██▄▄▄▄██ ▒██▄█▓▒ ▒
+ ▓█   ▓██▒░██░ ██▓ ▒██████▒▒░██████▒▓█   ▓██▒▒██▒ ░  ░
+ ▒▒   ▓▒█░░▓   ▒▓▒ ▒ ▒▓▒ ▒ ░░ ▒░▓  ░▒▒   ▓▒█░▒▓▒░ ░  ░
+  ▒   ▒▒ ░ ▒ ░ ░▒  ░ ░▒  ░ ░░ ░ ▒  ░ ▒   ▒▒ ░░▒ ░     
+  ░   ▒    ▒ ░ ░   ░  ░  ░    ░ ░    ░   ▒   ░░       
+      ░  ░ ░    ░        ░      ░  ░     ░  ░         
+                ░                                     
 </pre>
-
-# falPipe.ai
+### it's now called
+# aiSLAP
 
 A desktop GUI for [fal.ai](https://fal.ai) and now [replicate](https://replicate.com).
 Built around a **project / sequence / shot** file layout — meant for iterating on generative image & video shots as part of a larger production pipeline at speed while saving all media to disk.
