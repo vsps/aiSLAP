@@ -110,6 +110,8 @@ pub struct Config {
     pub filename_template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub colors: Option<ColorOverrides>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fal_lifecycle: Option<String>,
 }
 
 fn default_max_concurrent_jobs() -> u32 {
@@ -133,6 +135,7 @@ impl Default for Config {
             max_concurrent_jobs: default_max_concurrent_jobs(),
             filename_template: None,
             colors: None,
+            fal_lifecycle: None,
         }
     }
 }

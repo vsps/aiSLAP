@@ -2,7 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
-import type { ColorOverrides, Config } from "../lib/types";
+import type { ColorOverrides, Config, FalLifecycle } from "../lib/types";
+
+const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
+  { value: "", label: "fal default (keep forever)" },
+  { value: "immediate", label: "delete immediately after fetch" },
+  { value: "1h", label: "1 hour" },
+  { value: "1d", label: "1 day" },
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+  { value: "1y", label: "1 year" },
+  { value: "never", label: "never (explicit)" },
+];
 
 const COLOR_LABELS: Record<keyof ColorOverrides, string> = {
   bg: "bg",
@@ -30,6 +41,7 @@ const DEFAULT: Config = {
   maxConcurrentJobs: 3,
   filenameTemplate: undefined,
   colors: undefined,
+  falLifecycle: undefined,
 };
 
 export function SettingsDialog({ onClose }: Props) {
@@ -148,6 +160,29 @@ export function SettingsDialog({ onClose }: Props) {
             </div>
             <div className="text-xs text-dim mt-1">
               Stored in <code>%APPDATA%/aiSLAP/.env</code>.
+            </div>
+          </Field>
+
+          <Field label="fal.ai object lifecycle">
+            <select
+              value={config.falLifecycle ?? ""}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setConfig((c) => ({
+                  ...c,
+                  falLifecycle: v ? (v as FalLifecycle) : undefined,
+                }));
+              }}
+              className="bg-bg px-2 py-1 text-xs font-mono"
+            >
+              {FAL_LIFECYCLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-dim mt-1">
+              Sent as <code>x-fal-object-lifecycle-preference</code>. Controls how long fal retains generated objects.
             </div>
           </Field>
 

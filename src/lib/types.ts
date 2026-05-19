@@ -196,6 +196,8 @@ export type ColorOverrides = {
   accent?: string;
 };
 
+export type FalLifecycle = "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never";
+
 export type Config = {
   windowBounds: { x?: number; y?: number; width: number; height: number };
   projectPath: string;
@@ -208,6 +210,8 @@ export type Config = {
   /** Output filename template. Tokens: <date> <time> <sequence> <shot> <model> <version> <prompt> <iter> <seed> <provider> */
   filenameTemplate?: string;
   colors?: ColorOverrides;
+  /** fal.ai object lifecycle: "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never" | seconds. Unset = fal default. */
+  falLifecycle?: FalLifecycle;
 };
 
 // ---------- Submission queue ----------
