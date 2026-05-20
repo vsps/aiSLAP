@@ -10,8 +10,8 @@ import type { ChainPresetLink } from "../lib/types";
  * Vertical strip sitting between RefImages (or the rightmost collapsed link)
  * and the Latest preview. Hosts:
  *   - "+" Add link (always available)
- *   - "▶" Collapse & preflight (only when a link is expanded AND more than
- *     one link exists)
+ *   - "▶" Collapse & preflight (whenever a link is expanded — lets the
+ *     user collapse a single-link chain to free up preview room)
  *   - Bookmark Save preset
  *   - Folder Load preset
  */
@@ -25,7 +25,7 @@ export function ChainAddBar() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const showCollapse = expandedIdx != null && links.length > 1;
+  const showCollapse = expandedIdx != null;
 
   function buildPresetLinks(): ChainPresetLink[] {
     return links.map((l) => ({
