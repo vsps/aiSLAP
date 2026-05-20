@@ -1,4 +1,5 @@
 import type { KlingElement, ModelNode, RefRoleSpec, UploadedRef } from "./types";
+import { classifyMedia, type MediaKind } from "./media";
 
 export function buildArgs(
   node: ModelNode,
@@ -78,7 +79,7 @@ export function buildArgs(
       args[role.api_field] = isScalar ? urls[0] : urls;
     }
   } else if (uploaded.length > 0) {
-    args["image_urls"] = uploaded.map((u) => u.url);
+    routeRefsByMediaType(node, uploaded, args);
   }
 
   for (const input of node.inputs) {
@@ -89,6 +90,49 @@ export function buildArgs(
   }
 
   return args;
+}
+
+const DATA_TYPE_TO_KIND: Record<string, MediaKind> = {
+  IMAGE: "image",
+  VIDEO: "video",
+  AUDIO: "audio",
+};
+
+// Route uploaded refs to the model's media-typed array inputs by classifying
+// each ref's file extension. Backwards-compatible: if the only matching input
+// is IMAGE (e.g. Happy Horse), every ref lands in image_urls as before.
+function routeRefsByMediaType(
+  node: ModelNode,
+  uploaded: UploadedRef[],
+  args: Record<string, unknown>,
+): void {
+  const slots = new Map<MediaKind, { api_field: string; max?: number }>();
+  for (const input of node.inputs) {
+    if (input.api_format !== "array") continue;
+    const kind = DATA_TYPE_TO_KIND[input.data_type];
+    if (!kind) continue;
+    if (!slots.has(kind)) slots.set(kind, { api_field: input.api_field, max: input.max });
+  }
+  if (slots.size === 0) return;
+
+  // Single-IMAGE-only nodes: accept everything into image_urls (legacy).
+  const onlyImage = slots.size === 1 && slots.has("image");
+  const buckets: Record<MediaKind, string[]> = { image: [], video: [], audio: [] };
+
+  for (const u of uploaded) {
+    const kind = onlyImage ? "image" : classifyMedia(u.ref.path);
+    if (!kind || !slots.has(kind)) {
+      console.warn(`[args] ref ${u.ref.path} has no matching input on ${node.id}; dropped`);
+      continue;
+    }
+    buckets[kind].push(u.url);
+  }
+
+  for (const [kind, slot] of slots) {
+    const list = buckets[kind];
+    if (list.length === 0) continue;
+    args[slot.api_field] = slot.max ? list.slice(0, slot.max) : list;
+  }
 }
 
 function selectForRole(

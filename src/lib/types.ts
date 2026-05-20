@@ -6,10 +6,11 @@ export type ModelKind = "image" | "video";
 
 export type ModelInput = {
   name: string;
-  data_type: "STRING" | "IMAGE" | "VIDEO";
+  data_type: "STRING" | "IMAGE" | "VIDEO" | "AUDIO";
   api_field: string;
   api_format?: "array";
-  required: boolean;
+  required?: boolean;
+  max?: number;
 };
 
 export type ModelOutput = {

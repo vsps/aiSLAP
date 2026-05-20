@@ -10,14 +10,10 @@ import { pickFile, showMessage } from "../lib/dialog";
 import { cmd } from "../lib/tauri";
 import { performImageAction } from "../lib/actions";
 import type { RefImage, RoleAssignment } from "../lib/types";
-
-const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
-const VIDEO_EXTS = ["mp4", "webm", "mov", "mkv"];
-const MEDIA_EXTS = [...IMAGE_EXTS, ...VIDEO_EXTS];
+import { MEDIA_EXTS, VIDEO_EXTS, classifyMedia } from "../lib/media";
 
 function isMedia(path: string): boolean {
-  const ext = path.toLowerCase().split(".").pop();
-  return !!ext && MEDIA_EXTS.includes(ext);
+  return classifyMedia(path) !== null;
 }
 
 export function RefImagesColumn() {
@@ -96,7 +92,7 @@ export function RefImagesColumn() {
   }
 
   async function onAdd() {
-    const paths = await pickFile("Pick reference images or videos", {
+    const paths = await pickFile("Pick reference media", {
       extensions: MEDIA_EXTS,
       multiple: true,
     });
@@ -247,6 +243,10 @@ function isVideoPath(path: string): boolean {
   return !!ext && VIDEO_EXTS.includes(ext);
 }
 
+function isAudioPath(path: string): boolean {
+  return classifyMedia(path) === "audio";
+}
+
 function RefThumb({
   index,
   ref_,
@@ -268,6 +268,7 @@ function RefThumb({
 }) {
   const label = roleLabel(ref_);
   const isVideo = isVideoPath(ref_.path);
+  const isAudio = isAudioPath(ref_.path);
   const src = fileSrc(ref_.path);
 
   return (
@@ -276,7 +277,7 @@ function RefThumb({
       className={`relative bg-bg text-text overflow-hidden w-[109px] h-[109px] flex flex-col justify-between p-[3px] group ${
         isDragging ? "opacity-40" : ""
       } ${isDropTarget ? "outline outline-2 outline-accent" : ""}`}
-      style={isVideo ? undefined : {
+      style={isVideo || isAudio ? undefined : {
         backgroundImage: `url("${src}")`,
         backgroundSize: "cover",
         backgroundPosition: "center",
@@ -289,6 +290,17 @@ function RefThumb({
           muted
           className="absolute inset-0 w-full h-full object-cover pointer-events-none"
         />
+      )}
+      {isAudio && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span
+            aria-hidden
+            className="material-symbols-outlined opacity-70"
+            style={{ fontSize: 48 }}
+          >
+            graphic_eq
+          </span>
+        </div>
       )}
       {/* Top bar = role label + role-menu trigger (click anywhere on the bar). */}
       <div
