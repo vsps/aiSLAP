@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  DEFAULT_SYSTEM_PROMPT,
   LLM_MODELS,
+  loadLastLlmInstruction,
   loadLastLlmModel,
   runLlmRewrite,
+  saveLastLlmInstruction,
   saveLastLlmModel,
 } from "../lib/llm";
 
@@ -14,6 +17,9 @@ type Props = {
 
 export function LlmPromptModal({ originalPrompt, onAccept, onCancel }: Props) {
   const [model, setModel] = useState<string>(() => loadLastLlmModel());
+  const [instruction, setInstruction] = useState<string>(() =>
+    loadLastLlmInstruction(),
+  );
   const [inputPrompt, setInputPrompt] = useState(originalPrompt);
   const [outputPrompt, setOutputPrompt] = useState("");
   const [running, setRunning] = useState(false);
@@ -52,10 +58,12 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel }: Props) {
     setRunning(true);
     setError(null);
     saveLastLlmModel(model);
+    saveLastLlmInstruction(instruction);
     try {
       const out = await runLlmRewrite({
         model,
         prompt: inputPrompt,
+        systemPrompt: instruction.trim() || DEFAULT_SYSTEM_PROMPT,
         signal: ctrl.signal,
       });
       if (!ctrl.signal.aborted) setOutputPrompt(out);
@@ -126,6 +134,17 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel }: Props) {
             disabled={running}
             className="min-h-[120px] max-h-[40vh] w-full resize-y bg-inset text-text p-prompt-panel outline-none thin-scroll"
             placeholder="Prompt to send to the LLM"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className="text-xs opacity-70 font-mono">Instruction</div>
+          <textarea
+            value={instruction}
+            onChange={(e) => setInstruction(e.currentTarget.value)}
+            disabled={running}
+            className="min-h-[60px] max-h-[30vh] w-full resize-y bg-inset text-text p-prompt-panel outline-none thin-scroll"
+            placeholder={DEFAULT_SYSTEM_PROMPT}
           />
         </div>
 
