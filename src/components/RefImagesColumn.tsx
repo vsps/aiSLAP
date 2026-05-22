@@ -9,16 +9,67 @@ import { basename } from "../lib/paths";
 import { pickFile, showMessage } from "../lib/dialog";
 import { cmd } from "../lib/tauri";
 import { performImageAction } from "../lib/actions";
-import type { RefImage, RoleAssignment } from "../lib/types";
-import { MEDIA_EXTS, VIDEO_EXTS, classifyMedia } from "../lib/media";
+import type { ModelNode, RefImage, RoleAssignment } from "../lib/types";
+import { MEDIA_EXTS, VIDEO_EXTS, classifyMedia, type MediaKind } from "../lib/media";
+
+const GROUP_PALETTE = [
+  "#e74c3c", "#f39c12", "#f1c40f", "#2ecc71",
+  "#1abc9c", "#9b59b6", "#e91e63", "#3498db",
+];
+const START_COLOR = "#22c55e";
+const END_COLOR = "#ef4444";
+const SOURCE_COLOR = "#3b82f6";
+
+function roleColor(role: RoleAssignment | null): string | null {
+  if (!role) return null;
+  if (role.kind === "start") return START_COLOR;
+  if (role.kind === "end") return END_COLOR;
+  if (role.kind === "source") return SOURCE_COLOR;
+  if (role.kind === "element" || role.kind === "image") {
+    const n = Number(role.groupName);
+    const i = (Number.isFinite(n) ? n : 1) - 1;
+    return GROUP_PALETTE[i % GROUP_PALETTE.length];
+  }
+  return null;
+}
+
+function showRow(kind: MediaKind, hasRefs: boolean, m: ModelNode | null): boolean {
+  if (hasRefs) return true;
+  if (!m) return kind === "image";
+  for (const i of m.inputs) {
+    if (kind === "image" && i.data_type === "IMAGE") return true;
+    if (kind === "video" && i.data_type === "VIDEO") return true;
+    if (kind === "audio" && i.data_type === "AUDIO") return true;
+  }
+  return false;
+}
 
 function isMedia(path: string): boolean {
   return classifyMedia(path) !== null;
 }
 
+const ROW_TITLE: Record<MediaKind, string> = {
+  image: "REF IMAGES",
+  video: "REF VIDEOS",
+  audio: "REF AUDIO",
+};
+
+type DropTarget =
+  | { kind: "reorder"; idx: number }
+  | { kind: "slot"; role: "start" | "end" }
+  | null;
+
 export function RefImagesColumn() {
-  const { currentModel, refImages, addRefs, removeRef, removeAllRefs, assignRole, reorderRefs } =
-    useGenerationStore();
+  const {
+    currentModel,
+    refImages,
+    addRefs,
+    removeRef,
+    removeAllRefs,
+    assignRole,
+    swapRoleAssignments,
+    reorderRefs,
+  } = useGenerationStore();
   const expandedIdx = useGenerationStore((s) => s.expandedIdx);
   const linksLen = useGenerationStore((s) => s.links.length);
   const activeLink = useGenerationStore((s) =>
@@ -70,8 +121,6 @@ export function RefImagesColumn() {
   }, [imageDrag]);
 
   async function ingestPaths(paths: string[]) {
-    // Read shotPath fresh each call — the Tauri drop listener is registered
-    // once for the component lifetime, so we can't rely on a closed-over value.
     const shotPath = useSessionStore.getState().shotPath;
     if (!shotPath) {
       await showMessage("Open a shot first", { kind: "warning" });
@@ -100,9 +149,6 @@ export function RefImagesColumn() {
     await ingestPaths(paths);
   }
 
-  // Tauri-level OS file drop. Registered once. `disposed` guards against the
-  // cleanup firing before onDragDropEvent's promise resolves — otherwise the
-  // real listener leaks and stale handlers stack up on every shot change.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
@@ -140,27 +186,34 @@ export function RefImagesColumn() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Intra-app drag-to-reorder. The white bar on each thumb is the handle
-  // (image body stays as a zoom target). Pointer events so it coexists with
-  // Tauri's OS file-drop (HTML5 drag is blocked on Windows when dragDropEnabled=true).
   function beginHandleDrag(fromIdx: number, pointerId: number, handleEl: HTMLElement) {
     handleEl.setPointerCapture(pointerId);
     setDragState({ fromIdx, overIdx: null });
-    let currentOver: number | null = null;
+    let currentTarget: DropTarget = null;
 
-    const findIdxAt = (x: number, y: number): number | null => {
+    const resolveDrop = (x: number, y: number): DropTarget => {
       const el = document.elementFromPoint(x, y);
       if (!el) return null;
+      const slot = el.closest<HTMLElement>("[data-role-slot]");
+      if (slot) {
+        const role = slot.dataset.roleSlot;
+        if (role === "start" || role === "end") return { kind: "slot", role };
+      }
       const thumb = el.closest<HTMLElement>("[data-ref-idx]");
-      if (!thumb) return null;
-      const n = Number(thumb.dataset.refIdx);
-      return Number.isFinite(n) ? n : null;
+      if (thumb) {
+        const n = Number(thumb.dataset.refIdx);
+        return Number.isFinite(n) ? { kind: "reorder", idx: n } : null;
+      }
+      return null;
     };
 
     const onMove = (ev: PointerEvent) => {
-      const idx = findIdxAt(ev.clientX, ev.clientY);
-      currentOver = idx;
-      setDragState({ fromIdx, overIdx: idx });
+      const t = resolveDrop(ev.clientX, ev.clientY);
+      currentTarget = t;
+      setDragState({
+        fromIdx,
+        overIdx: t?.kind === "reorder" ? t.idx : null,
+      });
     };
     const onUp = () => {
       handleEl.releasePointerCapture(pointerId);
@@ -168,14 +221,66 @@ export function RefImagesColumn() {
       handleEl.removeEventListener("pointerup", onUp);
       handleEl.removeEventListener("pointercancel", onUp);
       setDragState(null);
-      if (currentOver != null && currentOver !== fromIdx) {
-        reorderRefs(fromIdx, currentOver);
+
+      const t = currentTarget;
+      const dragged = refImages[fromIdx];
+      if (!t || !dragged) return;
+
+      if (t.kind === "slot") {
+        assignRole(dragged.path, { kind: t.role });
+        return;
       }
+      if (t.idx === fromIdx) return;
+      const target = refImages[t.idx];
+      if (!target) return;
+
+      const draggedRole = dragged.roleAssignment;
+      const targetRole = target.roleAssignment;
+      const slotKind = (r: RoleAssignment | null) =>
+        r && (r.kind === "start" || r.kind === "end") ? r.kind : null;
+      const draggedIsSlot = slotKind(draggedRole);
+      const targetIsSlot = slotKind(targetRole);
+
+      if (draggedIsSlot && targetIsSlot) {
+        swapRoleAssignments(dragged.path, target.path);
+        return;
+      }
+      if (targetIsSlot && !draggedIsSlot) {
+        assignRole(dragged.path, targetRole);
+        return;
+      }
+      if (draggedIsSlot && !targetIsSlot) {
+        assignRole(dragged.path, null);
+      }
+      reorderRefs(fromIdx, t.idx);
     };
     handleEl.addEventListener("pointermove", onMove);
     handleEl.addEventListener("pointerup", onUp);
     handleEl.addEventListener("pointercancel", onUp);
   }
+
+  const buckets: Record<MediaKind, { ref: RefImage; idx: number }[]> = {
+    image: [],
+    video: [],
+    audio: [],
+  };
+  refImages.forEach((r, idx) => {
+    const k = classifyMedia(r.path) ?? "image";
+    buckets[k].push({ ref: r, idx });
+  });
+
+  const modelHasStart = !!currentModel?.ref_roles?.some((r) => r.role === "start");
+  const modelHasEnd = !!currentModel?.ref_roles?.some((r) => r.role === "end");
+  const startTaken = refImages.some((r) => r.roleAssignment?.kind === "start");
+  const endTaken = refImages.some((r) => r.roleAssignment?.kind === "end");
+  const showStartSlot = modelHasStart && !startTaken;
+  const showEndSlot = modelHasEnd && !endTaken;
+
+  const visibleKinds = (["image", "video", "audio"] as MediaKind[]).filter(
+    (k) =>
+      showRow(k, buckets[k].length > 0, currentModel) ||
+      (k === "image" && showChainPrev),
+  );
 
   return (
     <>
@@ -187,7 +292,7 @@ export function RefImagesColumn() {
         }`}
       >
         <div className="flex items-center text-sm font-semibold">
-          <span>REF IMAGES</span>
+          <span>REFERENCES</span>
           <span className="flex-1" />
           <span className="text-xs opacity-60 font-mono">{refImages.length}</span>
           <button
@@ -198,27 +303,46 @@ export function RefImagesColumn() {
             title="Clear all references"
           >[clear]</button>
         </div>
-        <div className="flex flex-wrap gap-prompt-column-gap content-start overflow-y-auto thin-scroll bg-inset p-prompt-panel flex-1 min-h-0">
-          {showChainPrev && activeLink && (
-            <ChainPrevTile
-              modelName={prevLinkModel?.name ?? null}
-              onRemove={() => setLinkConsumesPrev(activeLink.id, false)}
-            />
-          )}
-          {refImages.map((r, idx) => (
-            <RefThumb
-              key={r.path}
-              index={idx}
-              ref_={r}
-              isDragging={dragState?.fromIdx === idx}
-              isDropTarget={dragState != null && dragState.overIdx === idx && dragState.fromIdx !== idx}
-              onRemove={() => removeRef(r.path)}
-              onOpenMenu={(anchor) => setMenu({ anchor, ref: r })}
-              onZoom={() => void performImageAction("zoom", r.path)}
-              onHandlePointerDown={(pointerId, handleEl) => beginHandleDrag(idx, pointerId, handleEl)}
-            />
+        <div className="flex flex-col gap-prompt-column-gap overflow-y-auto thin-scroll bg-inset p-prompt-panel flex-1 min-h-0">
+          {visibleKinds.map((kind) => (
+            <div key={kind} className="flex flex-col gap-1">
+              <div className="text-[11px] font-mono opacity-60">
+                {ROW_TITLE[kind]}{" "}
+                <span className="opacity-70">({buckets[kind].length})</span>
+              </div>
+              <div className="flex flex-wrap gap-prompt-column-gap content-start">
+                {kind === "image" && showChainPrev && activeLink && (
+                  <ChainPrevTile
+                    modelName={prevLinkModel?.name ?? null}
+                    onRemove={() => setLinkConsumesPrev(activeLink.id, false)}
+                  />
+                )}
+                {kind === "image" && showStartSlot && <RoleSlotPlaceholder kind="start" />}
+                {kind === "image" && showEndSlot && <RoleSlotPlaceholder kind="end" />}
+                {buckets[kind].map(({ ref: r, idx }) => (
+                  <RefThumb
+                    key={r.path}
+                    index={idx}
+                    ref_={r}
+                    color={roleColor(r.roleAssignment)}
+                    isDragging={dragState?.fromIdx === idx}
+                    isDropTarget={
+                      dragState != null &&
+                      dragState.overIdx === idx &&
+                      dragState.fromIdx !== idx
+                    }
+                    onRemove={() => removeRef(r.path)}
+                    onOpenMenu={(anchor) => setMenu({ anchor, ref: r })}
+                    onZoom={() => void performImageAction("zoom", r.path)}
+                    onHandlePointerDown={(pointerId, handleEl) =>
+                      beginHandleDrag(idx, pointerId, handleEl)
+                    }
+                  />
+                ))}
+                {kind === "image" && <RefAddTile onAdd={onAdd} />}
+              </div>
+            </div>
           ))}
-          <RefAddTile onAdd={onAdd} />
         </div>
       </div>
 
@@ -250,6 +374,7 @@ function isAudioPath(path: string): boolean {
 function RefThumb({
   index,
   ref_,
+  color,
   isDragging,
   isDropTarget,
   onRemove,
@@ -259,6 +384,7 @@ function RefThumb({
 }: {
   index: number;
   ref_: RefImage;
+  color: string | null;
   isDragging: boolean;
   isDropTarget: boolean;
   onRemove: () => void;
@@ -271,17 +397,26 @@ function RefThumb({
   const isAudio = isAudioPath(ref_.path);
   const src = fileSrc(ref_.path);
 
+  const baseStyle: React.CSSProperties =
+    isVideo || isAudio
+      ? {}
+      : {
+          backgroundImage: `url("${src}")`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        };
+  if (color && !isDropTarget) {
+    baseStyle.outline = `2px solid ${color}`;
+    baseStyle.outlineOffset = "-2px";
+  }
+
   return (
     <div
       data-ref-idx={index}
       className={`relative bg-bg text-text overflow-hidden w-[109px] h-[109px] flex flex-col justify-between p-[3px] group ${
         isDragging ? "opacity-40" : ""
       } ${isDropTarget ? "outline outline-2 outline-accent" : ""}`}
-      style={isVideo || isAudio ? undefined : {
-        backgroundImage: `url("${src}")`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-      }}
+      style={baseStyle}
     >
       {isVideo && (
         <video
@@ -302,7 +437,6 @@ function RefThumb({
           </span>
         </div>
       )}
-      {/* Top bar = role label + role-menu trigger (click anywhere on the bar). */}
       <div
         className="relative z-10 flex items-start bg-bg/90 hover:bg-bg px-1 text-xs leading-tight truncate max-w-full cursor-pointer"
         title="Click to change role"
@@ -314,7 +448,6 @@ function RefThumb({
         {label}
       </div>
 
-      {/* Click body to zoom */}
       <div
         className="absolute inset-0 cursor-zoom-in"
         onClick={onZoom}
@@ -326,7 +459,6 @@ function RefThumb({
         title="Drag to reorder"
         onPointerDown={(e) => {
           if (e.button !== 0) return;
-          // Don't initiate drag if the press landed on an icon button.
           const tgt = e.target as HTMLElement;
           if (tgt.closest("button")) return;
           e.preventDefault();
@@ -343,6 +475,20 @@ function RefThumb({
           drag_indicator
         </span>
       </div>
+    </div>
+  );
+}
+
+function RoleSlotPlaceholder({ kind }: { kind: "start" | "end" }) {
+  const color = kind === "start" ? START_COLOR : END_COLOR;
+  return (
+    <div
+      data-role-slot={kind}
+      className="w-[109px] h-[109px] flex items-center justify-center text-xs font-mono opacity-70 outline-dashed outline-2"
+      style={{ outlineColor: color, outlineOffset: "-2px", color }}
+      title={`Drop an image here to set ${kind} frame`}
+    >
+      {kind.toUpperCase()}
     </div>
   );
 }
@@ -389,7 +535,7 @@ function ChainPrevTile({
 function RefAddTile({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="bg-surface w-[109px] h-[109px] flex items-center justify-center">
-      <IconBtn name="add_photo_alternate" size={28} title="Add reference images" onClick={onAdd} />
+      <IconBtn name="add_photo_alternate" size={28} title="Add reference media" onClick={onAdd} />
     </div>
   );
 }

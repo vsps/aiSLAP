@@ -120,6 +120,11 @@ export type ChainLink = {
   // at chain-run time. Default true for newly added links, false for the
   // initial head link.
   consumesPrev: boolean;
+  // Inclusion flags for the combined prompt. undefined means included.
+  sequencePromptIncluded?: boolean;
+  sequenceScriptIncluded?: boolean;
+  shotScriptIncluded?: boolean;
+  shotPromptsIncluded?: boolean[];
 };
 
 // ---------- Chain presets ----------
@@ -251,6 +256,10 @@ export type ChainLinkPersisted = {
   shotPrompts: string[];
   refImages: RefImage[];
   consumesPrev: boolean;
+  sequencePromptIncluded?: boolean;
+  sequenceScriptIncluded?: boolean;
+  shotScriptIncluded?: boolean;
+  shotPromptsIncluded?: boolean[];
 };
 
 export type AppState = {

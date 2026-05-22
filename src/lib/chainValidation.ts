@@ -101,6 +101,23 @@ export function preflightChain(links: ChainLink[]): LinkProblem[] {
       const prevContrib =
         !isHead && link.consumesPrev && prevOutput ? prevOutput : null;
       for (const r of reqs) {
+        const matchingRole = link.model.ref_roles?.find(
+          (rr) => rr.api_field === r.api_field,
+        );
+        if (matchingRole?.role === "start") {
+          const hasStart = link.refImages.some(
+            (x) => x.roleAssignment?.kind === "start",
+          );
+          const prevFillsStart = prevContrib === "IMAGE";
+          if (!hasStart && !prevFillsStart) {
+            problems.push({
+              linkId: link.id,
+              severity: "warn",
+              message: "No start frame assigned",
+            });
+          }
+          continue;
+        }
         const covered =
           userRefTypes.has(r.data_type) || prevContrib === r.data_type;
         if (!covered) {

@@ -41,6 +41,10 @@ function toPersisted(l: ChainLink): ChainLinkPersisted {
     shotPrompts: l.shotPrompts,
     refImages: l.refImages,
     consumesPrev: l.consumesPrev,
+    sequencePromptIncluded: l.sequencePromptIncluded,
+    sequenceScriptIncluded: l.sequenceScriptIncluded,
+    shotScriptIncluded: l.shotScriptIncluded,
+    shotPromptsIncluded: l.shotPromptsIncluded,
   };
 }
 
@@ -60,6 +64,10 @@ function fromPersisted(p: ChainLinkPersisted, entries: ModelEntry[]): ChainLink 
         : [""],
     refImages: Array.isArray(p.refImages) ? p.refImages : [],
     consumesPrev: !!p.consumesPrev,
+    sequencePromptIncluded: p.sequencePromptIncluded,
+    sequenceScriptIncluded: p.sequenceScriptIncluded,
+    shotScriptIncluded: p.shotScriptIncluded,
+    shotPromptsIncluded: p.shotPromptsIncluded,
   });
 }
 

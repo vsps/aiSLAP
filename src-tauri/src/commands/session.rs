@@ -898,6 +898,33 @@ pub fn shot_prompts_append(shot_path: String, prompts: Vec<String>) -> AppResult
     Ok(sidecar)
 }
 
+const SCRIPT_FILE: &str = "script.md";
+const DEFAULT_SCRIPT: &str = "# Sequence 1\n\n## Shot 1\n\n## Shot 2\n\n## Shot 3\n";
+
+#[tauri::command]
+pub fn script_read(project_path: String) -> AppResult<String> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let p = root.join(SCRIPT_FILE);
+    if !p.exists() {
+        std::fs::write(&p, DEFAULT_SCRIPT)?;
+        return Ok(DEFAULT_SCRIPT.to_string());
+    }
+    Ok(std::fs::read_to_string(&p)?)
+}
+
+#[tauri::command]
+pub fn script_write(project_path: String, content: String) -> AppResult<()> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    std::fs::write(root.join(SCRIPT_FILE), content)?;
+    Ok(())
+}
+
 fn sanitize(name: &str) -> String {
     name.chars()
         .map(|c| match c {

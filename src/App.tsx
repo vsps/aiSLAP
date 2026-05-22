@@ -9,6 +9,7 @@ import { Gallery } from "./components/Gallery";
 import { ErrorPopup } from "./components/ErrorPopup";
 import { LogWindow } from "./components/LogWindow";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { SplashScreen } from "./components/SplashScreen";
 import { ResizeBar } from "./components/ResizeBar";
 import { useGenerationStore } from "./stores/generationStore";
@@ -19,6 +20,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [version, setVersion] = useState<string>("");
   const traceActive = useSessionStore((s) => s.traceActive);
   const setTrace = useSessionStore((s) => s.setTrace);
@@ -67,7 +69,10 @@ export default function App() {
 
   return (
     <div className="flex h-full w-full flex-col gap-prompt-surface bg-bg p-prompt-surface text-text">
-      <SessionBar onOpenSettings={() => setSettingsOpen(true)} />
+      <SessionBar
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenProjectSettings={() => setProjectSettingsOpen(true)}
+      />
 
       <Workbench />
 
@@ -106,6 +111,9 @@ export default function App() {
       <ErrorPopup />
       {settingsOpen && (
         <SettingsDialog onClose={() => setSettingsOpen(false)} />
+      )}
+      {projectSettingsOpen && (
+        <ProjectSettingsDialog onClose={() => setProjectSettingsOpen(false)} />
       )}
       <SplashScreen ready={ready} version={version} />
     </div>

@@ -28,9 +28,6 @@ type Props = {
   onClose: () => void;
 };
 
-const FILENAME_TEMPLATE_DEFAULT =
-  "<date>_<time>_<sequence>_<shot>_<model>_<version>";
-
 const DEFAULT: Config = {
   windowBounds: { width: 1600, height: 1000 },
   projectPath: "",
@@ -242,40 +239,6 @@ export function SettingsDialog({ onClose }: Props) {
             />
             <div className="text-xs text-dim mt-1">
               Extra submits beyond this cap wait in a local queue.
-            </div>
-          </Field>
-
-          <Field label="Filename template">
-            <div className="flex gap-1">
-              <input
-                type="text"
-                value={config.filenameTemplate ?? ""}
-                onChange={(e) => {
-                  const value = e.currentTarget.value;
-                  setConfig((c) => ({
-                    ...c,
-                    filenameTemplate: value || undefined,
-                  }));
-                }}
-                className="flex-1 bg-bg px-2 py-1 text-xs font-mono"
-                placeholder={FILENAME_TEMPLATE_DEFAULT}
-              />
-              <button
-                type="button"
-                className="px-2 bg-bg text-xs"
-                onClick={() =>
-                  setConfig((c) => ({ ...c, filenameTemplate: undefined }))
-                }
-              >
-                reset
-              </button>
-            </div>
-            <div className="text-xs text-dim mt-1">
-              Tokens: <code>&lt;date&gt;</code> <code>&lt;time&gt;</code>{" "}
-              <code>&lt;sequence&gt;</code> <code>&lt;shot&gt;</code>{" "}
-              <code>&lt;model&gt;</code> <code>&lt;version&gt;</code>{" "}
-              <code>&lt;prompt&gt;</code> <code>&lt;iter&gt;</code>{" "}
-              <code>&lt;seed&gt;</code> <code>&lt;provider&gt;</code>
             </div>
           </Field>
 

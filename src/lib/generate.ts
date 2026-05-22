@@ -20,7 +20,9 @@ import { useSessionStore } from "../stores/sessionStore";
 import { getProvider } from "./providers";
 import type { ProviderOutput, ProviderProgress } from "./providers";
 import { extractErrorMessage } from "./errors";
-import { buildArgs, guessContentType } from "./args";
+import { buildArgs, combinePromptParts, guessContentType } from "./args";
+import { findSequenceBody, findShotBody } from "./script";
+import { useScriptStore } from "../stores/scriptStore";
 import { playSound } from "./audio";
 import { preflightChain } from "./chainValidation";
 // Per-job AbortController. Keyed by job id so cancellation can target one or all.
@@ -46,7 +48,10 @@ type JobSpec = {
   node: ModelNode;
   sequencePrompt: string;
   shotPrompts: string[];
-  shotPrompt: string; // combined; used for API + metadata
+  shotPrompt: string; // pre-join of shotPrompts; metadata only
+  /** Final combined prompt actually sent to the API. Computed at enqueue time
+   *  from script segments + sequence/shot prompts respecting inclusion flags. */
+  combinedPrompt: string;
   settings: Record<string, unknown>;
   refs: RefImage[];
   iterations: number;
@@ -64,6 +69,33 @@ type JobSpec = {
   onFailed?: (err: unknown) => void;
   onCancelled?: () => void;
 };
+
+/** Build the final combined prompt for a link respecting inclusion flags and
+ *  the loaded script segments matched against current sequence/shot folders. */
+function buildCombinedForLink(
+  link: ChainLink,
+  sequencePath: string | null,
+  shotPath: string | null,
+): string {
+  const parsed = useScriptStore.getState().parsed;
+  const seqName = sequencePath ? basename(sequencePath) : "";
+  const shotName = shotPath ? basename(shotPath) : "";
+  const sequenceScript = seqName ? findSequenceBody(parsed, seqName) : "";
+  const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
+  const shotIncludes = link.shotPromptsIncluded ?? link.shotPrompts.map(() => true);
+  return combinePromptParts({
+    sequenceScript,
+    sequencePrompt: link.sequencePrompt,
+    shotScript,
+    shotPrompts: link.shotPrompts,
+    includes: {
+      sequenceScript: link.sequenceScriptIncluded !== false,
+      sequencePrompt: link.sequencePromptIncluded !== false,
+      shotScript: link.shotScriptIncluded !== false,
+      shotPrompts: link.shotPrompts.map((_, i) => shotIncludes[i] !== false),
+    },
+  });
+}
 
 /** Preflight ref-role check. Returns false when the user cancels. */
 async function preflightRefs(
@@ -113,13 +145,8 @@ export async function enqueueGeneration(): Promise<void> {
     return;
   }
 
-  const shotCombined = gen.shotPrompts
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
-  const combined = [gen.sequencePrompt, shotCombined]
-    .filter((s) => s.trim().length > 0)
-    .join("\n\n");
+  const activeLink = gen.expandedIdx != null ? gen.links[gen.expandedIdx] : gen.links[0];
+  const combined = buildCombinedForLink(activeLink, session.sequencePath, session.shotPath);
   if (combined.length === 0) {
     gen.setError("Both prompts are empty.");
     return;
@@ -163,6 +190,7 @@ export async function enqueueGeneration(): Promise<void> {
     sequencePrompt: gen.sequencePrompt,
     shotPrompts,
     shotPrompt,
+    combinedPrompt: combined,
     settings: { ...gen.settings },
     refs: gen.refImages.slice(),
     iterations,
@@ -227,6 +255,10 @@ function persistLink(l: ChainLink): ChainLinkPersisted {
     shotPrompts: l.shotPrompts,
     refImages: l.refImages,
     consumesPrev: l.consumesPrev,
+    sequencePromptIncluded: l.sequencePromptIncluded,
+    sequenceScriptIncluded: l.sequenceScriptIncluded,
+    shotScriptIncluded: l.shotScriptIncluded,
+    shotPromptsIncluded: l.shotPromptsIncluded,
   };
 }
 
@@ -365,6 +397,7 @@ export async function enqueueChain(): Promise<void> {
         .filter((s) => s.length > 0)
         .join("\n\n");
 
+      const linkCombined = buildCombinedForLink(link, session.sequencePath, shotPath);
       const spec: JobSpec = {
         id,
         tag,
@@ -372,6 +405,7 @@ export async function enqueueChain(): Promise<void> {
         sequencePrompt: link.sequencePrompt,
         shotPrompts: link.shotPrompts.slice(),
         shotPrompt: combinedShot,
+        combinedPrompt: linkCombined,
         settings: { ...link.settings },
         refs: linkRefs,
         // Only the final link honors the iterations field; intermediates run once.
@@ -557,8 +591,7 @@ async function runJob(spec: JobSpec): Promise<void> {
 
     const baseArgs = buildArgs(
       spec.node,
-      spec.sequencePrompt,
-      spec.shotPrompt,
+      spec.combinedPrompt,
       spec.settings,
       uploaded,
     );

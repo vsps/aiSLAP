@@ -42,7 +42,7 @@ export function ResizeBar({ orientation, value, onChange, grow }: Props) {
       role="separator"
       aria-orientation={horizontal ? "horizontal" : "vertical"}
       className={`shrink-0 accent-hover ${
-        horizontal ? "h-[7px] w-full cursor-row-resize" : "w-[7px] h-full cursor-col-resize"
+        horizontal ? "h-[7px] w-full cursor-row-resize" : "w-[3px] h-full cursor-col-resize"
       }`}
       onPointerDown={(e) => {
         e.preventDefault();

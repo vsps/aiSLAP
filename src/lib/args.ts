@@ -1,10 +1,33 @@
 import type { KlingElement, ModelNode, RefRoleSpec, UploadedRef } from "./types";
 import { classifyMedia, type MediaKind } from "./media";
 
+export type PromptParts = {
+  sequenceScript: string;
+  sequencePrompt: string;
+  shotScript: string;
+  shotPrompts: string[];
+  includes: {
+    sequenceScript: boolean;
+    sequencePrompt: boolean;
+    shotScript: boolean;
+    shotPrompts: boolean[];
+  };
+};
+
+export function combinePromptParts(parts: PromptParts): string {
+  const pieces: string[] = [];
+  if (parts.includes.sequenceScript && parts.sequenceScript) pieces.push(parts.sequenceScript);
+  if (parts.includes.sequencePrompt) pieces.push(parts.sequencePrompt);
+  if (parts.includes.shotScript && parts.shotScript) pieces.push(parts.shotScript);
+  parts.shotPrompts.forEach((p, i) => {
+    if (parts.includes.shotPrompts[i] !== false) pieces.push(p);
+  });
+  return pieces.map((s) => s.trim()).filter((s) => s.length > 0).join("\n\n");
+}
+
 export function buildArgs(
   node: ModelNode,
-  sequencePrompt: string,
-  shotPrompt: string,
+  combinedPrompt: string,
   settings: Record<string, unknown>,
   uploaded: UploadedRef[],
 ): Record<string, unknown> {
@@ -19,11 +42,7 @@ export function buildArgs(
     args[k] = v;
   }
 
-  const combined = [sequencePrompt, shotPrompt]
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
-  if (combined.length > 0) args["prompt"] = combined;
+  if (combinedPrompt.length > 0) args["prompt"] = combinedPrompt;
 
   if (node.ref_roles && node.ref_roles.length > 0) {
     const bucket: Record<string, UploadedRef[]> = {};

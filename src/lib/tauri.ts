@@ -82,6 +82,11 @@ export const cmd = {
   ): Promise<ShotSidecar> =>
     rawInvoke("shot_prompts_append", { shotPath, prompts }),
 
+  script_read: (projectPath: string): Promise<string> =>
+    rawInvoke("script_read", { projectPath }),
+  script_write: (projectPath: string, content: string): Promise<void> =>
+    rawInvoke("script_write", { projectPath, content }),
+
   version_create_next: (shotPath: string): Promise<string> =>
     rawInvoke("version_create_next", { shotPath }),
 

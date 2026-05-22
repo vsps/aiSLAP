@@ -7,6 +7,7 @@ import type {
   RefImage,
   RoleAssignment,
 } from "../lib/types";
+import { classifyMedia } from "../lib/media";
 
 type State = {
   // Source of truth: prompt-chain links. Always >= 1 entry. expandedIdx
@@ -44,10 +45,16 @@ type Actions = {
   setSetting: (key: string, value: unknown) => void;
   setIterations: (n: number) => void;
 
+  setSequencePromptIncluded: (v: boolean) => void;
+  setSequenceScriptIncluded: (v: boolean) => void;
+  setShotScriptIncluded: (v: boolean) => void;
+  setShotPromptIncludedAt: (idx: number, v: boolean) => void;
+
   addRefs: (paths: string[]) => void;
   removeRef: (path: string) => void;
   removeAllRefs: () => void;
   assignRole: (path: string, role: RoleAssignment | null) => void;
+  swapRoleAssignments: (pathA: string, pathB: string) => void;
   reorderRefs: (fromIdx: number, toIdx: number) => void;
   setRefImages: (refs: RefImage[]) => void;
 
@@ -196,7 +203,10 @@ export const useGenerationStore = create<State & Actions>((set) => {
         const insertAt = Math.max(0, Math.min(link.shotPrompts.length, idx + 1));
         const next = link.shotPrompts.slice();
         next.splice(insertAt, 0, "");
-        return patchActive(s, { shotPrompts: next });
+        const inc = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
+        while (inc.length < link.shotPrompts.length) inc.push(true);
+        inc.splice(insertAt, 0, true);
+        return patchActive(s, { shotPrompts: next, shotPromptsIncluded: inc });
       });
     },
     removeShotPromptAt(idx) {
@@ -208,7 +218,10 @@ export const useGenerationStore = create<State & Actions>((set) => {
         }
         const next = link.shotPrompts.slice();
         next.splice(idx, 1);
-        return patchActive(s, { shotPrompts: next });
+        const inc = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
+        while (inc.length < link.shotPrompts.length) inc.push(true);
+        inc.splice(idx, 1);
+        return patchActive(s, { shotPrompts: next, shotPromptsIncluded: inc });
       });
     },
     setSetting(key, value) {
@@ -222,6 +235,28 @@ export const useGenerationStore = create<State & Actions>((set) => {
       set({ iterations: Math.max(1, Math.floor(n || 1)) });
     },
 
+    setSequencePromptIncluded(v) {
+      set((s) => patchActive(s, { sequencePromptIncluded: v }));
+    },
+    setSequenceScriptIncluded(v) {
+      set((s) => patchActive(s, { sequenceScriptIncluded: v }));
+    },
+    setShotScriptIncluded(v) {
+      set((s) => patchActive(s, { shotScriptIncluded: v }));
+    },
+    setShotPromptIncludedAt(idx, v) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        if (idx < 0 || idx >= link.shotPrompts.length)
+          return {} as Partial<State>;
+        const next = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
+        while (next.length < link.shotPrompts.length) next.push(true);
+        next[idx] = v;
+        return patchActive(s, { shotPromptsIncluded: next });
+      });
+    },
+
     addRefs(paths) {
       set((s) => {
         const link = activeOf(s);
@@ -229,18 +264,27 @@ export const useGenerationStore = create<State & Actions>((set) => {
         const existing = new Set(link.refImages.map((r) => r.path));
         const newPaths = paths.filter((p) => !existing.has(p));
         if (newPaths.length === 0) return {} as Partial<State>;
-        const modelHasStart = !!link.model?.ref_roles?.some(
-          (r) => r.role === "start",
-        );
-        const startTaken = link.refImages.some(
+        const roles = link.model?.ref_roles ?? [];
+        const modelHasStart = roles.some((r) => r.role === "start");
+        const modelHasEnd = roles.some((r) => r.role === "end");
+        let startTaken = link.refImages.some(
           (r) => r.roleAssignment?.kind === "start",
         );
-        const shouldAutoStart = modelHasStart && !startTaken;
-        const added = newPaths.map<RefImage>((p, i) => ({
-          path: p,
-          roleAssignment:
-            shouldAutoStart && i === 0 ? { kind: "start" } : null,
-        }));
+        let endTaken = link.refImages.some(
+          (r) => r.roleAssignment?.kind === "end",
+        );
+        const added = newPaths.map<RefImage>((p) => {
+          const isImg = classifyMedia(p) === "image";
+          if (isImg && modelHasStart && !startTaken) {
+            startTaken = true;
+            return { path: p, roleAssignment: { kind: "start" } };
+          }
+          if (isImg && modelHasEnd && !endTaken) {
+            endTaken = true;
+            return { path: p, roleAssignment: { kind: "end" } };
+          }
+          return { path: p, roleAssignment: null };
+        });
         return patchActive(s, {
           refImages: [...link.refImages, ...added],
         });
@@ -302,6 +346,23 @@ export const useGenerationStore = create<State & Actions>((set) => {
           }
           return r;
         });
+        return patchActive(s, { refImages: ensureFrontals(next) });
+      });
+    },
+    swapRoleAssignments(pathA, pathB) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link || pathA === pathB) return {} as Partial<State>;
+        const a = link.refImages.find((r) => r.path === pathA);
+        const b = link.refImages.find((r) => r.path === pathB);
+        if (!a || !b) return {} as Partial<State>;
+        const next = link.refImages.map((r) =>
+          r.path === pathA
+            ? { ...r, roleAssignment: b.roleAssignment }
+            : r.path === pathB
+              ? { ...r, roleAssignment: a.roleAssignment }
+              : r,
+        );
         return patchActive(s, { refImages: ensureFrontals(next) });
       });
     },

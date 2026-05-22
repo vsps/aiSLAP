@@ -8,6 +8,7 @@ import type {
 } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { useTimelineStore } from "./timelineStore";
+import { useScriptStore } from "./scriptStore";
 
 type PromptScope = "sequence" | "shot";
 type ViewMode = "columns" | "starred";
@@ -141,6 +142,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       shotHistory: emptyChannel(),
     });
     useTimelineStore.getState().reset();
+    void useScriptStore.getState().loadFor(normalized);
   },
 
   async setSequence(sequencePath) {

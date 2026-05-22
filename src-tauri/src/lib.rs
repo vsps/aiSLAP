@@ -41,6 +41,8 @@ pub fn run() {
             commands::session::sequence_prompt_append,
             commands::session::shot_prompt_append,
             commands::session::shot_prompts_append,
+            commands::session::script_read,
+            commands::session::script_write,
             commands::metadata::image_metadata_read,
             commands::metadata::image_metadata_write,
             commands::metadata::image_delete,
