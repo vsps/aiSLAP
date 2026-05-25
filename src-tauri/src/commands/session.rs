@@ -925,6 +925,16 @@ pub fn script_write(project_path: String, content: String) -> AppResult<()> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn dir_ensure(path: String) -> AppResult<()> {
+    ensure_dir(&PathBuf::from(path))
+}
+
+#[tauri::command]
+pub fn dirs_exist(paths: Vec<String>) -> Vec<bool> {
+    paths.iter().map(|p| PathBuf::from(p).is_dir()).collect()
+}
+
 fn sanitize(name: &str) -> String {
     name.chars()
         .map(|c| match c {

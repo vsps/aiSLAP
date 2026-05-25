@@ -147,6 +147,13 @@ export async function computeTraceSet(imagePath: string): Promise<Set<string>> {
 /** Add a gallery image to the current refs. Images already inside the current
  *  project tree are referenced by path. External imports are copied into
  *  GLOBAL SRC at the project root. */
+export async function replaceImageRef(imagePath: string): Promise<void> {
+  const gen = useGenerationStore.getState();
+  gen.removeAllRefs();
+  gen.setShotPrompts([""]);
+  await addImageToRefs(imagePath);
+}
+
 export async function addImageToRefs(imagePath: string): Promise<string> {
   const { shotPath, projectPath } = useSessionStore.getState();
   if (!shotPath) throw new Error("no shot open");
@@ -173,6 +180,7 @@ export type ImageAction =
   | "zoom"
   | "select"
   | "add_to_refs"
+  | "replace_ref"
   | "copy_path"
   | "copy_image"
   | "copy_settings"
@@ -264,6 +272,13 @@ export async function performImageAction(
     case "add_to_refs":
       try {
         await addImageToRefs(path);
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+      }
+      return;
+    case "replace_ref":
+      try {
+        await replaceImageRef(path);
       } catch (e) {
         await showMessage(String(e), { kind: "error" });
       }

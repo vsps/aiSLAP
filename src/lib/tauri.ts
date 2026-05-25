@@ -59,6 +59,10 @@ export const cmd = {
     rawInvoke("shot_create", { sequencePath, name }),
   shot_rescan: (shotPath: string): Promise<GalleryColumn[]> =>
     rawInvoke("shot_rescan", { shotPath }),
+  dirs_exist: (paths: string[]): Promise<boolean[]> =>
+    rawInvoke("dirs_exist", { paths }),
+  dir_ensure: (path: string): Promise<void> =>
+    rawInvoke("dir_ensure", { path }),
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),

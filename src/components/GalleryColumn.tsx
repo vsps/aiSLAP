@@ -108,6 +108,7 @@ export function GalleryColumn({
             onSelect={() => onImageAction("select", img.path)}
             onZoom={() => onImageAction("zoom", img.path)}
             onAddToRefs={() => onImageAction("add_to_refs", img.path)}
+            onReplaceRef={() => onImageAction("replace_ref", img.path)}
             onCopySettings={() => onImageAction("copy_settings", img.path)}
             onEdit={() => onImageAction("edit", img.path)}
             onCrop={() => onImageAction("crop", img.path)}

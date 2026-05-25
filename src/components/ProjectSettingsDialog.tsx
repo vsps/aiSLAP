@@ -3,7 +3,7 @@ import { cmd } from "../lib/tauri";
 import { showMessage } from "../lib/dialog";
 import { useScriptStore } from "../stores/scriptStore";
 import { useSessionStore } from "../stores/sessionStore";
-import { parseScript } from "../lib/script";
+import { normalizeTitle, parseScript } from "../lib/script";
 import type { Config } from "../lib/types";
 
 type Props = {
@@ -21,6 +21,10 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const [script, setScript] = useState(scriptRaw);
   const [busy, setBusy] = useState(false);
 
+  type PendingShot = { name: string; isNew: boolean };
+  type PendingSeq  = { seq: string; isNew: boolean; shots: PendingShot[] };
+  const [pendingDirs, setPendingDirs] = useState<PendingSeq[] | null>(null);
+
   const scriptCounts = useMemo(() => {
     const p = parseScript(script);
     let shots = 0;
@@ -36,7 +40,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   }, []);
 
   useEffect(() => {
-    setScript(scriptRaw);
+    const trimmed = scriptRaw.trimStart();
+    const hasAssets = /^#\s+ASSETS\b/i.test(trimmed);
+    setScript(hasAssets ? scriptRaw : "# ASSETS\n\n" + scriptRaw);
   }, [scriptRaw]);
 
   const closeRef = useRef(onClose);
@@ -48,6 +54,77 @@ export function ProjectSettingsDialog({ onClose }: Props) {
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, []);
+
+  function sanitizeName(name: string): string {
+    return [...name].map((c) =>
+      "/\\:*?\"<>|".includes(c) || c.charCodeAt(0) < 32 ? "_" : c
+    ).join("");
+  }
+
+  async function promptCreateDirs() {
+    if (!projectPath) return;
+    setBusy(true);
+    try {
+      const parsed = parseScript(script);
+      const seqNames = parsed.sequences.map((s) => s.title);
+      const seqPaths = seqNames.map((n) => `${projectPath}/${sanitizeName(n)}`);
+
+      const shotEntries: { seqIdx: number; name: string; path: string }[] = [];
+      for (let i = 0; i < parsed.sequences.length; i++) {
+        for (const s of parsed.shotsByParent.get(normalizeTitle(seqNames[i])) ?? []) {
+          shotEntries.push({ seqIdx: i, name: s.title, path: `${seqPaths[i]}/${sanitizeName(s.title)}` });
+        }
+      }
+
+      const exists = await cmd.dirs_exist([...seqPaths, ...shotEntries.map((e) => e.path)]);
+      const seqExists = exists.slice(0, seqPaths.length);
+      const shotExists = exists.slice(seqPaths.length);
+
+      const indexedShots = shotEntries.map((e, idx) => ({ ...e, idx }));
+      const preview = parsed.sequences.map((seq, i) => ({
+        seq: seq.title,
+        isNew: !seqExists[i],
+        shots: indexedShots
+          .filter((e) => e.seqIdx === i)
+          .map((e) => ({ name: e.name, isNew: !shotExists[e.idx] })),
+      }));
+      setPendingDirs(preview);
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmCreateDirs() {
+    if (!projectPath || !pendingDirs) return;
+    setPendingDirs(null);
+    setBusy(true);
+    try {
+      let newSeqs = 0;
+      let newShots = 0;
+      for (const { seq, isNew: seqIsNew, shots } of pendingDirs) {
+        const seqPath = await cmd.sequence_create(projectPath, seq);
+        if (seqIsNew) newSeqs++;
+        for (const { name, isNew: shotIsNew } of shots) {
+          await cmd.shot_create(seqPath, name);
+          if (shotIsNew) newShots++;
+        }
+      }
+      const sequences = await cmd.project_open(projectPath);
+      useSessionStore.setState({ sequencesInProject: sequences });
+      const { sequencePath } = useSessionStore.getState();
+      if (sequencePath) {
+        const { shots } = await cmd.sequence_open(sequencePath);
+        useSessionStore.setState({ shotsInSequence: shots });
+      }
+      await showMessage(`Created ${newSeqs} sequence(s), ${newShots} shot(s)`, { kind: "info" });
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save() {
     if (!config) return;
@@ -71,7 +148,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="bg-panel text-text max-w-[720px] w-full border border-dim shadow-xl"
+        className="relative bg-panel text-text max-w-[720px] w-full border border-dim shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-2 bg-surface text-text text-sm">Project Settings</div>
@@ -142,6 +219,13 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             Cancel
           </button>
           <button
+            className="px-3 py-1 bg-bg text-xs disabled:opacity-50"
+            disabled={busy || !projectPath || scriptCounts.sequences === 0}
+            onClick={promptCreateDirs}
+          >
+            CREATE DIRS
+          </button>
+          <button
             className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
             disabled={busy || !config}
             onClick={save}
@@ -149,6 +233,32 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             Save
           </button>
         </div>
+
+        {pendingDirs && (
+          <div className="absolute inset-0 bg-black/70 flex items-center justify-center p-6">
+            <div className="bg-panel border border-dim shadow-xl w-full max-w-sm flex flex-col">
+              <div className="px-4 py-2 bg-surface text-text text-sm">Create directories?</div>
+              <ul className="px-4 py-3 font-mono text-xs overflow-y-auto max-h-64 thin-scroll flex flex-col gap-0.5">
+                {pendingDirs.map(({ seq, isNew: seqIsNew, shots }) => (
+                  <li key={seq}>
+                    <span className={seqIsNew ? "text-accent" : "text-text"}>{seq}/</span>
+                    {shots.map(({ name, isNew: shotIsNew }) => (
+                      <div key={name} className={`pl-4 ${shotIsNew ? "text-accent" : "text-dim"}`}>{name}/</div>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+              <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
+                <button className="px-3 py-1 bg-bg text-xs" onClick={() => setPendingDirs(null)}>
+                  Cancel
+                </button>
+                <button className="px-3 py-1 bg-accent text-bg text-xs" onClick={confirmCreateDirs}>
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

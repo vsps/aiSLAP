@@ -87,6 +87,7 @@ export function TraceView({ onDragStart }: Props) {
                       onSelect={() => onAction("select", p)}
                       onZoom={() => onAction("zoom", p)}
                       onAddToRefs={() => onAction("add_to_refs", p)}
+                      onReplaceRef={() => onAction("replace_ref", p)}
                       onCopySettings={() => onAction("copy_settings", p)}
                       onEdit={() => onAction("edit", p)}
                       onCrop={() => onAction("crop", p)}

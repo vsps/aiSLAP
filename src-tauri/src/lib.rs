@@ -53,6 +53,8 @@ pub fn run() {
             commands::session::timeline_init,
             commands::session::sequence_timeline_save,
             commands::session::shot_clip_media_set,
+            commands::session::dirs_exist,
+            commands::session::dir_ensure,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

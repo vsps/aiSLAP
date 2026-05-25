@@ -71,6 +71,7 @@ export function StarredView({ onDragStart }: Props) {
                         onSelect={() => onAction("select", img.path)}
                         onZoom={() => onAction("zoom", img.path)}
                         onAddToRefs={() => onAction("add_to_refs", img.path)}
+                        onReplaceRef={() => onAction("replace_ref", img.path)}
                         onCopySettings={() => onAction("copy_settings", img.path)}
                         onEdit={() => onAction("edit", img.path)}
                         onCrop={() => onAction("crop", img.path)}

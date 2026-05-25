@@ -3,7 +3,8 @@ import { IconBtn } from "./IconBtn";
 import { InlinePrompt } from "./InlinePrompt";
 import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
-import { pickDirectory, showMessage } from "../lib/dialog";
+import { confirmAction, pickDirectory, showMessage } from "../lib/dialog";
+import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
 import { normalizeTitle } from "../lib/script";
 
@@ -43,6 +44,12 @@ export function SessionBar({
     if (!p) return;
     try {
       await setProject(p);
+      const normalized = p.replaceAll("\\", "/").replace(/\/+$/, "");
+      const [srcExists] = await cmd.dirs_exist([`${normalized}/SRC`]);
+      if (!srcExists) {
+        const ok = await confirmAction("No SRC folder found. Create it?", { title: "Global SRC" });
+        if (ok) await cmd.dir_ensure(`${normalized}/SRC`);
+      }
     } catch (e) {
       const msg = String(e);
       await showMessage(msg.includes("NOT A PROJECT FOLDER") ? "NOT A PROJECT FOLDER" : msg, { kind: "error" });

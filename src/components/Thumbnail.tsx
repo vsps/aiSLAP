@@ -14,6 +14,7 @@ type Props = {
   onSelect: () => void;
   onZoom: () => void;
   onAddToRefs: () => void;
+  onReplaceRef: () => void;
   onCopySettings: () => void;
   onEdit: () => void;
   onCrop?: () => void;
@@ -43,6 +44,7 @@ export function Thumbnail({
   onSelect,
   onZoom,
   onAddToRefs,
+  onReplaceRef,
   onCopySettings,
   onEdit,
   onCrop,
@@ -203,7 +205,7 @@ export function Thumbnail({
           />
         )}
         <IconBtn name="zoom_in" size={16} title="Zoom" onClick={onZoom} />
-        <IconBtn name="add_photo_alternate" size={16} title="Use as reference" onClick={onAddToRefs} />
+        <IconBtn name="add_photo_alternate" size={16} title="Use as reference (Ctrl: replace all)" onClick={(e) => (e.ctrlKey || e.metaKey ? onReplaceRef() : onAddToRefs())} />
         <IconBtn name="copy_all" size={16} title="Reuse prompt" onClick={onCopySettings} />
         {!image.isVideo && onCrop && (
           <IconBtn name="crop" size={16} title="Crop" onClick={onCrop} />
