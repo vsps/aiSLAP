@@ -20,6 +20,8 @@ pub fn run() {
             commands::config::fal_key_set,
             commands::config::provider_key_get,
             commands::config::provider_key_set,
+            commands::config::presets_load,
+            commands::config::presets_save,
             commands::models::models_load,
             commands::session::project_open,
             commands::session::sequence_open,
@@ -39,12 +41,18 @@ pub fn run() {
             commands::session::sequence_prompt_append,
             commands::session::shot_prompt_append,
             commands::session::shot_prompts_append,
+            commands::session::script_read,
+            commands::session::script_write,
             commands::metadata::image_metadata_read,
             commands::metadata::image_metadata_write,
             commands::metadata::image_delete,
             commands::metadata::column_delete,
             commands::download::download_to_path,
             commands::media::video_thumbnail_extract,
+            commands::media::timeline_export,
+            commands::session::timeline_init,
+            commands::session::sequence_timeline_save,
+            commands::session::shot_clip_media_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

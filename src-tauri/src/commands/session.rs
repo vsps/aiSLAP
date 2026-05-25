@@ -5,13 +5,15 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::domain::{
-    GalleryColumn, GalleryImage, ProjectSidecar, PromptEntry, SequenceSidecar, ShotSidecar,
+    GalleryColumn, GalleryImage, ProjectSidecar, PromptEntry, SequenceSidecar, SequenceTimeline,
+    ShotLatestMedia, ShotSidecar,
 };
 use crate::error::{AppError, AppResult};
 
 const PROJECT_SIDECAR: &str = "project.json";
 const SEQUENCE_SIDECAR: &str = "sequence.json";
 const SHOT_SIDECAR: &str = "shot.json";
+const TIMELINE_SIDECAR: &str = "timeline.json";
 const SRC_DIR: &str = "SRC";
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
@@ -260,6 +262,7 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
             &ShotSidecar {
                 name,
                 prompt_history: vec![],
+                clip_media_path: None,
             },
         )?;
     }
@@ -895,6 +898,33 @@ pub fn shot_prompts_append(shot_path: String, prompts: Vec<String>) -> AppResult
     Ok(sidecar)
 }
 
+const SCRIPT_FILE: &str = "script.md";
+const DEFAULT_SCRIPT: &str = "# Sequence 1\n\n## Shot 1\n\n## Shot 2\n\n## Shot 3\n";
+
+#[tauri::command]
+pub fn script_read(project_path: String) -> AppResult<String> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let p = root.join(SCRIPT_FILE);
+    if !p.exists() {
+        std::fs::write(&p, DEFAULT_SCRIPT)?;
+        return Ok(DEFAULT_SCRIPT.to_string());
+    }
+    Ok(std::fs::read_to_string(&p)?)
+}
+
+#[tauri::command]
+pub fn script_write(project_path: String, content: String) -> AppResult<()> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    std::fs::write(root.join(SCRIPT_FILE), content)?;
+    Ok(())
+}
+
 fn sanitize(name: &str) -> String {
     name.chars()
         .map(|c| match c {
@@ -903,4 +933,133 @@ fn sanitize(name: &str) -> String {
             c => c,
         })
         .collect()
+}
+
+// ---------- Timeline (NLE) ----------
+
+/// Pick the "latest media" for a shot: the last image (alphabetic by filename)
+/// in the latest non-SRC version directory. Returns None if the shot has no
+/// generation outputs.
+fn shot_latest_media(shot_path: &Path) -> Option<(PathBuf, bool)> {
+    if !shot_path.is_dir() {
+        return None;
+    }
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(shot_path)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| !n.starts_with('.') && !n.starts_with('$') && n != SRC_DIR)
+                .unwrap_or(false)
+        })
+        .collect();
+    versions.sort();
+    let latest = versions.into_iter().last()?;
+
+    let mut media: Vec<PathBuf> = std::fs::read_dir(&latest)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with(".thumb.png") {
+                return false;
+            }
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default();
+            IMAGE_EXTS.iter().any(|e| *e == ext) || VIDEO_EXTS.iter().any(|e| *e == ext)
+        })
+        .collect();
+    media.sort();
+    let last = media.into_iter().last()?;
+    let ext = last
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let is_video = VIDEO_EXTS.iter().any(|e| *e == ext);
+    Some((last, is_video))
+}
+
+fn shots_latest_media_scan(seq_path: &Path) -> AppResult<Vec<ShotLatestMedia>> {
+    if !seq_path.is_dir() {
+        return Err(AppError::Msg(format!(
+            "not a directory: {}",
+            as_str(seq_path)
+        )));
+    }
+    let mut out: Vec<ShotLatestMedia> = Vec::new();
+    let mut shot_dirs: Vec<PathBuf> = std::fs::read_dir(seq_path)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| !n.starts_with('.') && !n.starts_with('$') && n != SRC_DIR)
+                .unwrap_or(false)
+        })
+        .collect();
+    shot_dirs.sort();
+
+    for shot in shot_dirs {
+        let sidecar: ShotSidecar = read_sidecar(&shot.join(SHOT_SIDECAR))?;
+        let latest = shot_latest_media(&shot);
+        out.push(ShotLatestMedia {
+            shot_path: as_str(&shot),
+            media_path: latest.as_ref().map(|(p, _)| as_str(p)),
+            is_video: latest.as_ref().map(|(_, v)| *v).unwrap_or(false),
+            clip_media_path: sidecar.clip_media_path,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineInitResult {
+    pub timeline: SequenceTimeline,
+    pub shots_latest_media: Vec<ShotLatestMedia>,
+}
+
+#[tauri::command]
+pub fn timeline_init(seq_path: String) -> AppResult<TimelineInitResult> {
+    let root = PathBuf::from(&seq_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {seq_path}")));
+    }
+    let timeline: SequenceTimeline = read_sidecar(&root.join(TIMELINE_SIDECAR))?;
+    let shots_latest_media = shots_latest_media_scan(&root)?;
+    Ok(TimelineInitResult {
+        timeline,
+        shots_latest_media,
+    })
+}
+
+#[tauri::command]
+pub fn sequence_timeline_save(seq_path: String, timeline: SequenceTimeline) -> AppResult<()> {
+    let root = PathBuf::from(&seq_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {seq_path}")));
+    }
+    write_sidecar_atomic(&root.join(TIMELINE_SIDECAR), &timeline)
+}
+
+#[tauri::command]
+pub fn shot_clip_media_set(shot_path: String, media_path: Option<String>) -> AppResult<()> {
+    let root = PathBuf::from(&shot_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
+    }
+    let path = root.join(SHOT_SIDECAR);
+    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
+    sidecar.clip_media_path = media_path;
+    write_sidecar_atomic(&path, &sidecar)
 }

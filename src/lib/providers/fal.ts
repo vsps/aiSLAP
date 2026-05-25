@@ -3,6 +3,7 @@ import type { QueueStatus } from "@fal-ai/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
+import type { Config, FalLifecycle } from "../types";
 import {
   isVideoUrl,
   type Provider,
@@ -12,10 +13,16 @@ import {
 } from "./provider";
 
 export class FalProvider implements Provider {
+  private lifecycle: FalLifecycle | undefined;
+
   async prepare(): Promise<void> {
-    const key = await cmd.provider_key_get("fal").catch(() => "");
+    const [key, cfg] = await Promise.all([
+      cmd.provider_key_get("fal").catch(() => ""),
+      cmd.config_load().catch(() => null),
+    ]);
     if (!key) throw new Error("FAL_KEY not configured — open Settings.");
     fal.config({ credentials: key, fetch: tauriFetch as unknown as typeof fetch });
+    this.lifecycle = (cfg as Config | null)?.falLifecycle;
   }
 
   async uploadFile(file: File, _signal: AbortSignal): Promise<string> {
@@ -30,7 +37,11 @@ export class FalProvider implements Provider {
   ): Promise<ProviderOutput> {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
 
-    const enqueued = await fal.queue.submit(endpoint, { input, abortSignal: signal });
+    const enqueued = await fal.queue.submit(endpoint, {
+      input,
+      abortSignal: signal,
+      ...(this.lifecycle ? { storageSettings: { expiresIn: this.lifecycle } } : {}),
+    });
     const requestId = enqueued.request_id;
 
     emitProgress(enqueued, onProgress);

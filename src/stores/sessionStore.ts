@@ -7,6 +7,8 @@ import type {
   SeqStarredGroup,
 } from "../lib/types";
 import { cmd } from "../lib/tauri";
+import { useTimelineStore } from "./timelineStore";
+import { useScriptStore } from "./scriptStore";
 
 type PromptScope = "sequence" | "shot";
 type ViewMode = "columns" | "starred";
@@ -39,6 +41,7 @@ type State = {
   galleryHeight: number;
   thumbColWidth: number;
   logHeight: number;
+  timelineHeight: number;
 };
 
 type Actions = {
@@ -70,6 +73,7 @@ type Actions = {
   setGalleryHeight: (n: number) => void;
   setThumbColWidth: (n: number) => void;
   setLogHeight: (n: number) => void;
+  setTimelineHeight: (n: number) => void;
 };
 
 const GALLERY_H_MIN = 120;
@@ -78,6 +82,8 @@ const THUMB_W_MIN = 154;
 const THUMB_W_MAX = 400;
 const LOG_H_MIN = 24;
 const LOG_H_MAX = 600;
+const TIMELINE_H_MIN = 45;
+const TIMELINE_H_MAX = 400;
 const clamp = (n: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, Math.round(n)));
 
@@ -116,6 +122,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   galleryHeight: 400,
   thumbColWidth: THUMB_W_MIN,
   logHeight: 78,
+  timelineHeight: TIMELINE_H_MIN,
 
   async setProject(projectPath) {
     // Rust's list_dirs returns forward-slash paths. Normalize the incoming path
@@ -134,6 +141,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       sequenceHistory: emptyChannel(),
       shotHistory: emptyChannel(),
     });
+    useTimelineStore.getState().reset();
+    void useScriptStore.getState().loadFor(normalized);
   },
 
   async setSequence(sequencePath) {
@@ -155,9 +164,17 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     if (get().viewMode === "starred") {
       void get().rescanStarred();
     }
+    // Kick the timeline load in parallel with the shot load — they're independent.
+    const timelineLoad = useTimelineStore
+      .getState()
+      .loadForSequence(sequencePath)
+      .catch(() => {
+        /* non-fatal — leave the timeline empty if init fails */
+      });
     if (shots.length > 0) {
       await get().setShot(shots[shots.length - 1]);
     }
+    await timelineLoad;
   },
 
   async setShot(shotPath) {
@@ -209,6 +226,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     const shotPath = await cmd.shot_create(sequencePath, name);
     const { shots } = await cmd.sequence_open(sequencePath);
     set({ shotsInSequence: shots });
+    const tl = useTimelineStore.getState();
+    if (tl.seqPath === sequencePath) tl.appendShotClip(shotPath);
     await get().setShot(shotPath);
   },
 
@@ -307,5 +326,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   },
   setLogHeight(n) {
     set({ logHeight: clamp(n, LOG_H_MIN, LOG_H_MAX) });
+  },
+  setTimelineHeight(n) {
+    set({ timelineHeight: clamp(n, TIMELINE_H_MIN, TIMELINE_H_MAX) });
   },
 }));

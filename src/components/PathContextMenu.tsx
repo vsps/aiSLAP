@@ -2,45 +2,57 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { performImageAction, type ImageAction } from "../lib/actions";
 
 type AvailableAction = Exclude<ImageAction, "select">;
+type MenuItem = AvailableAction | "---";
 
 type Props = {
   x: number;
   y: number;
   path: string;
   onClose: () => void;
-  // Which items to show, in order. Default: all.
-  items?: AvailableAction[];
+  // Which items to show, in order. "---" renders a separator. Default: all.
+  items?: MenuItem[];
 };
 
-const DEFAULT_ITEMS: AvailableAction[] = [
+const DEFAULT_ITEMS: MenuItem[] = [
   "add_to_refs",
+  "copy_settings",
+  "restore_chain",
+  "---",
+  "zoom",
+  "edit",
+  "crop",
+  "trace",
+  "---",
   "toggle_star",
+  "set_clip_media",
+  "---",
+  "copy_prompt",
   "copy_path",
   "copy_image",
-  "copy_prompt",
-  "copy_settings",
-  "rename",
-  "trace",
-  "zoom",
-  "refresh",
+  "copy_to_global_src",
   "open_location",
+  "rename",
+  "---",
   "delete",
 ];
 
 const LABELS: Record<AvailableAction, string> = {
-  add_to_refs: "Add to references",
-  toggle_star: "Toggle star",
+  add_to_refs: "Use as reference",
+  toggle_star: "Promote to visible",
+  set_clip_media: "Set as clip media",
   copy_path: "Copy path",
   copy_image: "Copy image",
+  copy_to_global_src: "Copy to GLOBAL SRC",
   copy_prompt: "Copy prompt",
   copy_settings: "Reuse prompt",
+  restore_chain: "Restore chain",
   rename: "Rename...",
   edit: "Edit (draw)",
   crop: "Crop",
   trace: "Trace origins",
   zoom: "Zoom",
   refresh: "Refresh",
-  open_location: "Open location",
+  open_location: "Open Location",
   delete: "Delete",
 };
 
@@ -99,17 +111,21 @@ export function PathContextMenu({
       style={{ left: pos.left, top: pos.top }}
       onClick={(e) => e.stopPropagation()}
     >
-      {items.map((a) => (
-        <button
-          key={a}
-          type="button"
-          onClick={run(a)}
-          title={LABELS[a]}
-          className="w-full text-left px-1.5 py-[2px] hover:bg-accent"
-        >
-          {LABELS[a]}
-        </button>
-      ))}
+      {items.map((a, i) =>
+        a === "---" ? (
+          <div key={`sep-${i}`} className="my-0.5 border-t border-dim" />
+        ) : (
+          <button
+            key={a}
+            type="button"
+            onClick={run(a)}
+            title={LABELS[a]}
+            className="w-full text-left px-1.5 py-[2px] hover:bg-accent"
+          >
+            {LABELS[a]}
+          </button>
+        ),
+      )}
     </div>
   );
 }

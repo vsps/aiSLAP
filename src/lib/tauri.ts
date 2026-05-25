@@ -1,5 +1,6 @@
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import type {
+  ChainPreset,
   Config,
   AppState,
   ModelEntry,
@@ -8,6 +9,9 @@ import type {
   ShotSidecar,
   ImageMetadata,
   SeqStarredGroup,
+  SequenceTimeline,
+  TimelineInit,
+  TimelineExportParams,
 } from "./types";
 
 // Thin typed wrapper over Tauri commands. Keep names 1:1 with Rust #[tauri::command] fns.
@@ -21,6 +25,11 @@ export const cmd = {
   app_state_load: (): Promise<AppState | null> => rawInvoke("app_state_load"),
   app_state_save: (state: AppState): Promise<void> =>
     rawInvoke("app_state_save", { state }),
+
+  presets_load: (): Promise<{ presets: ChainPreset[] }> =>
+    rawInvoke("presets_load"),
+  presets_save: (data: { presets: ChainPreset[] }): Promise<void> =>
+    rawInvoke("presets_save", { data }),
 
   fal_key_get: (): Promise<string> => rawInvoke("fal_key_get"),
   fal_key_set: (key: string): Promise<void> =>
@@ -73,6 +82,11 @@ export const cmd = {
   ): Promise<ShotSidecar> =>
     rawInvoke("shot_prompts_append", { shotPath, prompts }),
 
+  script_read: (projectPath: string): Promise<string> =>
+    rawInvoke("script_read", { projectPath }),
+  script_write: (projectPath: string, content: string): Promise<void> =>
+    rawInvoke("script_write", { projectPath, content }),
+
   version_create_next: (shotPath: string): Promise<string> =>
     rawInvoke("version_create_next", { shotPath }),
 
@@ -115,4 +129,20 @@ export const cmd = {
     ffmpegPath: string,
   ): Promise<boolean> =>
     rawInvoke("video_thumbnail_extract", { videoPath, thumbPath, ffmpegPath }),
+
+  // Timeline
+  timeline_init: (seqPath: string): Promise<TimelineInit> =>
+    rawInvoke("timeline_init", { seqPath }),
+  sequence_timeline_save: (
+    seqPath: string,
+    timeline: SequenceTimeline,
+  ): Promise<void> =>
+    rawInvoke("sequence_timeline_save", { seqPath, timeline }),
+  shot_clip_media_set: (
+    shotPath: string,
+    mediaPath: string | null,
+  ): Promise<void> =>
+    rawInvoke("shot_clip_media_set", { shotPath, mediaPath }),
+  timeline_export: (params: TimelineExportParams): Promise<void> =>
+    rawInvoke("timeline_export", { params }),
 };

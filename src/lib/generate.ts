@@ -4,6 +4,9 @@ import { fileSrc } from "./assets";
 import { confirmAction } from "./dialog";
 import { pushLog } from "../stores/logStore";
 import type {
+  ChainLink,
+  ChainLinkPersisted,
+  ChainMetadataBlock,
   Config,
   ImageMetadata,
   Job,
@@ -17,8 +20,11 @@ import { useSessionStore } from "../stores/sessionStore";
 import { getProvider } from "./providers";
 import type { ProviderOutput, ProviderProgress } from "./providers";
 import { extractErrorMessage } from "./errors";
-import { buildArgs, guessContentType } from "./args";
+import { buildArgs, combinePromptParts, guessContentType } from "./args";
+import { findSequenceBody, findShotBody } from "./script";
+import { useScriptStore } from "../stores/scriptStore";
 import { playSound } from "./audio";
+import { preflightChain } from "./chainValidation";
 // Per-job AbortController. Keyed by job id so cancellation can target one or all.
 const abortControllers = new Map<string, AbortController>();
 
@@ -42,7 +48,10 @@ type JobSpec = {
   node: ModelNode;
   sequencePrompt: string;
   shotPrompts: string[];
-  shotPrompt: string; // combined; used for API + metadata
+  shotPrompt: string; // pre-join of shotPrompts; metadata only
+  /** Final combined prompt actually sent to the API. Computed at enqueue time
+   *  from script segments + sequence/shot prompts respecting inclusion flags. */
+  combinedPrompt: string;
   settings: Record<string, unknown>;
   refs: RefImage[];
   iterations: number;
@@ -50,7 +59,43 @@ type JobSpec = {
   targetVersion: string;
   ffmpegPath: string;
   filenameTemplate: string;
+  /** Chain provenance — set on every link of a multi-link chain submission.
+   *  When present, every output's metadata sidecar inherits this block (the
+   *  runner copies the value into `ChainMetadataBlock` in buildMetadataRecord). */
+  chain?: Omit<ChainMetadataBlock, "nextMediaPaths">;
+  /** Chain-runner hooks. Invoked once each at terminal job status.
+   *  outputs[] is the absolute on-disk paths written by this job. */
+  onComplete?: (outputs: string[]) => void;
+  onFailed?: (err: unknown) => void;
+  onCancelled?: () => void;
 };
+
+/** Build the final combined prompt for a link respecting inclusion flags and
+ *  the loaded script segments matched against current sequence/shot folders. */
+function buildCombinedForLink(
+  link: ChainLink,
+  sequencePath: string | null,
+  shotPath: string | null,
+): string {
+  const parsed = useScriptStore.getState().parsed;
+  const seqName = sequencePath ? basename(sequencePath) : "";
+  const shotName = shotPath ? basename(shotPath) : "";
+  const sequenceScript = seqName ? findSequenceBody(parsed, seqName) : "";
+  const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
+  const shotIncludes = link.shotPromptsIncluded ?? link.shotPrompts.map(() => true);
+  return combinePromptParts({
+    sequenceScript,
+    sequencePrompt: link.sequencePrompt,
+    shotScript,
+    shotPrompts: link.shotPrompts,
+    includes: {
+      sequenceScript: link.sequenceScriptIncluded !== false,
+      sequencePrompt: link.sequencePromptIncluded !== false,
+      shotScript: link.shotScriptIncluded !== false,
+      shotPrompts: link.shotPrompts.map((_, i) => shotIncludes[i] !== false),
+    },
+  });
+}
 
 /** Preflight ref-role check. Returns false when the user cancels. */
 async function preflightRefs(
@@ -100,13 +145,8 @@ export async function enqueueGeneration(): Promise<void> {
     return;
   }
 
-  const shotCombined = gen.shotPrompts
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
-  const combined = [gen.sequencePrompt, shotCombined]
-    .filter((s) => s.trim().length > 0)
-    .join("\n\n");
+  const activeLink = gen.expandedIdx != null ? gen.links[gen.expandedIdx] : gen.links[0];
+  const combined = buildCombinedForLink(activeLink, session.sequencePath, session.shotPath);
   if (combined.length === 0) {
     gen.setError("Both prompts are empty.");
     return;
@@ -150,6 +190,7 @@ export async function enqueueGeneration(): Promise<void> {
     sequencePrompt: gen.sequencePrompt,
     shotPrompts,
     shotPrompt,
+    combinedPrompt: combined,
     settings: { ...gen.settings },
     refs: gen.refImages.slice(),
     iterations,
@@ -200,6 +241,252 @@ export async function enqueueGeneration(): Promise<void> {
   }
 
   void pumpQueue();
+}
+
+// ---------- Chain submission ----------
+
+function persistLink(l: ChainLink): ChainLinkPersisted {
+  return {
+    id: l.id,
+    active: l.active,
+    modelId: l.model?.id ?? null,
+    settings: l.settings,
+    sequencePrompt: l.sequencePrompt,
+    shotPrompts: l.shotPrompts,
+    refImages: l.refImages,
+    consumesPrev: l.consumesPrev,
+    sequencePromptIncluded: l.sequencePromptIncluded,
+    sequenceScriptIncluded: l.sequenceScriptIncluded,
+    shotScriptIncluded: l.shotScriptIncluded,
+    shotPromptsIncluded: l.shotPromptsIncluded,
+  };
+}
+
+/** Pick a role for the synthetic chain_prev ref so it lands in the right
+ *  API slot. Defaults to null when the model has neither a "start" nor a
+ *  "source" role (args.ts's fallback then routes it as an element/source). */
+function chainPrevRole(model: ModelNode, prevPath: string): RoleAssignment | null {
+  const roles = model.ref_roles ?? [];
+  const isVideo = /\.(mp4|webm|mov|mkv|m4v|avi)$/i.test(prevPath);
+  // Video → prefer source (img2img / vid2vid).
+  // Image → prefer start (img → video), else source.
+  if (isVideo && roles.some((r) => r.role === "source")) return { kind: "source" };
+  if (!isVideo && roles.some((r) => r.role === "start")) return { kind: "start" };
+  if (roles.some((r) => r.role === "source")) return { kind: "source" };
+  return null;
+}
+
+/** Enqueue a multi-link chain. Each active link runs sequentially; the
+ *  previous link's first output is fed as a synthetic ref to the next.
+ *  The final link runs `iterations` times. Cancellation of any step
+ *  aborts the rest of the chain. */
+export async function enqueueChain(): Promise<void> {
+  const gen = useGenerationStore.getState();
+  const session = useSessionStore.getState();
+
+  const links = gen.links;
+  const activeLinks = links.filter((l) => l.active);
+  if (activeLinks.length === 0) {
+    gen.setError("Chain has no active links.");
+    return;
+  }
+  // When the whole chain reduces to one link and that link is the lone
+  // member, use the existing single-shot path so today's metadata stays
+  // identical. With multiple defined-but-skipped links present, fall
+  // through to the chain runner so its sole active link is still selected
+  // correctly (mirrors may not point at it).
+  if (activeLinks.length === 1 && links.length === 1) {
+    return enqueueGeneration();
+  }
+  const errors = preflightChain(links).filter((p) => p.severity === "error");
+  if (errors.length > 0) {
+    gen.setError(`Chain preflight failed: ${errors[0].message}`);
+    return;
+  }
+  if (!session.shotPath) {
+    gen.setError("Open a shot first.");
+    return;
+  }
+  const headLink = activeLinks[0];
+  if (!headLink.model) {
+    gen.setError("Head link has no model.");
+    return;
+  }
+
+  // Use today's preflight on the head link only — downstream links receive
+  // a synthetic prev-ref so their role expectations are met automatically.
+  if (!(await preflightRefs(headLink.model, headLink.refImages))) return;
+
+  const config = (await cmd.config_load().catch(() => null)) as Config | null;
+  const ffmpegPath = config?.ffmpegPath ?? "";
+  const filenameTemplate = config?.filenameTemplate ?? "";
+  cachedMaxConcurrent = Math.max(1, config?.maxConcurrentJobs ?? 3);
+
+  try {
+    await getProvider(headLink.model.provider).prepare();
+  } catch (e) {
+    gen.setError(e instanceof Error ? e.message : String(e));
+    return;
+  }
+
+  let targetVersion = session.targetVersion;
+  if (!targetVersion || targetVersion === "SRC") {
+    targetVersion = await cmd.version_create_next(session.shotPath);
+    useSessionStore.setState({ targetVersion });
+  }
+
+  // Append history once from the head link (per design decision: chain
+  // submissions log only the entrance into the chain).
+  if (session.sequencePath && headLink.sequencePrompt.length > 0) {
+    try {
+      const sidecar = await cmd.sequence_prompt_append(
+        session.sequencePath,
+        headLink.sequencePrompt,
+      );
+      useSessionStore.getState().hydrateSequenceSidecar(sidecar);
+    } catch {
+      /* swallow */
+    }
+  }
+  const headPanels = headLink.shotPrompts
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (headPanels.length > 0) {
+    try {
+      const sidecar = await cmd.shot_prompts_append(
+        session.shotPath,
+        headPanels,
+      );
+      useSessionStore.getState().hydrateShotSidecar(sidecar);
+    } catch {
+      /* swallow */
+    }
+  }
+
+  const chainId = crypto.randomUUID();
+  const linksSnapshot = links.map(persistLink);
+  const iterations = Math.max(1, gen.iterations | 0);
+  const shotPath = session.shotPath;
+  const tFfmpeg = ffmpegPath;
+  const tTemplate = filenameTemplate;
+
+  pushLog("INFO", `Chain started · ${activeLinks.length} links`, chainId.slice(0, 6));
+
+  // Fire-and-forget driver — runs each link, awaits, feeds the next.
+  void (async () => {
+    let prevMediaPath: string | null = null;
+    for (let i = 0; i < activeLinks.length; i++) {
+      const link = activeLinks[i];
+      if (!link.model) break;
+      const isLast = i === activeLinks.length - 1;
+
+      const linkRefs: RefImage[] = link.refImages.filter(
+        (r) => r.roleAssignment?.kind !== "chain_prev",
+      );
+      if (link.consumesPrev && prevMediaPath) {
+        linkRefs.unshift({
+          path: prevMediaPath,
+          roleAssignment: chainPrevRole(link.model, prevMediaPath),
+        });
+      }
+
+      const id = crypto.randomUUID();
+      const tag = id.slice(0, 6);
+      const combinedShot = link.shotPrompts
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .join("\n\n");
+
+      const linkCombined = buildCombinedForLink(link, session.sequencePath, shotPath);
+      const spec: JobSpec = {
+        id,
+        tag,
+        node: link.model,
+        sequencePrompt: link.sequencePrompt,
+        shotPrompts: link.shotPrompts.slice(),
+        shotPrompt: combinedShot,
+        combinedPrompt: linkCombined,
+        settings: { ...link.settings },
+        refs: linkRefs,
+        // Only the final link honors the iterations field; intermediates run once.
+        iterations: isLast ? iterations : 1,
+        shotPath,
+        targetVersion: targetVersion!,
+        ffmpegPath: tFfmpeg,
+        filenameTemplate: tTemplate,
+        chain: {
+          chainId,
+          linkIndex: i,
+          linkCount: activeLinks.length,
+          prevMediaPath: prevMediaPath ?? undefined,
+          links: linksSnapshot,
+        },
+      };
+
+      const outputs = await queueAndAwait(spec);
+      if (outputs == null || outputs.length === 0) {
+        pushLog("INFO", `Chain aborted at link ${i + 1}`, chainId.slice(0, 6));
+        return;
+      }
+
+      // Backfill predecessor sidecar with downstream paths so a future
+      // restore-chain knows the full graph.
+      if (prevMediaPath) {
+        await appendChainNextMediaPaths(prevMediaPath, outputs).catch(() => {
+          /* swallow — backfill is best-effort */
+        });
+      }
+
+      prevMediaPath = outputs[0];
+    }
+    pushLog("SUCCESS", "Chain finished", chainId.slice(0, 6));
+  })();
+}
+
+function queueAndAwait(spec: JobSpec): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    spec.onComplete = (outs) => resolve(outs);
+    spec.onFailed = () => resolve(null);
+    spec.onCancelled = () => resolve(null);
+
+    const job: Job = {
+      id: spec.id,
+      status: "queued",
+      progressMessage: spec.chain
+        ? `Queued (link ${spec.chain.linkIndex + 1}/${spec.chain.linkCount})`
+        : "Queued",
+      currentIteration: 0,
+      iterations: spec.iterations,
+      modelName: spec.node.name,
+      shotPath: spec.shotPath,
+      targetVersion: spec.targetVersion,
+      startedAt: performance.now(),
+    };
+    jobSpecs.set(spec.id, spec);
+    useGenerationStore.getState().addJob(job);
+    void pumpQueue();
+  });
+}
+
+/** Backfill the chain.nextMediaPaths array on a predecessor's sidecar. */
+async function appendChainNextMediaPaths(
+  prevMediaPath: string,
+  newOutputs: string[],
+): Promise<void> {
+  const meta = (await cmd
+    .image_metadata_read(prevMediaPath)
+    .catch(() => null)) as ImageMetadata | null;
+  if (!meta || !meta.chain) return;
+  const existing = meta.chain.nextMediaPaths ?? [];
+  const merged = [...existing];
+  for (const o of newOutputs) {
+    if (!merged.includes(o)) merged.push(o);
+  }
+  const next: ImageMetadata = {
+    ...meta,
+    chain: { ...meta.chain, nextMediaPaths: merged },
+  };
+  await cmd.image_metadata_write(prevMediaPath, next);
 }
 
 function activeJobCount(): number {
@@ -254,6 +541,7 @@ export function cancelAllGenerations(): void {
     )
       continue;
     if (j.status === "queued") {
+      const spec = jobSpecs.get(j.id);
       jobSpecs.delete(j.id);
       state.updateJob(j.id, {
         status: "cancelled",
@@ -261,6 +549,7 @@ export function cancelAllGenerations(): void {
       });
       schedulePrune(j.id);
       pushLog("INFO", "Cancelled (was queued)", j.id.slice(0, 6));
+      spec?.onCancelled?.();
       continue;
     }
     state.updateJob(j.id, {
@@ -302,8 +591,7 @@ async function runJob(spec: JobSpec): Promise<void> {
 
     const baseArgs = buildArgs(
       spec.node,
-      spec.sequencePrompt,
-      spec.shotPrompt,
+      spec.combinedPrompt,
       spec.settings,
       uploaded,
     );
@@ -349,6 +637,7 @@ async function runJob(spec: JobSpec): Promise<void> {
         expandToIterations: false,
         ffmpegPath: spec.ffmpegPath,
         filenameTemplate: spec.filenameTemplate,
+        chain: spec.chain,
       });
       totalOutputs.push(...outs);
       // Rescan only when the freshly-written shot is what the user is viewing;
@@ -368,6 +657,10 @@ async function runJob(spec: JobSpec): Promise<void> {
       if (useSessionStore.getState().shotPath === spec.shotPath) {
         await useSessionStore.getState().rescanShot();
       }
+      spec.onComplete?.(totalOutputs);
+    } else {
+      // Loop exited via abort partway through — surface as cancellation.
+      spec.onCancelled?.();
     }
   } catch (e: unknown) {
     const err = e as { name?: string };
@@ -377,6 +670,7 @@ async function runJob(spec: JobSpec): Promise<void> {
         progressMessage: "Cancelled",
       });
       pushLog("INFO", "Cancelled by user", tag);
+      spec.onCancelled?.();
     } else {
       // Always dump the raw error so dev tools shows every field — wrappers
       // around fetch/SDK errors otherwise lose status/body when stringified.
@@ -390,6 +684,7 @@ async function runJob(spec: JobSpec): Promise<void> {
       });
       gen.setError(msg);
       pushLog("ERROR", msg, tag);
+      spec.onFailed?.(e);
     }
   } finally {
     abortControllers.delete(spec.id);
@@ -467,6 +762,7 @@ type DownloadCtx = {
   expandToIterations: boolean;
   ffmpegPath: string;
   filenameTemplate: string;
+  chain?: Omit<ChainMetadataBlock, "nextMediaPaths">;
 };
 
 async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
@@ -540,6 +836,7 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
     iterationTotal: ctx.iterationTotal > 1 ? ctx.iterationTotal : undefined,
     timestamp: new Date().toISOString(),
     providerResponse: ctx.out.raw,
+    chain: ctx.chain,
   };
 }
 

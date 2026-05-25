@@ -26,6 +26,10 @@ type Props = {
   traceActive?: boolean;
   /** Disables drag start. Used in the starred view where drag-to-column has no destination. */
   dragDisabled?: boolean;
+  /** Whether this image is currently the shot's exclusive "clip media" pick. */
+  clipMediaSelected?: boolean;
+  /** When defined, renders the clip-media toggle button. */
+  onToggleClipMedia?: () => void;
 };
 
 const DRAG_THRESHOLD_PX = 5;
@@ -45,6 +49,8 @@ export function Thumbnail({
   onToggleStar,
   onDragStart,
   dragDisabled,
+  clipMediaSelected,
+  onToggleClipMedia,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   // Aspect = height/width. Initial 1 (square) while we probe the natural size,
@@ -163,6 +169,14 @@ export function Thumbnail({
           <Icon name="visibility" size={18} fill />
         </span>
       )}
+      {clipMediaSelected && (
+        <span
+          className="absolute bottom-1 right-1 text-accent drop-shadow pointer-events-none group-hover:opacity-0 transition-opacity"
+          title="Clip media"
+        >
+          <Icon name="movie" size={18} fill />
+        </span>
+      )}
 
       {/* Action strip — top */}
       <div
@@ -178,8 +192,18 @@ export function Thumbnail({
           onClick={onToggleStar}
           className={image.starred ? "text-accent" : ""}
         />
+        {onToggleClipMedia && (
+          <IconBtn
+            name="movie"
+            size={16}
+            fill={!!clipMediaSelected}
+            title={clipMediaSelected ? "Clear clip media" : "Set as clip media"}
+            onClick={onToggleClipMedia}
+            className={clipMediaSelected ? "text-accent" : ""}
+          />
+        )}
         <IconBtn name="zoom_in" size={16} title="Zoom" onClick={onZoom} />
-        <IconBtn name="add_photo_alternate" size={16} title="Add to refs" onClick={onAddToRefs} />
+        <IconBtn name="add_photo_alternate" size={16} title="Use as reference" onClick={onAddToRefs} />
         <IconBtn name="copy_all" size={16} title="Reuse prompt" onClick={onCopySettings} />
         {!image.isVideo && onCrop && (
           <IconBtn name="crop" size={16} title="Crop" onClick={onCrop} />

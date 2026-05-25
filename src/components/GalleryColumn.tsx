@@ -3,6 +3,7 @@ import type { ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
 import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
+import { useTimelineStore } from "../stores/timelineStore";
 import { basename } from "../lib/paths";
 
 export type DragState = {
@@ -39,7 +40,12 @@ export function GalleryColumn({
   onRefresh,
   onDragStart,
 }: Props) {
-  const { targetVersion, setTargetVersion, selectedImagePath } = useSessionStore();
+  const { targetVersion, setTargetVersion, selectedImagePath, shotPath } =
+    useSessionStore();
+  const clipMediaPath = useTimelineStore((s) =>
+    shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
+  );
+  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
   const twoCol = width > 220;
 
   const isTarget = targetVersion === column.version;
@@ -107,6 +113,16 @@ export function GalleryColumn({
             onCrop={() => onImageAction("crop", img.path)}
             onToggleStar={() => onImageAction("toggle_star", img.path)}
             onDragStart={onDragStart}
+            clipMediaSelected={img.path === clipMediaPath}
+            onToggleClipMedia={
+              shotPath && !column.isSrc
+                ? () =>
+                    void setShotClipMedia(
+                      shotPath,
+                      img.path === clipMediaPath ? null : img.path,
+                    )
+                : undefined
+            }
           />
         ))}
         {column.images.length === 0 && (

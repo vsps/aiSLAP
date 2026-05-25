@@ -6,10 +6,11 @@ export type ModelKind = "image" | "video";
 
 export type ModelInput = {
   name: string;
-  data_type: "STRING" | "IMAGE" | "VIDEO";
+  data_type: "STRING" | "IMAGE" | "VIDEO" | "AUDIO";
   api_field: string;
   api_format?: "array";
-  required: boolean;
+  required?: boolean;
+  max?: number;
 };
 
 export type ModelOutput = {
@@ -95,11 +96,53 @@ export type RoleAssignment =
   | { kind: "start" }
   | { kind: "end" }
   | { kind: "element"; groupName: string; frontal: boolean }
-  | { kind: "image"; groupName: string };
+  | { kind: "image"; groupName: string }
+  // Synthetic placeholder for the output of the previous chain link.
+  // Resolved at chain-run time to the upstream link's output path.
+  | { kind: "chain_prev" };
 
 export type RefImage = {
   path: string;
   roleAssignment: RoleAssignment | null;
+};
+
+// ---------- Prompt chains ----------
+
+export type ChainLink = {
+  id: string;
+  active: boolean;
+  model: ModelNode | null;
+  settings: Record<string, unknown>;
+  sequencePrompt: string;
+  shotPrompts: string[];
+  refImages: RefImage[];
+  // When true on a non-head link, a synthetic chain_prev ref is prepended
+  // at chain-run time. Default true for newly added links, false for the
+  // initial head link.
+  consumesPrev: boolean;
+  // Inclusion flags for the combined prompt. undefined means included.
+  sequencePromptIncluded?: boolean;
+  sequenceScriptIncluded?: boolean;
+  shotScriptIncluded?: boolean;
+  shotPromptsIncluded?: boolean[];
+};
+
+// ---------- Chain presets ----------
+
+/** One link's saved configuration — model + prompts only, no refs. */
+export type ChainPresetLink = {
+  modelId: string | null;
+  settings: Record<string, unknown>;
+  sequencePrompt: string;
+  shotPrompts: string[];
+};
+
+/** A named chain configuration the user can restore later. */
+export type ChainPreset = {
+  id: string;
+  name: string;
+  links: ChainPresetLink[];
+  createdAt: string; // ISO timestamp
 };
 
 // ---------- Gallery ----------
@@ -159,6 +202,8 @@ export type ColorOverrides = {
   accent?: string;
 };
 
+export type FalLifecycle = "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never";
+
 export type Config = {
   windowBounds: { x?: number; y?: number; width: number; height: number };
   projectPath: string;
@@ -171,6 +216,8 @@ export type Config = {
   /** Output filename template. Tokens: <date> <time> <sequence> <shot> <model> <version> <prompt> <iter> <seed> <provider> */
   filenameTemplate?: string;
   colors?: ColorOverrides;
+  /** fal.ai object lifecycle: "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never" | seconds. Unset = fal default. */
+  falLifecycle?: FalLifecycle;
 };
 
 // ---------- Submission queue ----------
@@ -198,6 +245,23 @@ export type Job = {
   startedAt: number;
 };
 
+/** Persisted variant of ChainLink — model is stored by id and resolved
+ *  against the live registry at bootstrap. */
+export type ChainLinkPersisted = {
+  id: string;
+  active: boolean;
+  modelId: string | null;
+  settings: Record<string, unknown>;
+  sequencePrompt: string;
+  shotPrompts: string[];
+  refImages: RefImage[];
+  consumesPrev: boolean;
+  sequencePromptIncluded?: boolean;
+  sequenceScriptIncluded?: boolean;
+  shotScriptIncluded?: boolean;
+  shotPromptsIncluded?: boolean[];
+};
+
 export type AppState = {
   projectPath: string;
   lastSequence: string;
@@ -213,6 +277,10 @@ export type AppState = {
   galleryHeight: number;
   thumbColWidth: number;
   logHeight: number;
+  /** When present, supersedes the flat sequencePrompt/shotPrompts/settings/refImages
+   *  fields (those are still written for back-compat with old loaders). */
+  chainLinks?: ChainLinkPersisted[];
+  chainExpandedIdx?: number | null;
 };
 
 export type SequenceSidecar = {
@@ -223,6 +291,67 @@ export type SequenceSidecar = {
 export type ShotSidecar = {
   name: string;
   promptHistory: PromptEntry[];
+  /** Single exclusive "clip media" pick (set via the clapperboard icon on a thumb). */
+  clipMediaPath?: string | null;
+};
+
+// ---------- Timeline (NLE) ----------
+
+export type TimelineClip = {
+  id: string;
+  /** Absolute path to the source shot. null = a blank/padding clip. */
+  shotPath: string | null;
+  enabled: boolean;
+  durationSec: number;
+  /**
+   * Explicit media-path override for this clip (chosen via the version picker
+   * on the clip). When null, falls back to the shot's `clipMediaPath`, then to
+   * the latest version's last image.
+   */
+  mediaPath: string | null;
+  /**
+   * Slip offset into the source media (seconds). Default 0. Only meaningful
+   * for video media — the clip plays `[offset, offset + durationSec]` of the
+   * source. Clamped at use sites by source duration.
+   */
+  sourceOffsetSec?: number;
+};
+
+export type SequenceTimeline = {
+  totalDurationSec: number;
+  clips: TimelineClip[];
+};
+
+export type ShotLatestMedia = {
+  shotPath: string;
+  mediaPath: string | null;
+  isVideo: boolean;
+  clipMediaPath: string | null;
+};
+
+export type TimelineInit = {
+  timeline: SequenceTimeline;
+  shotsLatestMedia: ShotLatestMedia[];
+};
+
+export type ExportSegment =
+  | { kind: "image"; path: string; durationSec: number }
+  | {
+      kind: "video";
+      path: string;
+      durationSec: number;
+      sourceOffsetSec: number;
+    }
+  | { kind: "blank"; durationSec: number };
+
+export type TimelineExportParams = {
+  segments: ExportSegment[];
+  outputPath: string;
+  width: number;
+  height: number;
+  fps: number;
+  bitrateKbps: number;
+  ffmpegPath: string;
 };
 
 // ---------- Image metadata sidecar ----------
@@ -230,6 +359,22 @@ export type ShotSidecar = {
 export type RefSnapshot = {
   path: string;
   roleAssignment: RoleAssignment | null;
+};
+
+/** Per-output snapshot of the chain that produced this media. Captured at
+ *  submit time so the full chain can be restored even if intermediate files
+ *  are deleted. */
+export type ChainMetadataBlock = {
+  chainId: string;
+  linkIndex: number;
+  linkCount: number;
+  /** Absolute path of the upstream link's output. Absent on the head. */
+  prevMediaPath?: string;
+  /** Absolute paths of downstream link outputs. Backfilled by the runner
+   *  as each downstream link finishes; may be missing on in-flight chains. */
+  nextMediaPaths?: string[];
+  /** Persisted snapshot of every link (active and inactive) in the chain. */
+  links: ChainLinkPersisted[];
 };
 
 export type ImageMetadata = {
@@ -253,6 +398,9 @@ export type ImageMetadata = {
   falResponse?: unknown;
   hueShift?: number;
   sourceImage?: string;
+  /** Chain provenance — present only when this media was produced as part
+   *  of a multi-link chain submission. */
+  chain?: ChainMetadataBlock;
 };
 
 // ---------- Generation events ----------

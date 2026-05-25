@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::error::{AppError, AppResult};
 
-const APP_DIR_NAME: &str = "falPipe";
+const APP_DIR_NAME: &str = "aiSLAP";
 
 pub fn appdata_dir() -> AppResult<PathBuf> {
     let base = dirs::config_dir()
@@ -22,6 +22,10 @@ pub fn app_state_path() -> AppResult<PathBuf> {
 
 pub fn env_path() -> AppResult<PathBuf> {
     Ok(appdata_dir()?.join(".env"))
+}
+
+pub fn presets_path() -> AppResult<PathBuf> {
+    Ok(appdata_dir()?.join("presets.json"))
 }
 
 /// Locate `models/` — either sibling of the installed binary, or repo-root `models/`

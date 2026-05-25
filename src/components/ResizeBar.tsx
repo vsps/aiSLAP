@@ -9,25 +9,40 @@ type Props = {
 };
 
 /**
- * Thin draggable divider. `orientation="horizontal"` is a horizontal bar
- * (spans wide, thin tall) that resizes something vertically — cursor row-resize.
- * `orientation="vertical"` is the opposite.
- *
- * Pointer-capture pattern mirrors RefImagesColumn's drag-to-reorder: on
- * pointerdown capture the pointer, track deltas on move, release on up/cancel.
- * No global listeners needed — captured pointer events fire on this element.
+ * Thin draggable divider. Coalesces pointermove updates to one per animation
+ * frame to keep gallery resizes responsive when many columns / thumbnails are
+ * mounted — raw mouse events can fire >120Hz and storm React re-renders.
  */
 export function ResizeBar({ orientation, value, onChange, grow }: Props) {
   const startRef = useRef<{ axis: number; value: number } | null>(null);
+  const latestAxisRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
   const horizontal = orientation === "horizontal";
   const growDir = grow ?? (horizontal ? "up" : "right");
+
+  function cancelPending() {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }
+
+  function flush() {
+    rafRef.current = null;
+    const s = startRef.current;
+    const axis = latestAxisRef.current;
+    if (!s || axis == null) return;
+    const delta = axis - s.axis;
+    const signed = growDir === "up" || growDir === "left" ? -delta : delta;
+    onChange(s.value + signed);
+  }
 
   return (
     <div
       role="separator"
       aria-orientation={horizontal ? "horizontal" : "vertical"}
       className={`shrink-0 accent-hover ${
-        horizontal ? "h-[5px] w-full cursor-row-resize" : "w-[5px] h-full cursor-col-resize"
+        horizontal ? "h-[7px] w-full cursor-row-resize" : "w-[3px] h-full cursor-col-resize"
       }`}
       onPointerDown={(e) => {
         e.preventDefault();
@@ -38,20 +53,22 @@ export function ResizeBar({ orientation, value, onChange, grow }: Props) {
         };
       }}
       onPointerMove={(e) => {
-        const s = startRef.current;
-        if (!s) return;
-        const current = horizontal ? e.clientY : e.clientX;
-        const delta = current - s.axis;
-        const signed =
-          growDir === "up" || growDir === "left" ? -delta : delta;
-        onChange(s.value + signed);
+        if (!startRef.current) return;
+        latestAxisRef.current = horizontal ? e.clientY : e.clientX;
+        if (rafRef.current == null) {
+          rafRef.current = requestAnimationFrame(flush);
+        }
       }}
       onPointerUp={(e) => {
         startRef.current = null;
+        latestAxisRef.current = null;
+        cancelPending();
         e.currentTarget.releasePointerCapture(e.pointerId);
       }}
       onPointerCancel={() => {
         startRef.current = null;
+        latestAxisRef.current = null;
+        cancelPending();
       }}
     />
   );

@@ -19,7 +19,8 @@ export const DEFAULT_SYSTEM_PROMPT =
   "while preserving its core intent. Return only the rewritten prompt — " +
   "no preamble, no quotes, no explanation.";
 
-const LS_MODEL_KEY = "falpipe:llm-model";
+const LS_MODEL_KEY = "aislap:llm-model";
+const LS_INSTRUCTION_KEY = "aislap:llm-instruction";
 
 export function loadLastLlmModel(): string {
   try {
@@ -34,6 +35,24 @@ export function loadLastLlmModel(): string {
 export function saveLastLlmModel(model: string): void {
   try {
     localStorage.setItem(LS_MODEL_KEY, model);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadLastLlmInstruction(): string {
+  try {
+    const v = localStorage.getItem(LS_INSTRUCTION_KEY);
+    if (v != null) return v;
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_SYSTEM_PROMPT;
+}
+
+export function saveLastLlmInstruction(s: string): void {
+  try {
+    localStorage.setItem(LS_INSTRUCTION_KEY, s);
   } catch {
     /* ignore */
   }

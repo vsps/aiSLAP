@@ -1,7 +1,12 @@
 import { useMemo } from "react";
 import { useGenerationStore } from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
-import { cancelAllGenerations, enqueueGeneration } from "../lib/generate";
+import {
+  cancelAllGenerations,
+  enqueueChain,
+  enqueueGeneration,
+} from "../lib/generate";
+import { preflightChain } from "../lib/chainValidation";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
 import { basename } from "../lib/paths";
@@ -29,18 +34,34 @@ export function RunColumn() {
   const columns = useSessionStore((s) => s.columns);
   const srcVersions = useMemo(() => columns.filter(c => c.isSrc).map(c => c.version), [columns]);
   const hasPrompt = (sequencePrompt + shotPrompts.join("")).trim().length > 0;
+
+  const links = useGenerationStore((s) => s.links);
+  const expandedIdx = useGenerationStore((s) => s.expandedIdx);
+  const isMultiLink = links.length > 1;
+  const chainProblems = useMemo(
+    () => (isMultiLink ? preflightChain(links) : []),
+    [links, isMultiLink],
+  );
+  const chainHasErrors = chainProblems.some((p) => p.severity === "error");
+
+  // Multi-link chains require collapse-to-submit and a clean preflight.
+  // Single-link mode behaves exactly like the pre-chain workbench.
+  const chainGateOk = !isMultiLink || (expandedIdx == null && !chainHasErrors);
+
   const canRun =
     !!currentModel &&
     !!shotPath &&
     targetVersion !== null &&
     !srcVersions.includes(targetVersion ?? "") &&
-    hasPrompt;
+    hasPrompt &&
+    chainGateOk;
 
   const canRunPlus =
     !!currentModel &&
     !!shotPath &&
     hasPrompt &&
-    !srcVersions.includes(targetVersion ?? "");
+    !srcVersions.includes(targetVersion ?? "") &&
+    chainGateOk;
 
   const disabledReason = !currentModel
     ? "Pick a model"
@@ -50,7 +71,11 @@ export function RunColumn() {
         ? "Enter a prompt"
         : targetVersion && srcVersions.includes(targetVersion)
           ? "SRC is not a valid target"
-          : "";
+          : isMultiLink && expandedIdx != null
+            ? "Collapse the chain (▶) before submitting"
+            : isMultiLink && chainHasErrors
+              ? "Chain has errors — fix red links before submitting"
+              : "";
 
   async function runIntoNewVersion() {
     try {
@@ -60,6 +85,30 @@ export function RunColumn() {
       return;
     }
     await enqueueGeneration();
+  }
+
+  async function onSubmit() {
+    playSound("swoosh");
+    if (isMultiLink) {
+      void enqueueChain();
+      return;
+    }
+    void enqueueGeneration();
+  }
+
+  async function onSubmitPlus() {
+    playSound("swoosh");
+    if (isMultiLink) {
+      try {
+        await createNextVersion();
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+        return;
+      }
+      void enqueueChain();
+      return;
+    }
+    void runIntoNewVersion();
   }
 
   const queueTitle =
@@ -99,10 +148,7 @@ export function RunColumn() {
       <button
         title={disabledReason || "Submit"}
         disabled={!canRun}
-        onClick={() => {
-          playSound("swoosh");
-          void enqueueGeneration();
-        }}
+        onClick={() => void onSubmit()}
         className={canRun ? btn : btnDisabled}
       >
         [SUBMIT]
@@ -110,10 +156,7 @@ export function RunColumn() {
       <button
         title={disabledReason || "Submit + new version"}
         disabled={!canRunPlus}
-        onClick={() => {
-          playSound("swoosh");
-          void runIntoNewVersion();
-        }}
+        onClick={() => void onSubmitPlus()}
         className={canRunPlus ? btn : btnDisabled}
       >
         [SUBMIT+]

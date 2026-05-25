@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import LOGO from "./splash-logo.txt?raw";
+import GREETINGS from "./splash-greetings.txt?raw";
 
 const FADE_MS = 400;
 const LOADING_MESSAGES = [
@@ -32,6 +33,11 @@ export function SplashScreen({ ready, version }: { ready: boolean; version: stri
     return () => clearTimeout(t);
   }, [dismissed]);
 
+  const greeting = useMemo(() => {
+    const lines = GREETINGS.split("\n").filter((l) => l.trim());
+    return lines[Math.floor(Math.random() * lines.length)];
+  }, []);
+
   if (!mounted) return null;
 
   const status = ready ? "ready" : LOADING_MESSAGES[msgIdx];
@@ -58,6 +64,11 @@ export function SplashScreen({ ready, version }: { ready: boolean; version: stri
       >
         {status}
       </div>
+      {ready && (
+        <div className="mt-2 text-xs text-dim italic tracking-wide">
+          {greeting}
+        </div>
+      )}
     </div>
   );
 }

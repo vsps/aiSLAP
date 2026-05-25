@@ -1,52 +1,48 @@
 {
-    "$schema":  "https://schema.tauri.app/config/2",
-    "productName":  "falPipe",
-    "version":  "0.1.3",
-    "identifier":  "tv.heckler.falpipe",
-    "build":  {
-                  "beforeDevCommand":  "npm run dev",
-                  "devUrl":  "http://localhost:1420",
-                  "beforeBuildCommand":  "npm run build",
-                  "frontendDist":  "../dist"
-              },
-    "app":  {
-                "windows":  [
-                                {
-                                    "title":  "falPipe",
-                                    "width":  1600,
-                                    "height":  1000,
-                                    "minWidth":  1200,
-                                    "minHeight":  800,
-                                    "dragDropEnabled":  true
-                                }
-                            ],
-                "security":  {
-                                 "csp":  null,
-                                 "assetProtocol":  {
-                                                       "enable":  true,
-                                                       "scope":  {
-                                                                     "allow":  [
-                                                                                   "**"
-                                                                               ],
-                                                                     "deny":  [
-
-                                                                              ]
-                                                                 }
-                                                   }
-                             }
-            },
-    "bundle":  {
-                   "active":  true,
-                   "targets":  "all",
-                   "resources":  {
-                                     "../models/":  "models/"
-                                 },
-                   "icon":  [
-                                "icons/32x32.png",
-                                "icons/128x128.png",
-                                "icons/128x128@2x.png",
-                                "icons/icon.icns",
-                                "icons/icon.ico"
-                            ]
-               }
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "aiSLAP",
+  "version": "0.2.1",
+  "identifier": "tv.heckler.aislap",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "aiSLAP",
+        "width": 1600,
+        "height": 1000,
+        "minWidth": 1200,
+        "minHeight": 800,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["**"],
+          "deny": []
+        }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "../models/": "models/"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
 }
