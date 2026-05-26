@@ -21,6 +21,9 @@ type Props = {
   destDir: string;
   dragState: DragState;
   collapsed?: boolean;
+  /** When true the column-collapsed state is derived from `targetVersion`,
+   *  not the manual toggle. Header clicks should just promote to target. */
+  autoCollapse?: boolean;
   onToggleCollapsed: () => void;
   onFolderDelete: () => void;
   onImageAction: (action: ImageAction, imagePath: string) => void;
@@ -40,6 +43,7 @@ export function GalleryColumn({
   destDir,
   dragState,
   collapsed,
+  autoCollapse,
   onToggleCollapsed,
   onFolderDelete,
   onImageAction,
@@ -68,6 +72,15 @@ export function GalleryColumn({
     dragState.fromColumnVersion !== column.version;
 
   function onHeaderClick() {
+    if (autoCollapse) {
+      // In auto-collapse mode the display is derived from targetVersion;
+      // the manual collapsed set is bypassed. Click on any non-target,
+      // non-SRC column promotes it to target — that's how the user expands
+      // any version. SRC + already-target clicks are no-ops.
+      if (column.isSrc || isTarget) return;
+      setTargetVersion(column.version);
+      return;
+    }
     if (collapsed) {
       onToggleCollapsed();
       return;

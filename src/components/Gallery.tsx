@@ -356,7 +356,7 @@ export function Gallery() {
           }
           onClick={() => setAutoCollapse((v) => !v)}
         >
-          <Icon name="unfold_less" size={22} fill={autoCollapse} />
+          <Icon name="unfold_less" size={22} fill={autoCollapse} className="rotate-90" />
         </button>
       )}
       {selectedImagePath && (
@@ -410,6 +410,7 @@ export function Gallery() {
                         ? !c.isSrc && c.version !== targetVersion
                         : collapsedVersions.has(c.version)
                     }
+                    autoCollapse={autoCollapse}
                     onToggleCollapsed={() => toggleCollapsed(c.version)}
                     onFolderDelete={() => onFolderDelete(c.version)}
                     onImageAction={onImageAction}
