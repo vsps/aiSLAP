@@ -28,9 +28,13 @@ export function SessionBar({
     setShot,
     createSequence,
     createShot,
+    renameSequence,
+    renameShot,
   } = useSessionStore();
 
-  const [creating, setCreating] = useState<null | "sequence" | "shot">(null);
+  const [creating, setCreating] = useState<
+    null | "sequence" | "shot" | "rename-sequence" | "rename-shot"
+  >(null);
   const [prefillName, setPrefillName] = useState("");
   const parsed = useScriptStore((s) => s.parsed);
   const seqTemplates = parsed.sequences.map((s) => s.title);
@@ -76,6 +80,26 @@ export function SessionBar({
     }
   }
 
+  async function onRenameSequence(name: string) {
+    setCreating(null);
+    setPrefillName("");
+    try {
+      await renameSequence(name);
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    }
+  }
+
+  async function onRenameShot(name: string) {
+    setCreating(null);
+    setPrefillName("");
+    try {
+      await renameShot(name);
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    }
+  }
+
   return (
     <div className="flex items-center gap-[5px] text-sm">
       <div className="flex flex-1 items-center gap-[6px] min-w-0 bg-panel px-[5px] py-[5px]">
@@ -99,11 +123,15 @@ export function SessionBar({
 
         {/* SEQUENCE */}
         <span className="pl-2">SEQUENCE</span>
-        {creating === "sequence" ? (
+        {creating === "sequence" || creating === "rename-sequence" ? (
           <InlinePrompt
-            placeholder="sequence name"
+            placeholder={
+              creating === "rename-sequence" ? "rename sequence" : "sequence name"
+            }
             initial={prefillName}
-            onConfirm={onCreateSequence}
+            onConfirm={
+              creating === "rename-sequence" ? onRenameSequence : onCreateSequence
+            }
             onCancel={() => {
               setCreating(null);
               setPrefillName("");
@@ -137,14 +165,27 @@ export function SessionBar({
           }}
           disabled={!projectPath}
         />
+        <IconBtn
+          name="edit"
+          size={18}
+          title="Rename sequence"
+          onClick={() => {
+            if (!sequencePath) return;
+            setPrefillName(basename(sequencePath));
+            setCreating("rename-sequence");
+          }}
+          disabled={!sequencePath}
+        />
 
         {/* SHOT */}
         <span className="pl-2">SHOT:</span>
-        {creating === "shot" ? (
+        {creating === "shot" || creating === "rename-shot" ? (
           <InlinePrompt
-            placeholder="shot name"
+            placeholder={
+              creating === "rename-shot" ? "rename shot" : "shot name"
+            }
             initial={prefillName}
-            onConfirm={onCreateShot}
+            onConfirm={creating === "rename-shot" ? onRenameShot : onCreateShot}
             onCancel={() => {
               setCreating(null);
               setPrefillName("");
@@ -177,6 +218,17 @@ export function SessionBar({
             setCreating("shot");
           }}
           disabled={!sequencePath}
+        />
+        <IconBtn
+          name="edit"
+          size={18}
+          title="Rename shot"
+          onClick={() => {
+            if (!shotPath) return;
+            setPrefillName(basename(shotPath));
+            setCreating("rename-shot");
+          }}
+          disabled={!shotPath}
         />
       </div>
 

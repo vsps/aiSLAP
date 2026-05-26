@@ -43,6 +43,7 @@ export function Gallery() {
     setRenameImage,
     shotPath,
     sequencePath,
+    targetVersion,
     viewMode,
     setViewMode,
   } = session;
@@ -59,6 +60,26 @@ export function Gallery() {
     performImageAction(action, path);
 
   const [dragState, setDragState] = useState<DragState>(null);
+
+  // Per-column collapse state. Ephemeral — reset whenever the shot changes.
+  const [collapsedVersions, setCollapsedVersions] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // Auto-collapse mode: only GLOBAL SRC + the current target version stay
+  // expanded; everything else is forced collapsed regardless of the manual
+  // set. Survives shot navigation; reset only on explicit toggle.
+  const [autoCollapse, setAutoCollapse] = useState(false);
+  useEffect(() => {
+    setCollapsedVersions(new Set());
+  }, [shotPath]);
+  const toggleCollapsed = (version: string) => {
+    setCollapsedVersions((s) => {
+      const next = new Set(s);
+      if (next.has(version)) next.delete(version);
+      else next.add(version);
+      return next;
+    });
+  };
 
   const destDirFor = useCallback(
     (col: { isSrc: boolean; id: string; version: string }): string => {
@@ -325,6 +346,19 @@ export function Gallery() {
           <Icon name="visibility" size={22} fill={viewMode === "starred"} />
         </button>
       )}
+      {viewMode === "columns" && session.shotPath && (
+        <button
+          className={`${autoCollapse ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
+          title={
+            autoCollapse
+              ? "Auto-collapse: ON (only GLOBAL SRC + target expanded)"
+              : "Auto-collapse: OFF"
+          }
+          onClick={() => setAutoCollapse((v) => !v)}
+        >
+          <Icon name="unfold_less" size={22} fill={autoCollapse} />
+        </button>
+      )}
       {selectedImagePath && (
         <button
           className={`${traceActive ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
@@ -371,6 +405,12 @@ export function Gallery() {
                     width={thumbColWidth}
                     destDir={destDirFor(c)}
                     dragState={dragState}
+                    collapsed={
+                      autoCollapse
+                        ? !c.isSrc && c.version !== targetVersion
+                        : collapsedVersions.has(c.version)
+                    }
+                    onToggleCollapsed={() => toggleCollapsed(c.version)}
                     onFolderDelete={() => onFolderDelete(c.version)}
                     onImageAction={onImageAction}
                     onRefresh={c.isSrc ? () => session.rescanShot() : undefined}

@@ -57,6 +57,12 @@ type Actions = {
   swapRoleAssignments: (pathA: string, pathB: string) => void;
   reorderRefs: (fromIdx: number, toIdx: number) => void;
   setRefImages: (refs: RefImage[]) => void;
+  /**
+   * Rewrite refImage paths across every chain link after a sequence/shot
+   * rename. Paths starting with `oldPrefix` (or equal to it) are rewritten
+   * to use `newPrefix`. No-op when prefixes are equal.
+   */
+  rewriteRefImagePaths: (oldPrefix: string, newPrefix: string) => void;
 
   resetGenerationForm: () => void;
 
@@ -368,6 +374,34 @@ export const useGenerationStore = create<State & Actions>((set) => {
     },
     setRefImages(refs) {
       set((s) => patchActive(s, { refImages: ensureFrontals(refs) }));
+    },
+    rewriteRefImagePaths(oldPrefix, newPrefix) {
+      if (!oldPrefix || oldPrefix === newPrefix) return;
+      const matches = (p: string) =>
+        p === oldPrefix || p.startsWith(oldPrefix + "/");
+      const rewrite = (p: string) =>
+        p === oldPrefix ? newPrefix : newPrefix + p.slice(oldPrefix.length);
+      set((s) => {
+        let anyChange = false;
+        const links = s.links.map((link) => {
+          let linkChanged = false;
+          const next = link.refImages.map((r) => {
+            if (matches(r.path)) {
+              linkChanged = true;
+              return { ...r, path: rewrite(r.path) };
+            }
+            return r;
+          });
+          if (!linkChanged) return link;
+          anyChange = true;
+          return { ...link, refImages: next };
+        });
+        if (!anyChange) return {} as Partial<State>;
+        return {
+          links,
+          ...mirrorFor(links, s.expandedIdx),
+        };
+      });
     },
 
     resetGenerationForm() {

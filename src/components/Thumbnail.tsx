@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { GalleryImage } from "../lib/types";
 import { IconBtn } from "./IconBtn";
-import { Icon } from "../lib/icon";
 import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
 
@@ -12,12 +11,6 @@ type Props = {
   columnVersion: string;
   isDragSource?: boolean;
   onSelect: () => void;
-  onZoom: () => void;
-  onAddToRefs: () => void;
-  onReplaceRef: () => void;
-  onCopySettings: () => void;
-  onEdit: () => void;
-  onCrop?: () => void;
   onToggleStar: () => void;
   onDragStart: (payload: {
     fromPath: string;
@@ -42,12 +35,6 @@ export function Thumbnail({
   columnVersion,
   isDragSource,
   onSelect,
-  onZoom,
-  onAddToRefs,
-  onReplaceRef,
-  onCopySettings,
-  onEdit,
-  onCrop,
   onToggleStar,
   onDragStart,
   dragDisabled,
@@ -164,56 +151,39 @@ export function Thumbnail({
           play_circle
         </span>
       )}
-      {image.starred && (
-        <span
-          className="absolute bottom-1 left-1 text-accent drop-shadow pointer-events-none group-hover:opacity-0 transition-opacity"
-        >
-          <Icon name="visibility" size={18} fill />
-        </span>
-      )}
-      {clipMediaSelected && (
-        <span
-          className="absolute bottom-1 right-1 text-accent drop-shadow pointer-events-none group-hover:opacity-0 transition-opacity"
-          title="Clip media"
-        >
-          <Icon name="movie" size={18} fill />
-        </span>
-      )}
-
-      {/* Action strip — top */}
-      <div
-        className="absolute top-0 left-0 right-0 flex items-center gap-[2px] bg-bg/80 px-[2px] py-[1px] opacity-0 group-hover:opacity-100 transition-opacity"
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
-      >
+      {/* Corner toggles: hidden by default, visible on hover; stay visible + accent when ON. */}
+      <IconBtn
+        name="visibility"
+        size={18}
+        fill={!!image.starred}
+        title={image.starred ? "Demote from gallery" : "Promote to gallery"}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleStar();
+        }}
+        className={`absolute bottom-1 left-1 drop-shadow transition-opacity ${
+          image.starred
+            ? "opacity-100 text-accent"
+            : "opacity-0 group-hover:opacity-100"
+        }`}
+      />
+      {onToggleClipMedia && (
         <IconBtn
-          name="visibility"
-          size={16}
-          fill={!!image.starred}
-          title={image.starred ? "Demote from gallery" : "Promote to gallery"}
-          onClick={onToggleStar}
-          className={image.starred ? "text-accent" : ""}
+          name="movie"
+          size={18}
+          fill={!!clipMediaSelected}
+          title={clipMediaSelected ? "Clear clip media" : "Set as clip media"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleClipMedia();
+          }}
+          className={`absolute bottom-1 right-1 drop-shadow transition-opacity ${
+            clipMediaSelected
+              ? "opacity-100 text-accent"
+              : "opacity-0 group-hover:opacity-100"
+          }`}
         />
-        {onToggleClipMedia && (
-          <IconBtn
-            name="movie"
-            size={16}
-            fill={!!clipMediaSelected}
-            title={clipMediaSelected ? "Clear clip media" : "Set as clip media"}
-            onClick={onToggleClipMedia}
-            className={clipMediaSelected ? "text-accent" : ""}
-          />
-        )}
-        <IconBtn name="zoom_in" size={16} title="Zoom" onClick={onZoom} />
-        <IconBtn name="add_photo_alternate" size={16} title="Use as reference (Ctrl: replace all)" onClick={(e) => (e.ctrlKey || e.metaKey ? onReplaceRef() : onAddToRefs())} />
-        <IconBtn name="copy_all" size={16} title="Reuse prompt" onClick={onCopySettings} />
-        {!image.isVideo && onCrop && (
-          <IconBtn name="crop" size={16} title="Crop" onClick={onCrop} />
-        )}
-        {!image.isVideo && (
-          <IconBtn name="edit" size={16} title="Edit (draw)" onClick={onEdit} />
-        )}
-      </div>
+      )}
 
       {menuPos && (
         <PathContextMenu

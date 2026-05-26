@@ -85,12 +85,6 @@ export function TraceView({ onDragStart }: Props) {
                       selected={selectedImagePath === p}
                       columnVersion={g.label}
                       onSelect={() => onAction("select", p)}
-                      onZoom={() => onAction("zoom", p)}
-                      onAddToRefs={() => onAction("add_to_refs", p)}
-                      onReplaceRef={() => onAction("replace_ref", p)}
-                      onCopySettings={() => onAction("copy_settings", p)}
-                      onEdit={() => onAction("edit", p)}
-                      onCrop={() => onAction("crop", p)}
                       onToggleStar={() => onAction("toggle_star", p)}
                       onDragStart={onDragStart}
                       dragDisabled

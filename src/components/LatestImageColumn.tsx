@@ -8,6 +8,7 @@ import {
   type ResolvedClipMedia,
 } from "../stores/timelineStore";
 import { fileSrc } from "../lib/assets";
+import { IconBtn } from "./IconBtn";
 import { PathContextMenu } from "./PathContextMenu";
 import { performImageAction } from "../lib/actions";
 import type {
@@ -105,6 +106,49 @@ export function LatestImageColumn() {
           </div>
         )}
       </div>
+      {!timelineActive && image && (
+        <div className="flex items-center justify-center gap-2 py-1">
+          <IconBtn
+            name="zoom_in"
+            size={22}
+            title="Zoom"
+            onClick={() => void performImageAction("zoom", image.path)}
+          />
+          <IconBtn
+            name="copy_all"
+            size={22}
+            title="Reuse prompt"
+            onClick={() => void performImageAction("copy_settings", image.path)}
+          />
+          <IconBtn
+            name="add_photo_alternate"
+            size={22}
+            title="Use as reference (Ctrl: replace all)"
+            onClick={(e) =>
+              void performImageAction(
+                e.ctrlKey || e.metaKey ? "replace_ref" : "add_to_refs",
+                image.path,
+              )
+            }
+          />
+          {!image.isVideo && (
+            <IconBtn
+              name="edit"
+              size={22}
+              title="Edit (draw)"
+              onClick={() => void performImageAction("edit", image.path)}
+            />
+          )}
+          {!image.isVideo && (
+            <IconBtn
+              name="crop"
+              size={22}
+              title="Crop"
+              onClick={() => void performImageAction("crop", image.path)}
+            />
+          )}
+        </div>
+      )}
       {menuPos && image && !timelineActive && (
         <PathContextMenu
           x={menuPos.x}

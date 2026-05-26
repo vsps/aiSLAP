@@ -9,6 +9,9 @@ import type {
 import { cmd } from "../lib/tauri";
 import { useTimelineStore } from "./timelineStore";
 import { useScriptStore } from "./scriptStore";
+import { useGenerationStore } from "./generationStore";
+import { basename } from "../lib/paths";
+import { rewriteScriptHeading } from "../lib/script";
 
 type PromptScope = "sequence" | "shot";
 type ViewMode = "columns" | "starred";
@@ -52,6 +55,8 @@ type Actions = {
   setTargetVersion: (version: string | null) => void;
   createSequence: (name: string) => Promise<void>;
   createShot: (name: string) => Promise<void>;
+  renameSequence: (newName: string) => Promise<void>;
+  renameShot: (newName: string) => Promise<void>;
   createNextVersion: () => Promise<string>;
 
   setSelectedImage: (path: string | null) => void;
@@ -79,7 +84,7 @@ type Actions = {
 const GALLERY_H_MIN = 120;
 const GALLERY_H_MAX = 1200;
 const THUMB_W_MIN = 154;
-const THUMB_W_MAX = 400;
+const THUMB_W_MAX = 500;
 const LOG_H_MIN = 24;
 const LOG_H_MAX = 600;
 const TIMELINE_H_MIN = 45;
@@ -231,6 +236,124 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     await get().setShot(shotPath);
   },
 
+  async renameSequence(newName) {
+    const { projectPath, sequencePath, shotPath } = get();
+    if (!projectPath) throw new Error("no project");
+    if (!sequencePath) throw new Error("no sequence to rename");
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error("name cannot be empty");
+
+    const oldSeqPath = sequencePath;
+    const oldShotPath = shotPath;
+    const oldSeqBase = basename(oldSeqPath);
+
+    // Job-safety guard. Refuse if any non-terminal job targets this sequence.
+    const jobs = useGenerationStore.getState().jobs;
+    const inFlight = jobs.filter(
+      (j) =>
+        j.shotPath.startsWith(oldSeqPath + "/") &&
+        j.status !== "done" &&
+        j.status !== "failed" &&
+        j.status !== "cancelled",
+    );
+    if (inFlight.length > 0) {
+      throw new Error(
+        `Cannot rename — ${inFlight.length} job${
+          inFlight.length > 1 ? "s are" : " is"
+        } running in this sequence.`,
+      );
+    }
+
+    const newSeqPath = await cmd.sequence_rename(oldSeqPath, trimmed);
+    if (newSeqPath === oldSeqPath) return;
+
+    // Keep in-memory mirrors coherent before re-rendering.
+    useTimelineStore.getState().renameShotPathPrefix(oldSeqPath, newSeqPath);
+    useGenerationStore.getState().rewriteRefImagePaths(oldSeqPath, newSeqPath);
+
+    const sequences = await cmd.project_open(projectPath);
+    set({ sequencesInProject: sequences });
+    await get().setSequence(newSeqPath);
+
+    // setSequence auto-opens the last shot. Navigate back to the user's shot
+    // if it survived the rename (same basename, new parent).
+    if (oldShotPath) {
+      const targetShotPath = `${newSeqPath}/${basename(oldShotPath)}`;
+      if (
+        get().shotsInSequence.includes(targetShotPath) &&
+        get().shotPath !== targetShotPath
+      ) {
+        await get().setShot(targetShotPath);
+      }
+    }
+
+    // script.md heading rewrite (silent no-op when no matching # heading).
+    const scriptState = useScriptStore.getState();
+    const nextRaw = rewriteScriptHeading(
+      scriptState.raw,
+      1,
+      oldSeqBase,
+      trimmed,
+    );
+    if (nextRaw !== scriptState.raw) {
+      await scriptState.save(projectPath, nextRaw).catch(() => {
+        /* swallow */
+      });
+    }
+  },
+
+  async renameShot(newName) {
+    const { projectPath, sequencePath, shotPath } = get();
+    if (!projectPath) throw new Error("no project");
+    if (!sequencePath) throw new Error("no sequence");
+    if (!shotPath) throw new Error("no shot to rename");
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error("name cannot be empty");
+
+    const oldShotPath = shotPath;
+    const oldShotBase = basename(oldShotPath);
+
+    const jobs = useGenerationStore.getState().jobs;
+    const inFlight = jobs.filter(
+      (j) =>
+        (j.shotPath === oldShotPath ||
+          j.shotPath.startsWith(oldShotPath + "/")) &&
+        j.status !== "done" &&
+        j.status !== "failed" &&
+        j.status !== "cancelled",
+    );
+    if (inFlight.length > 0) {
+      throw new Error(
+        `Cannot rename — ${inFlight.length} job${
+          inFlight.length > 1 ? "s are" : " is"
+        } running in this shot.`,
+      );
+    }
+
+    const newShotPath = await cmd.shot_rename(oldShotPath, trimmed);
+    if (newShotPath === oldShotPath) return;
+
+    useTimelineStore.getState().renameShotPathPrefix(oldShotPath, newShotPath);
+    useGenerationStore.getState().rewriteRefImagePaths(oldShotPath, newShotPath);
+
+    const { shots } = await cmd.sequence_open(sequencePath);
+    set({ shotsInSequence: shots });
+    await get().setShot(newShotPath);
+
+    const scriptState = useScriptStore.getState();
+    const nextRaw = rewriteScriptHeading(
+      scriptState.raw,
+      2,
+      oldShotBase,
+      trimmed,
+    );
+    if (nextRaw !== scriptState.raw) {
+      await scriptState.save(projectPath, nextRaw).catch(() => {
+        /* swallow */
+      });
+    }
+  },
+
   async createNextVersion() {
     const { shotPath } = get();
     if (!shotPath) throw new Error("no shot");
@@ -241,6 +364,13 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   },
 
   setSelectedImage(path) {
+    if (path !== null) {
+      const tl = useTimelineStore.getState();
+      if (tl.playing || tl.playheadSec > 0) {
+        tl.pause();
+        tl.restart();
+      }
+    }
     set({ selectedImagePath: path });
   },
 

@@ -51,12 +51,16 @@ export const cmd = {
     rawInvoke("sequence_open", { sequencePath }),
   sequence_create: (projectPath: string, name: string): Promise<string> =>
     rawInvoke("sequence_create", { projectPath, name }),
+  sequence_rename: (sequencePath: string, newName: string): Promise<string> =>
+    rawInvoke("sequence_rename", { sequencePath, newName }),
   shot_open: (
     shotPath: string,
   ): Promise<{ columns: GalleryColumn[]; sidecar: ShotSidecar }> =>
     rawInvoke("shot_open", { shotPath }),
   shot_create: (sequencePath: string, name: string): Promise<string> =>
     rawInvoke("shot_create", { sequencePath, name }),
+  shot_rename: (shotPath: string, newName: string): Promise<string> =>
+    rawInvoke("shot_rename", { shotPath, newName }),
   shot_rescan: (shotPath: string): Promise<GalleryColumn[]> =>
     rawInvoke("shot_rescan", { shotPath }),
   dirs_exist: (paths: string[]): Promise<boolean[]> =>
