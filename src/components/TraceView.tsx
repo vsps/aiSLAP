@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { useSessionStore } from "../stores/sessionStore";
+import { useTimelineStore } from "../stores/timelineStore";
 import { performImageAction, type ImageAction } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 import type { GalleryImage } from "../lib/types";
-import { basename } from "../lib/paths";
+import { basename, dirname } from "../lib/paths";
 
 type Props = {
   onDragStart: (payload: {
@@ -39,7 +40,15 @@ function labelFor(dir: string): string {
 }
 
 export function TraceView({ onDragStart }: Props) {
-  const { traceActive, selectedImagePath } = useSessionStore();
+  const { traceActive, selectedImagePath, columns } = useSessionStore();
+  const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
+  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
+
+  // Resolve a traced path to its scanned gallery image when available so the
+  // visibility star reflects real state; fall back to a synthetic image for
+  // paths outside the current shot's scan.
+  const imageFor = (p: string): GalleryImage =>
+    columns.flatMap((c) => c.images).find((i) => i.path === p) ?? makeImage(p);
 
   const groups = useMemo(() => {
     if (!traceActive) return [];
@@ -77,7 +86,12 @@ export function TraceView({ onDragStart }: Props) {
             </div>
             <div className="flex-1 min-w-0 flex flex-wrap gap-gallery-column-gap">
               {g.paths.map((p) => {
-                const img = makeImage(p);
+                const img = imageFor(p);
+                // shot dir is two levels up: <shot>/<version>/<file>.
+                const traceShotPath = dirname(dirname(p));
+                const knownShot = shotsLatestMedia.has(traceShotPath);
+                const clipSelected =
+                  knownShot && shotsLatestMedia.get(traceShotPath)?.clipMediaPath === p;
                 return (
                   <div key={p} className="w-[120px] shrink-0">
                     <Thumbnail
@@ -87,7 +101,16 @@ export function TraceView({ onDragStart }: Props) {
                       onSelect={() => onAction("select", p)}
                       onToggleStar={() => onAction("toggle_star", p)}
                       onDragStart={onDragStart}
-                      dragDisabled
+                      clipMediaSelected={clipSelected}
+                      onToggleClipMedia={
+                        knownShot
+                          ? () =>
+                              void setShotClipMedia(
+                                traceShotPath,
+                                clipSelected ? null : p,
+                              )
+                          : undefined
+                      }
                     />
                   </div>
                 );

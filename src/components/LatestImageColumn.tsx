@@ -36,12 +36,25 @@ export function LatestImageColumn() {
   const tlPlayhead = useTimelineStore((s) => s.playheadSec);
   const tlShotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
   const tlVideoDurations = useTimelineStore((s) => s.videoDurations);
+  const shotPath = useSessionStore((s) => s.shotPath);
+  const clipMediaPath = useTimelineStore((s) =>
+    shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
+  );
+  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const timelineActive = tlPlaying || tlPlayhead > 0;
 
   const image = useMemo(
     () => pickImage(columns, selectedImagePath, targetVersion),
     [columns, selectedImagePath, targetVersion],
+  );
+  // Clip media only applies to images living in a shot version dir, not SRC refs.
+  const isSrcImage = useMemo(
+    () =>
+      image
+        ? columns.find((c) => c.images.some((i) => i.path === image.path))?.isSrc ?? false
+        : false,
+    [columns, image],
   );
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -131,6 +144,29 @@ export function LatestImageColumn() {
               )
             }
           />
+          <IconBtn
+            name="visibility"
+            size={22}
+            fill={!!image.starred}
+            title={image.starred ? "Demote from gallery" : "Promote to gallery"}
+            onClick={() => void performImageAction("toggle_star", image.path)}
+          />
+          {shotPath && !isSrcImage && (
+            <IconBtn
+              name="movie"
+              size={22}
+              fill={image.path === clipMediaPath}
+              title={
+                image.path === clipMediaPath ? "Clear clip media" : "Set as clip media"
+              }
+              onClick={() =>
+                void setShotClipMedia(
+                  shotPath,
+                  image.path === clipMediaPath ? null : image.path,
+                )
+              }
+            />
+          )}
           {!image.isVideo && (
             <IconBtn
               name="edit"
