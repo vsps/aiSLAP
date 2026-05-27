@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { IconBtn } from "./IconBtn";
 import { RoleMenu } from "./RoleMenu";
+import { ColumnResizeHandle } from "./ColumnResizeHandle";
+import { useLayoutStore } from "../stores/layoutStore";
 import { useGenerationStore } from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { fileSrc } from "../lib/assets";
@@ -71,6 +73,7 @@ export function RefImagesColumn() {
     reorderRefs,
   } = useGenerationStore();
   const expandedIdx = useGenerationStore((s) => s.expandedIdx);
+  const width = useLayoutStore((s) => s.widths.refImages);
   const linksLen = useGenerationStore((s) => s.links.length);
   const activeLink = useGenerationStore((s) =>
     s.expandedIdx == null ? null : s.links[s.expandedIdx],
@@ -287,7 +290,8 @@ export function RefImagesColumn() {
       <div
         ref={panelRef}
         data-ref-drop="true"
-        className={`bg-surface border border-border p-prompt-column text-text w-[381px] flex flex-col gap-prompt-column-gap shrink-0 transition-colors ${
+        style={{ width }}
+        className={`relative bg-surface border border-border p-prompt-column text-text flex flex-col gap-prompt-column-gap shrink-0 transition-colors ${
           dragOver || galleryDragOver ? "outline outline-2 outline-accent" : ""
         }`}
       >
@@ -344,6 +348,7 @@ export function RefImagesColumn() {
             </div>
           ))}
         </div>
+        <ColumnResizeHandle columnKey="refImages" />
       </div>
 
       {menu && (

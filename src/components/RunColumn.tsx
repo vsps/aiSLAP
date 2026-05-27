@@ -38,6 +38,13 @@ export function RunColumn() {
   const links = useGenerationStore((s) => s.links);
   const expandedIdx = useGenerationStore((s) => s.expandedIdx);
   const isMultiLink = links.length > 1;
+
+  // Each included, non-empty shot prompt fans out into its own parallel run.
+  const activeLink = expandedIdx != null ? links[expandedIdx] : links[0];
+  const shotIncludes = activeLink?.shotPromptsIncluded ?? shotPrompts.map(() => true);
+  const runCount =
+    shotPrompts.filter((p, i) => shotIncludes[i] !== false && p.trim().length > 0).length || 1;
+  const showCount = !isMultiLink && runCount > 1;
   const chainProblems = useMemo(
     () => (isMultiLink ? preflightChain(links) : []),
     [links, isMultiLink],
@@ -151,7 +158,7 @@ export function RunColumn() {
         onClick={() => void onSubmit()}
         className={canRun ? btn : btnDisabled}
       >
-        [SUBMIT]
+        {showCount ? `[SUBMIT ${runCount}]` : "[SUBMIT]"}
       </button>
       <button
         title={disabledReason || "Submit + new version"}
@@ -159,7 +166,7 @@ export function RunColumn() {
         onClick={() => void onSubmitPlus()}
         className={canRunPlus ? btn : btnDisabled}
       >
-        [SUBMIT+]
+        {showCount ? `[SUBMIT+ ${runCount}]` : "[SUBMIT+]"}
       </button>
 
       {queueCount > 0 && (

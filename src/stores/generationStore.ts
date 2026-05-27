@@ -189,7 +189,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
     },
     setShotPrompts(values) {
       const next = values.length > 0 ? values : [""];
-      set((s) => patchActive(s, { shotPrompts: next }));
+      set((s) => patchActive(s, { shotPrompts: next, shotPromptsIncluded: next.map(() => true) }));
     },
     setShotPromptAt(idx, value) {
       set((s) => {
