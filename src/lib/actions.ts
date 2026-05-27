@@ -37,6 +37,7 @@ function normalizeRefs(raw: (RefSnapshot | string)[] | undefined): RefImage[] {
 
 /** Apply a sidecar metadata record to the current editor state. */
 export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
+  restoredRefs: number;
   skippedRefs: number;
 }> {
   const models = useModelsStore.getState();
@@ -68,12 +69,17 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
     else skipped++;
   }
   gen.setRefImages(valid);
+  console.debug("[reuse] refs", {
+    total: refs.length,
+    restored: valid.length,
+    skipped,
+  });
 
   if (typeof meta.iterationTotal === "number" && meta.iterationTotal > 0) {
     gen.setIterations(meta.iterationTotal);
   }
 
-  return { skippedRefs: skipped };
+  return { restoredRefs: valid.length, skippedRefs: skipped };
 }
 
 /** Restore a full prompt chain into the work surface from a sidecar's
@@ -325,14 +331,12 @@ export async function performImageAction(
         { title: "Reuse prompt", kind: "warning" },
       );
       if (!ok) return;
-      const { skippedRefs } = await copySettingsFromMetadata(meta);
-      if (skippedRefs) {
-        await showMessage(
-          `Loaded. ${skippedRefs} ref(s) skipped (files missing).`,
-          {
-            kind: "info",
-          },
-        );
+      const { restoredRefs, skippedRefs } = await copySettingsFromMetadata(meta);
+      if (restoredRefs > 0 || skippedRefs > 0) {
+        const skip = skippedRefs ? `, ${skippedRefs} skipped (files missing)` : "";
+        await showMessage(`Reused. Restored ${restoredRefs} ref(s)${skip}.`, {
+          kind: "info",
+        });
       }
       return;
     }
