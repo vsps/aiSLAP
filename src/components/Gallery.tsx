@@ -393,7 +393,7 @@ export function Gallery() {
           {splitButtons}
         </>
       ) : (
-        <div className="flex flex-1 min-w-0 gap-gallery-surface overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
+        <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
           {columns.length === 0 ? (
             <div className="text-sm text-dim p-4">Open a shot to see its versions.</div>
           ) : (
