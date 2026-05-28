@@ -24,20 +24,25 @@ Built with React + Tailwind (frontend) on a Rust + Tauri (native) host. Windows 
 
 ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
+---
+
 ## Key Features:
 
-- Choice of API providers
-- Many models to choose from, new ones can be added via JSON
-- Image annotation
-- Prompt enhancement
-- Prompt history
+- choice of API providers
+- maany models to choose from, new ones can be added via JSON
+- chain multiple prompts into a sequenced workflow
+- parse a srcipt file to automatically create sequence and shot folders
+- split prompts into multiple sub-prompts for generating variantions
+- a simple NLE to edit bash sequences together
+- image annotation / cropping
+- LLM prompt enhancement
+- prompt history
 - full metadata sidecar saved with media.
-- **NEW** A simple NLE to edit bash sequences together
-- **NEW** Ability to create prompt chains to automate processes.
-- 
+
  
 ![aiSLAP](https://github.com/user-attachments/assets/dd66d818-f5a0-4ad3-b5e3-4c6ad7b881c9)
 
+---
 ## CURRENTLY AVAILABLE MODELS
 
 **Image**
@@ -46,49 +51,40 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 - Nano Banana Pro
 - Flux
 - GPT Image 2.0
+- Seedream 4.5 and 5.0
 
 **Video**
 
 - Veo 3.1
+- Seedance 2.0
 - Kling 3
 - Happy Horse
 - Topaz
 
-## Other Features
+---
 
-- **Project → sequence → shot layout** — results and reference images are organized on disk so you can version shots and track iterations.
-- **Multishot-prompting** - the main shot prompt can be broken into multiple sections to make editing of multi-shot promts easier.
-- **Prompt history** — per-sequence and per-shot prompts are saved as sidecars and navigable with ←/→ arrows.
-- **Reference images with roles** — start frame, end frame, source, or `@ElementN` groups (with a "frontal" flag) that map onto Kling 3's nested element payload. Drag to reorder; drop OS files into the REF_IMAGES panel to add.
-- **Gallery** — every generation writes alongside its metadata; each shot has a SRC column (inputs) plus `v001/`, `v002/`, … version columns (outputs).
-- **Custom File Naming** - via a simple token setup.
+## Installation
 
-
-## Install
-
-Prereqs:
+**Prerequisites**
 
 - [Rust](https://rustup.rs/) (stable)
-- [pnpm](https://pnpm.io/) 8+ and Node 20+
+- [Node.js](https://nodejs.org/) 20+
 - Windows: Microsoft C++ Build Tools + WebView2 (bundled with Windows 11)
 - A [fal.ai API key](https://fal.ai/dashboard/keys)
-
-Active development happens on the `dev` branch — that's where the latest features land. `main` is the stable baseline that lags behind. Clone `dev` to get everything new:
 
 ```bash
 git clone -b dev https://github.com/vsps/aiSLAP.git
 cd aiSLAP
-pnpm install
-pnpm tauri dev       # run
-pnpm tauri build     # produce an installer in src-tauri/target/release/bundle
+npm install
+npm run tauri dev       # dev mode
+npm run tauri build     # installer → src-tauri/target/release/bundle
 ```
 
-To pull updates later: `git pull` from inside the `dev` branch.
+> Prefer pnpm? `npm install -g pnpm` then use `pnpm` in place of `npm run`.
 
-### A test build can be found here (WINDOWS ONLY): https://github.com/vsps/aiSLAP/releases
+Pre-built Windows installer tracks `main`: [Releases](https://github.com/vsps/aiSLAP/releases)
 
-Note: the build on releases tracks `main`, so it may not include the latest `dev` changes. Build from source for the freshest version.
-
+---
 
 ## Configure
 
@@ -99,6 +95,8 @@ On first launch the app creates `%APPDATA%\aiSLAP\` (Windows) or the equivalent 
 - `app-state.json` — prompts, settings, reference-image roles (restored on launch).
 
 **ffmpeg** is required for video thumbnail extraction. Point to it in Settings if it isn't on `PATH`.
+
+---
 
 ## Basic usage
 
@@ -111,16 +109,20 @@ On first launch the app creates `%APPDATA%\aiSLAP\` (Windows) or the equivalent 
    - `@ElementN` — Kling-style named references. First image in a group is the frontal by default (★); toggle the checkbox to promote another.
 6. Click **Generate**. The result lands in a new `vNNN/` column in the gallery and is saved with a sidecar containing the prompt, settings, and reference URLs used.
 
+---
 
 ## An updated Library view
 
 While all new reference images added from disk get saved to the GLOBAL SRC folder any generation can be promoted to be visible (eye icon).
 Clicking the big eye button to the right of the thumbnails brings up all the promoted images in the entire project. This allows for quick cross referencing of images across sequences and shots.
 
+---
+
 ## Prompt enhancement
 
 All text inputs can now be enhanced through an LLM of your choice. Click the sparkles to see the enhancement options.
 
+---
 
 ## License
 
