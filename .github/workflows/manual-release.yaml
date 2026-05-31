@@ -1,64 +1,47 @@
-name: release
+name: manual-release
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.2.5)'
+        required: true
+        type: string
 
 jobs:
-  check-version:
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.check-changes.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check if version files changed
-        id: check-changes
-        run: |
-          if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -qE '^(package\.json|src-tauri/Cargo\.toml|src-tauri/tauri\.conf\.json)$'; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
   create-release:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create-release.outputs.releaseId }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create draft release
+      - name: Create release
         id: create-release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: app-v__VERSION__
-          releaseName: "App v__VERSION__"
+          tagName: ${{ inputs.version }}
+          releaseName: "${{ inputs.version }}"
           releaseDraft: true
           prerelease: false
           tauriScript: pnpm tauri
 
   build:
-    needs: [check-version, create-release]
-    if: needs.check-version.outputs.changed == 'true'
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
-            args: "--target aarch64-apple-darwin"
+            target: aarch64-apple-darwin
           - os: macos-latest
-            args: "--target x86_64-apple-darwin"
+            target: x86_64-apple-darwin
           - os: ubuntu-22.04
-            args: ""
+            target: ""
           - os: windows-latest
-            args: ""
+            target: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -79,7 +62,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.target && matrix.target || '' }}
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -107,11 +90,10 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tauriScript: pnpm tauri
-          args: ${{ matrix.args }}
+          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
   publish-release:
-    needs: [check-version, create-release, build]
-    if: needs.check-version.outputs.changed == 'true'
+    needs: [create-release, build]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
