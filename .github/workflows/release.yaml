@@ -6,7 +6,22 @@ on:
 
 jobs:
   check-version:
-    # unchanged ...
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check-changes.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if version files changed
+        id: check-changes
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -qE '^(package\.json|src-tauri/Cargo\.toml|src-tauri/tauri\.conf\.json)$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
   create-release:
     needs: check-version
@@ -19,7 +34,7 @@ jobs:
 
       - name: Create draft release
         id: create-release
-        uses: tauri-apps/tauri-action@v0.5.21
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -27,6 +42,7 @@ jobs:
           releaseName: "App v__VERSION__"
           releaseDraft: true
           prerelease: false
+          tauriScript: pnpm tauri
 
   build:
     needs: [check-version, create-release]
@@ -85,7 +101,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build & upload to release
-        uses: tauri-apps/tauri-action@v0.5.21
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
