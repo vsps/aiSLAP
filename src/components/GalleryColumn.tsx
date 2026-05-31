@@ -9,6 +9,10 @@ import { basename } from "../lib/paths";
 export type DragState = {
   fromPath: string;
   fromColumnVersion: string;
+  /** Stacked-view source shot path (absolute). Only set in stacked view drags. */
+  fromShotPath?: string;
+  /** Stacked-view source version name (e.g., "v003"). Only set in stacked view drags. */
+  fromVersionName?: string;
   overColumnVersion: string | null;
   shiftHeld: boolean;
   pointerX: number;

@@ -169,7 +169,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
                   );
                 }}
                 disabled={!config}
-                className="flex-1 bg-bg px-2 py-1 text-xs font-mono"
+                className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
                 placeholder={FILENAME_TEMPLATE_DEFAULT}
               />
               <button
@@ -202,7 +202,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
               onChange={(e) => setScript(e.currentTarget.value)}
               disabled={!projectPath}
               spellCheck={false}
-              className="min-h-[260px] max-h-[40vh] w-full resize-y bg-bg text-text p-prompt-panel outline-none font-mono text-xs thin-scroll"
+              className="min-h-[260px] max-h-[40vh] w-full resize-y bg-inset text-text p-prompt-panel outline-none font-mono text-xs thin-scroll"
               placeholder="# Sequence 1&#10;&#10;## Shot 1&#10;..."
             />
             <div className="text-xs text-dim">

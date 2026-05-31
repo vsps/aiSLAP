@@ -3,6 +3,7 @@ import type {
   GalleryColumn,
   PromptHistoryChannel,
   SequenceSidecar,
+  SequenceStacks,
   ShotSidecar,
   SeqStarredGroup,
 } from "../lib/types";
@@ -14,7 +15,7 @@ import { basename } from "../lib/paths";
 import { rewriteScriptHeading } from "../lib/script";
 
 type PromptScope = "sequence" | "shot";
-type ViewMode = "columns" | "starred";
+type ViewMode = "columns" | "starred" | "stacked";
 
 type State = {
   projectPath: string | null;
@@ -40,6 +41,8 @@ type State = {
   viewMode: ViewMode;
   starredGroups: SeqStarredGroup[];
   starredLoading: boolean;
+  sequenceStacks: SequenceStacks | null;
+  sequenceStacksLoading: boolean;
 
   galleryHeight: number;
   thumbColWidth: number;
@@ -68,6 +71,7 @@ type Actions = {
 
   setViewMode: (mode: ViewMode) => void;
   rescanStarred: () => Promise<void>;
+  rescanSequenceStacks: () => Promise<void>;
 
   navigatePromptHistory: (scope: PromptScope, delta: number) => void;
   snapToLive: (scope: PromptScope) => void;
@@ -123,6 +127,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   viewMode: "columns",
   starredGroups: [],
   starredLoading: false,
+  sequenceStacks: null,
+  sequenceStacksLoading: false,
 
   galleryHeight: 400,
   thumbColWidth: THUMB_W_MIN,
@@ -168,6 +174,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     });
     if (get().viewMode === "starred") {
       void get().rescanStarred();
+    } else if (get().viewMode === "stacked") {
+      void get().rescanSequenceStacks();
     }
     // Kick the timeline load in parallel with the shot load — they're independent.
     const timelineLoad = useTimelineStore
@@ -209,6 +217,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     }));
     if (get().viewMode === "starred") {
       void get().rescanStarred();
+    } else if (get().viewMode === "stacked") {
+      void get().rescanSequenceStacks();
     }
   },
 
@@ -398,6 +408,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     set({ viewMode: mode });
     if (mode === "starred") {
       void get().rescanStarred();
+    } else if (mode === "stacked") {
+      void get().rescanSequenceStacks();
     }
   },
 
@@ -413,6 +425,22 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       set({ starredGroups: groups, starredLoading: false });
     } catch (e) {
       set({ starredLoading: false });
+      throw e;
+    }
+  },
+
+  async rescanSequenceStacks() {
+    const { sequencePath } = get();
+    if (!sequencePath) {
+      set({ sequenceStacks: null, sequenceStacksLoading: false });
+      return;
+    }
+    set({ sequenceStacksLoading: true });
+    try {
+      const stacks = await cmd.sequence_stacks_scan(sequencePath);
+      set({ sequenceStacks: stacks, sequenceStacksLoading: false });
+    } catch (e) {
+      set({ sequenceStacksLoading: false });
       throw e;
     }
   },

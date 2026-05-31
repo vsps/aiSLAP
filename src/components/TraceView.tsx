@@ -60,7 +60,12 @@ export function TraceView({ onDragStart }: Props) {
     }
     return Array.from(map.entries())
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([dir, paths]) => ({ dir, label: labelFor(dir), paths: paths.sort() }));
+      .map(([dir, paths]) => ({
+        dir,
+        label: labelFor(dir),
+        shotPath: dirname(dir),
+        paths: paths.sort(),
+      }));
   }, [traceActive]);
 
   const onAction = (action: ImageAction, path: string) => performImageAction(action, path);
@@ -77,7 +82,11 @@ export function TraceView({ onDragStart }: Props) {
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface">
       <div className="flex flex-col gap-gallery-column-gap p-gallery-column">
         {groups.map((g) => (
-          <div key={g.dir} className="flex items-stretch gap-gallery-column-gap">
+          <div
+            key={g.dir}
+            data-shot-row={g.shotPath}
+            className="flex items-stretch gap-gallery-column-gap"
+          >
             <div
               className="shrink-0 w-[140px] bg-src-bg border border-border px-2 py-1 text-sm truncate"
               title={g.dir}

@@ -156,7 +156,7 @@ export function Thumbnail({
         name="visibility"
         size={18}
         fill={!!image.starred}
-        title={image.starred ? "Demote from gallery" : "Promote to gallery"}
+        title={image.starred ? "Remove from favorites" : "Add to favorites"}
         onClick={(e) => {
           e.stopPropagation();
           onToggleStar();

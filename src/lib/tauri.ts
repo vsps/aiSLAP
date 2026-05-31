@@ -9,6 +9,7 @@ import type {
   ShotSidecar,
   ImageMetadata,
   SeqStarredGroup,
+  SequenceStacks,
   SequenceTimeline,
   TimelineInit,
   TimelineExportParams,
@@ -67,6 +68,23 @@ export const cmd = {
     rawInvoke("dirs_exist", { paths }),
   dir_ensure: (path: string): Promise<void> =>
     rawInvoke("dir_ensure", { path }),
+
+  // Stacked view
+  sequence_stacks_scan: (sequencePath: string): Promise<SequenceStacks> =>
+    rawInvoke("sequence_stacks_scan", { sequencePath }),
+  shot_version_select_set: (
+    shotPath: string,
+    version: string,
+    filename: string | null,
+  ): Promise<ShotSidecar> =>
+    rawInvoke("shot_version_select_set", { shotPath, version, filename }),
+  version_stack_move: (
+    srcShot: string,
+    srcVersion: string,
+    dstShot: string,
+    dstVersion: string | null,
+  ): Promise<string> =>
+    rawInvoke("version_stack_move", { srcShot, srcVersion, dstShot, dstVersion }),
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),

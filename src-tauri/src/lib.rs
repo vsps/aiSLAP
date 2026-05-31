@@ -57,6 +57,9 @@ pub fn run() {
             commands::session::shot_clip_media_set,
             commands::session::dirs_exist,
             commands::session::dir_ensure,
+            commands::session::sequence_stacks_scan,
+            commands::session::shot_version_select_set,
+            commands::session::version_stack_move,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+
+fn map_is_empty<K, V>(m: &HashMap<K, V>) -> bool { m.is_empty() }
 
 // All types here must match src/lib/types.ts exactly.
 
@@ -255,6 +258,10 @@ pub struct ShotSidecar {
     /// Single exclusive "clip media" pick — absolute path or None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clip_media_path: Option<String>,
+    /// Per-version pinned "select" picks. Key = version name (e.g., "v003"),
+    /// value = filename within that version dir. When unset, the latest image is used.
+    #[serde(default, skip_serializing_if = "map_is_empty")]
+    pub version_selects: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

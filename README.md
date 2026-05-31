@@ -11,6 +11,8 @@
                 ░
 </pre>
 
+---
+
 # aiSLAP
 
 A desktop GUI for [fal.ai](https://fal.ai) and now [replicate](https://replicate.com).

@@ -294,6 +294,7 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
                 name,
                 prompt_history: vec![],
                 clip_media_path: None,
+                version_selects: Default::default(),
             },
         )?;
     }
@@ -610,6 +611,267 @@ pub fn version_create_next(shot_path: String) -> AppResult<String> {
     let next = format!("v{:03}", max_n + 1);
     ensure_dir(&root.join(&next))?;
     Ok(next)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionStack {
+    pub version: String,
+    pub images: Vec<GalleryImage>,
+    pub selected_filename: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShotStack {
+    pub shot_path: String,
+    pub shot_name: String,
+    pub versions: Vec<VersionStack>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub clip_media_path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SequenceStacks {
+    pub global_src_images: Vec<GalleryImage>,
+    pub shots: Vec<ShotStack>,
+}
+
+#[tauri::command]
+pub fn sequence_stacks_scan(sequence_path: String) -> AppResult<SequenceStacks> {
+    let seq_root = PathBuf::from(&sequence_path);
+    if !seq_root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {sequence_path}")));
+    }
+
+    let project_root = project_root_for(&seq_root).ok();
+    let visible = project_root
+        .as_ref()
+        .map(|r| load_visible_set(r))
+        .transpose()?
+        .unwrap_or_default();
+
+    // Project-level GLOBAL SRC.
+    let global_src_images = match project_root.as_ref() {
+        Some(root) => {
+            let global_src = root.join(SRC_DIR);
+            if global_src.is_dir() {
+                scan_directory_images(&global_src, project_root.as_deref(), &visible)?
+            } else {
+                vec![]
+            }
+        }
+        None => vec![],
+    };
+
+    // Walk shots in this sequence.
+    let mut shots: Vec<ShotStack> = Vec::new();
+    let shot_dirs = list_dirs(&seq_root)?;
+    for shot_dir in shot_dirs {
+        let shot_name = match shot_dir.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if shot_name == SRC_DIR {
+            continue;
+        }
+
+        let sidecar: ShotSidecar = read_sidecar(&shot_dir.join(SHOT_SIDECAR))?;
+
+        let mut versions: Vec<VersionStack> = Vec::new();
+        for v_dir in list_dirs(&shot_dir)? {
+            let vname = match v_dir.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if vname == SRC_DIR {
+                continue;
+            }
+            let images = scan_directory_images(&v_dir, project_root.as_deref(), &visible)?;
+            // Resolve the select:
+            //   pinned + file still exists → use it
+            //   else → last image in the sorted array (the "latest")
+            let pinned = sidecar.version_selects.get(&vname).cloned();
+            let resolved = pinned
+                .filter(|p| images.iter().any(|i| &i.filename == p))
+                .or_else(|| images.last().map(|i| i.filename.clone()))
+                .unwrap_or_default();
+            versions.push(VersionStack {
+                version: vname,
+                images,
+                selected_filename: resolved,
+            });
+        }
+        versions.sort_by(|a, b| a.version.cmp(&b.version));
+
+        shots.push(ShotStack {
+            shot_path: as_str(&shot_dir),
+            shot_name,
+            versions,
+            clip_media_path: sidecar.clip_media_path.clone(),
+        });
+    }
+    shots.sort_by(|a, b| a.shot_name.cmp(&b.shot_name));
+
+    Ok(SequenceStacks {
+        global_src_images,
+        shots,
+    })
+}
+
+#[tauri::command]
+pub fn shot_version_select_set(
+    shot_path: String,
+    version: String,
+    filename: Option<String>,
+) -> AppResult<ShotSidecar> {
+    let root = PathBuf::from(&shot_path);
+    let sidecar_path = root.join(SHOT_SIDECAR);
+    let mut sidecar: ShotSidecar = read_sidecar(&sidecar_path)?;
+    match filename {
+        Some(f) if !f.is_empty() => {
+            sidecar.version_selects.insert(version, f);
+        }
+        _ => {
+            sidecar.version_selects.remove(&version);
+        }
+    }
+    write_sidecar_atomic(&sidecar_path, &sidecar)?;
+    Ok(sidecar)
+}
+
+/// Move every image file (plus its sidecar/thumb) from `src_shot/src_version/`
+/// into `dst_shot/dst_version/`. When `dst_version` is None or empty, the
+/// next version on `dst_shot` is allocated.
+/// Returns the destination version's absolute path.
+#[tauri::command]
+pub fn version_stack_move(
+    src_shot: String,
+    src_version: String,
+    dst_shot: String,
+    dst_version: Option<String>,
+) -> AppResult<String> {
+    let src_dir = PathBuf::from(&src_shot).join(&src_version);
+    if !src_dir.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {}", as_str(&src_dir))));
+    }
+
+    let dst_root = PathBuf::from(&dst_shot);
+    let dst_version_name = match dst_version {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            let mut max_n = 0u32;
+            if let Ok(it) = std::fs::read_dir(&dst_root) {
+                for e in it.flatten() {
+                    if let Some(name) = e.file_name().to_str() {
+                        if is_version_name(name) {
+                            if let Ok(n) = name[1..].parse::<u32>() {
+                                if n > max_n {
+                                    max_n = n;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            format!("v{:03}", max_n + 1)
+        }
+    };
+    let dst_dir = dst_root.join(&dst_version_name);
+    ensure_dir(&dst_dir)?;
+
+    let same = match (src_dir.canonicalize(), dst_dir.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if same {
+        return Ok(as_str(&dst_dir));
+    }
+
+    // Collect the media files (skip thumbs/json — they move as siblings).
+    let mut moves: Vec<PathBuf> = Vec::new();
+    for e in std::fs::read_dir(&src_dir)? {
+        let entry = e?;
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let filename = match p.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if filename.ends_with(".thumb.png") {
+            continue;
+        }
+        let ext = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_default();
+        let is_media = IMAGE_EXTS.iter().any(|e| *e == ext) || VIDEO_EXTS.iter().any(|e| *e == ext);
+        if !is_media {
+            continue;
+        }
+        moves.push(p);
+    }
+
+    // Capture rel paths before the source files disappear, so we can update the
+    // visible set after the moves succeed.
+    let project_root = project_root_for(&dst_dir).ok();
+    let mut rel_pairs: Vec<(String, String)> = Vec::new();
+    if let Some(root) = project_root.as_ref() {
+        for src in &moves {
+            let filename = match src.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            let src_rel = src
+                .strip_prefix(root)
+                .ok()
+                .map(as_str)
+                .or_else(|| relativize(src, root));
+            let dst_abs = dst_dir.join(&filename);
+            let dst_rel = dst_abs
+                .strip_prefix(root)
+                .ok()
+                .map(as_str)
+                .or_else(|| relativize(&dst_abs, root));
+            if let (Some(s), Some(d)) = (src_rel, dst_rel) {
+                rel_pairs.push((s, d));
+            }
+        }
+    }
+
+    for src in &moves {
+        move_triple_to_dir(src, &dst_dir)?;
+    }
+
+    // Update visible set, re-keying any moved files that were marked visible.
+    if let Some(root) = project_root.as_ref() {
+        let mut set = load_visible_set(root)?;
+        let mut changed = false;
+        for (s, d) in &rel_pairs {
+            if set.remove(s) {
+                set.insert(d.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            save_visible_set(root, &set)?;
+        }
+    }
+
+    // Clear the source shot's pinned select for this version.
+    let src_sidecar_path = PathBuf::from(&src_shot).join(SHOT_SIDECAR);
+    if src_sidecar_path.exists() {
+        let mut sidecar: ShotSidecar = read_sidecar(&src_sidecar_path)?;
+        if sidecar.version_selects.remove(&src_version).is_some() {
+            write_sidecar_atomic(&src_sidecar_path, &sidecar)?;
+        }
+    }
+
+    Ok(as_str(&dst_dir))
 }
 
 #[derive(Serialize)]
