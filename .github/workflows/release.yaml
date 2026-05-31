@@ -1,8 +1,6 @@
-<<<<<<< HEAD
 yaml
 
 name: release
->>>>>>> dev
 
 on:
   push:
