@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { useSessionStore } from "../stores/sessionStore";
+import { useTimelineStore } from "../stores/timelineStore";
 import { performImageAction, type ImageAction } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 import type { GalleryImage } from "../lib/types";
-import { basename } from "../lib/paths";
+import { basename, dirname } from "../lib/paths";
 
 type Props = {
   onDragStart: (payload: {
@@ -39,7 +40,15 @@ function labelFor(dir: string): string {
 }
 
 export function TraceView({ onDragStart }: Props) {
-  const { traceActive, selectedImagePath } = useSessionStore();
+  const { traceActive, selectedImagePath, columns } = useSessionStore();
+  const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
+  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
+
+  // Resolve a traced path to its scanned gallery image when available so the
+  // visibility star reflects real state; fall back to a synthetic image for
+  // paths outside the current shot's scan.
+  const imageFor = (p: string): GalleryImage =>
+    columns.flatMap((c) => c.images).find((i) => i.path === p) ?? makeImage(p);
 
   const groups = useMemo(() => {
     if (!traceActive) return [];
@@ -51,7 +60,12 @@ export function TraceView({ onDragStart }: Props) {
     }
     return Array.from(map.entries())
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([dir, paths]) => ({ dir, label: labelFor(dir), paths: paths.sort() }));
+      .map(([dir, paths]) => ({
+        dir,
+        label: labelFor(dir),
+        shotPath: dirname(dir),
+        paths: paths.sort(),
+      }));
   }, [traceActive]);
 
   const onAction = (action: ImageAction, path: string) => performImageAction(action, path);
@@ -68,7 +82,11 @@ export function TraceView({ onDragStart }: Props) {
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface">
       <div className="flex flex-col gap-gallery-column-gap p-gallery-column">
         {groups.map((g) => (
-          <div key={g.dir} className="flex items-stretch gap-gallery-column-gap">
+          <div
+            key={g.dir}
+            data-shot-row={g.shotPath}
+            className="flex items-stretch gap-gallery-column-gap"
+          >
             <div
               className="shrink-0 w-[140px] bg-src-bg border border-border px-2 py-1 text-sm truncate"
               title={g.dir}
@@ -77,7 +95,12 @@ export function TraceView({ onDragStart }: Props) {
             </div>
             <div className="flex-1 min-w-0 flex flex-wrap gap-gallery-column-gap">
               {g.paths.map((p) => {
-                const img = makeImage(p);
+                const img = imageFor(p);
+                // shot dir is two levels up: <shot>/<version>/<file>.
+                const traceShotPath = dirname(dirname(p));
+                const knownShot = shotsLatestMedia.has(traceShotPath);
+                const clipSelected =
+                  knownShot && shotsLatestMedia.get(traceShotPath)?.clipMediaPath === p;
                 return (
                   <div key={p} className="w-[120px] shrink-0">
                     <Thumbnail
@@ -85,14 +108,18 @@ export function TraceView({ onDragStart }: Props) {
                       selected={selectedImagePath === p}
                       columnVersion={g.label}
                       onSelect={() => onAction("select", p)}
-                      onZoom={() => onAction("zoom", p)}
-                      onAddToRefs={() => onAction("add_to_refs", p)}
-                      onCopySettings={() => onAction("copy_settings", p)}
-                      onEdit={() => onAction("edit", p)}
-                      onCrop={() => onAction("crop", p)}
                       onToggleStar={() => onAction("toggle_star", p)}
                       onDragStart={onDragStart}
-                      dragDisabled
+                      clipMediaSelected={clipSelected}
+                      onToggleClipMedia={
+                        knownShot
+                          ? () =>
+                              void setShotClipMedia(
+                                traceShotPath,
+                                clipSelected ? null : p,
+                              )
+                          : undefined
+                      }
                     />
                   </div>
                 );

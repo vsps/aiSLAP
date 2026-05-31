@@ -8,14 +8,18 @@ import {
   saveLastLlmInstruction,
   saveLastLlmModel,
 } from "../lib/llm";
+import { splitPromptsByDelimiter } from "../lib/args";
 
 type Props = {
   originalPrompt: string;
   onAccept: (rewritten: string) => void;
   onCancel: () => void;
+  /** When provided, shows a "Split" action that divides the output on `---`
+   *  lines into multiple prompts (one parallel run each). */
+  onSplit?: (parts: string[]) => void;
 };
 
-export function LlmPromptModal({ originalPrompt, onAccept, onCancel }: Props) {
+export function LlmPromptModal({ originalPrompt, onAccept, onCancel, onSplit }: Props) {
   const [model, setModel] = useState<string>(() => loadLastLlmModel());
   const [instruction, setInstruction] = useState<string>(() =>
     loadLastLlmInstruction(),
@@ -83,6 +87,14 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel }: Props) {
   function accept() {
     abortRef.current?.abort();
     onAccept(outputPrompt);
+  }
+
+  const splitParts = splitPromptsByDelimiter(outputPrompt);
+  const canSplit = !!onSplit && splitParts.length >= 2;
+
+  function split() {
+    abortRef.current?.abort();
+    onSplit?.(splitParts);
   }
 
   return (
@@ -156,6 +168,11 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel }: Props) {
             className="min-h-[120px] max-h-[40vh] w-full resize-y bg-inset text-text p-prompt-panel outline-none thin-scroll"
             placeholder={running ? "Running…" : "Click RUN to generate"}
           />
+          {onSplit && (
+            <div className="text-xs opacity-50 font-mono">
+              Separate prompts with <span className="opacity-90">---</span> on its own line, then Split to run each in parallel.
+            </div>
+          )}
         </div>
 
         {error && <div className="text-xs text-red-500 break-words">{error}</div>}
@@ -184,6 +201,17 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel }: Props) {
           >
             Accept
           </button>
+          {onSplit && (
+            <button
+              type="button"
+              className="px-3 py-1 text-sm bg-accent hover:opacity-80 disabled:opacity-40"
+              onClick={split}
+              disabled={!canSplit}
+              title={canSplit ? `Split into ${splitParts.length} prompts` : "Add --- delimiter lines to split"}
+            >
+              Split{canSplit ? ` (${splitParts.length})` : ""}
+            </button>
+          )}
         </div>
       </div>
     </div>

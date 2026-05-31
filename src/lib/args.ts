@@ -25,6 +25,18 @@ export function combinePromptParts(parts: PromptParts): string {
   return pieces.map((s) => s.trim()).filter((s) => s.length > 0).join("\n\n");
 }
 
+/** Split LLM output into multiple prompts on a `---` delimiter line.
+ *  Splits on a line containing only the delimiter, trims each section, and
+ *  drops empties. Returns the trimmed whole as a single element when no
+ *  delimiter is present. */
+export function splitPromptsByDelimiter(text: string, delim = "---"): string[] {
+  const re = new RegExp(`^\\s*${delim}\\s*$`, "m");
+  return text
+    .split(re)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 export function buildArgs(
   node: ModelNode,
   combinedPrompt: string,

@@ -9,6 +9,10 @@ import { basename } from "../lib/paths";
 export type DragState = {
   fromPath: string;
   fromColumnVersion: string;
+  /** Stacked-view source shot path (absolute). Only set in stacked view drags. */
+  fromShotPath?: string;
+  /** Stacked-view source version name (e.g., "v003"). Only set in stacked view drags. */
+  fromVersionName?: string;
   overColumnVersion: string | null;
   shiftHeld: boolean;
   pointerX: number;
@@ -20,6 +24,11 @@ type Props = {
   width: number;
   destDir: string;
   dragState: DragState;
+  collapsed?: boolean;
+  /** When true the column-collapsed state is derived from `targetVersion`,
+   *  not the manual toggle. Header clicks should just promote to target. */
+  autoCollapse?: boolean;
+  onToggleCollapsed: () => void;
   onFolderDelete: () => void;
   onImageAction: (action: ImageAction, imagePath: string) => void;
   onRefresh?: () => void;
@@ -30,11 +39,16 @@ type Props = {
   }) => void;
 };
 
+const COLLAPSED_WIDTH = 28;
+
 export function GalleryColumn({
   column,
   width,
   destDir,
   dragState,
+  collapsed,
+  autoCollapse,
+  onToggleCollapsed,
   onFolderDelete,
   onImageAction,
   onRefresh,
@@ -46,7 +60,7 @@ export function GalleryColumn({
     shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
   );
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
-  const twoCol = width > 220;
+  const twoCol = !collapsed && width > 220;
 
   const isTarget = targetVersion === column.version;
   const headerClass = isTarget
@@ -56,9 +70,37 @@ export function GalleryColumn({
     : "accent-hover text-text";
 
   const isDropTarget =
+    !collapsed &&
     dragState != null &&
     dragState.overColumnVersion === column.version &&
     dragState.fromColumnVersion !== column.version;
+
+  function onHeaderClick() {
+    if (autoCollapse) {
+      // In auto-collapse mode the display is derived from targetVersion;
+      // the manual collapsed set is bypassed. Click on any non-target,
+      // non-SRC column promotes it to target — that's how the user expands
+      // any version. SRC + already-target clicks are no-ops.
+      if (column.isSrc || isTarget) return;
+      setTargetVersion(column.version);
+      return;
+    }
+    if (collapsed) {
+      onToggleCollapsed();
+      return;
+    }
+    if (column.isSrc) {
+      onToggleCollapsed();
+      return;
+    }
+    if (isTarget) {
+      onToggleCollapsed();
+      return;
+    }
+    setTargetVersion(column.version);
+  }
+
+  const effectiveWidth = collapsed ? COLLAPSED_WIDTH : width;
 
   return (
     <div
@@ -67,38 +109,53 @@ export function GalleryColumn({
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
         isDropTarget ? "outline outline-2 outline-accent border-transparent" : "border-border"
       } p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
-      style={{ width: `${width}px` }}
+      style={{ width: `${effectiveWidth}px` }}
     >
-      <div
-        className={`flex items-center h-[25px] px-[5px] text-sm cursor-pointer shrink-0 ${headerClass}`}
-        onClick={() => !column.isSrc && setTargetVersion(column.version)}
-      >
-        <span className="flex-1 truncate">{column.version}</span>
-        {column.isSrc && onRefresh && (
-          <IconBtn
-            name="refresh"
-            size={18}
-            title="Refresh"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRefresh();
-            }}
-          />
-        )}
-        {!column.isSrc && (
-          <IconBtn
-            name="delete"
-            size={18}
-            title="Delete version folder"
-            onClick={(e) => {
-              e.stopPropagation();
-              onFolderDelete();
-            }}
-          />
-        )}
-      </div>
-      <div className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${twoCol ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}>
-        {column.images.map((img) => (
+      {collapsed ? (
+        <div
+          className={`flex-1 min-h-0 flex items-center justify-center text-sm cursor-pointer ${headerClass}`}
+          onClick={onHeaderClick}
+          title={`Expand ${column.version}`}
+        >
+          <span
+            className="font-mono"
+            style={{ writingMode: "vertical-rl" }}
+          >
+            {column.version}
+          </span>
+        </div>
+      ) : (
+        <>
+          <div
+            className={`flex items-center h-[25px] px-[5px] text-sm cursor-pointer shrink-0 ${headerClass}`}
+            onClick={onHeaderClick}
+          >
+            <span className="flex-1 truncate">{column.version}</span>
+            {column.isSrc && onRefresh && (
+              <IconBtn
+                name="refresh"
+                size={18}
+                title="Refresh"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRefresh();
+                }}
+              />
+            )}
+            {!column.isSrc && (
+              <IconBtn
+                name="delete"
+                size={18}
+                title="Delete version folder"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFolderDelete();
+                }}
+              />
+            )}
+          </div>
+          <div className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${twoCol ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}>
+            {column.images.map((img) => (
           <Thumbnail
             key={img.path}
             image={img}
@@ -106,11 +163,6 @@ export function GalleryColumn({
             columnVersion={column.version}
             isDragSource={dragState?.fromPath === img.path}
             onSelect={() => onImageAction("select", img.path)}
-            onZoom={() => onImageAction("zoom", img.path)}
-            onAddToRefs={() => onImageAction("add_to_refs", img.path)}
-            onCopySettings={() => onImageAction("copy_settings", img.path)}
-            onEdit={() => onImageAction("edit", img.path)}
-            onCrop={() => onImageAction("crop", img.path)}
             onToggleStar={() => onImageAction("toggle_star", img.path)}
             onDragStart={onDragStart}
             clipMediaSelected={img.path === clipMediaPath}
@@ -125,16 +177,18 @@ export function GalleryColumn({
             }
           />
         ))}
-        {column.images.length === 0 && (
-          <div className={`text-xs text-dim text-center py-2${twoCol ? " col-span-2" : ""}`}>
-            {column.isSrc ? "No refs" : "Empty"}
+            {column.images.length === 0 && (
+              <div className={`text-xs text-dim text-center py-2${twoCol ? " col-span-2" : ""}`}>
+                {column.isSrc ? "No refs" : "Empty"}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      {/* small footer showing column file path */}
-      <div className="text-[10px] text-dim font-mono truncate" title={column.id}>
-        {basename(column.id)}
-      </div>
+          {/* small footer showing column file path */}
+          <div className="text-[10px] text-dim font-mono truncate" title={column.id}>
+            {basename(column.id)}
+          </div>
+        </>
+      )}
     </div>
   );
 }

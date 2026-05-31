@@ -38,7 +38,8 @@ const DEFAULT_ITEMS: MenuItem[] = [
 
 const LABELS: Record<AvailableAction, string> = {
   add_to_refs: "Use as reference",
-  toggle_star: "Promote to visible",
+  replace_ref: "Replace ref (clear others)",
+  toggle_star: "Toggle favorite",
   set_clip_media: "Set as clip media",
   copy_path: "Copy path",
   copy_image: "Copy image",

@@ -4,8 +4,11 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
 import { findSequenceBody, findShotBody } from "../lib/script";
 import { basename } from "../lib/paths";
+import { confirmAction } from "../lib/dialog";
+import { useLayoutStore } from "../stores/layoutStore";
 import { IconBtn } from "./IconBtn";
 import { LlmPromptModal } from "./LlmPromptModal";
+import { ColumnResizeHandle } from "./ColumnResizeHandle";
 
 type Scope = "sequence" | "shot";
 
@@ -51,6 +54,7 @@ function SequencePromptColumn({ title }: { title: string }) {
   const session = useSessionStore();
   const parsed = useScriptStore((s) => s.parsed);
   const [llmOpen, setLlmOpen] = useState(false);
+  const width = useLayoutStore((s) => s.widths.seqPrompt);
 
   const history = session.sequenceHistory;
   const live = generation.sequencePrompt;
@@ -74,7 +78,10 @@ function SequencePromptColumn({ title }: { title: string }) {
   const sequenceScriptIncluded = activeLink?.sequenceScriptIncluded !== false;
 
   return (
-    <div className="bg-surface border border-border p-prompt-column text-text w-[300px] flex flex-col gap-prompt-column-gap shrink-0">
+    <div
+      className="relative bg-surface border border-border p-prompt-column text-text flex flex-col gap-prompt-column-gap shrink-0"
+      style={{ width }}
+    >
       <div className="flex items-center text-sm gap-[4px] font-semibold">
         <span>{title}</span>
         {history.entries.length > 0 && (
@@ -163,6 +170,7 @@ function SequencePromptColumn({ title }: { title: string }) {
           onCancel={() => setLlmOpen(false)}
         />
       )}
+      <ColumnResizeHandle columnKey="seqPrompt" />
     </div>
   );
 }
@@ -175,6 +183,7 @@ function ShotPromptColumn({ title }: { title: string }) {
   const shotPath = useSessionStore((s) => s.shotPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const parsed = useScriptStore((s) => s.parsed);
+  const width = useLayoutStore((s) => s.widths.shotPrompt);
   const [cursor, setCursor] = useState(entries.length);
 
   useEffect(() => {
@@ -201,8 +210,22 @@ function ShotPromptColumn({ title }: { title: string }) {
   const shotPromptsIncluded =
     activeLink?.shotPromptsIncluded ?? gen.shotPrompts.map(() => true);
 
+  // Replace all shot prompts with AI-split sections, after a warning. Returns
+  // whether the split was applied (false when the user cancels).
+  async function applySplit(parts: string[]): Promise<boolean> {
+    const ok = await confirmAction(
+      `Replace all ${gen.shotPrompts.length} shot prompt(s) with ${parts.length} new one(s)?`,
+      { title: "Split into prompts", kind: "warning" },
+    );
+    if (ok) gen.setShotPrompts(parts);
+    return ok;
+  }
+
   return (
-    <div className="bg-surface border border-border p-prompt-column text-text w-[300px] flex flex-col gap-prompt-column-gap shrink-0 min-h-0">
+    <div
+      className="relative bg-surface border border-border p-prompt-column text-text flex flex-col gap-prompt-column-gap shrink-0 min-h-0"
+      style={{ width }}
+    >
       <div className="flex items-center text-sm gap-[4px] font-semibold">
         <span>{title}</span>
         {entries.length > 0 && (
@@ -255,6 +278,7 @@ function ShotPromptColumn({ title }: { title: string }) {
             onChange={(v) => gen.setShotPromptAt(idx, v)}
             onAdd={() => gen.addShotPromptAfter(idx)}
             onRemove={() => gen.removeShotPromptAt(idx)}
+            onSplit={applySplit}
             onFocusWhenReadOnly={() => setCursor(entries.length)}
           />
         ))}
@@ -265,6 +289,7 @@ function ShotPromptColumn({ title }: { title: string }) {
           {new Date(histEntry.timestamp).toLocaleString()}
         </div>
       )}
+      <ColumnResizeHandle columnKey="shotPrompt" />
     </div>
   );
 }
@@ -279,6 +304,7 @@ type ShotPromptBoxProps = {
   onChange: (v: string) => void;
   onAdd: () => void;
   onRemove: () => void;
+  onSplit: (parts: string[]) => Promise<boolean>;
   onFocusWhenReadOnly: () => void;
 };
 
@@ -292,6 +318,7 @@ function ShotPromptBox({
   onChange,
   onAdd,
   onRemove,
+  onSplit,
   onFocusWhenReadOnly,
 }: ShotPromptBoxProps) {
   const [llmOpen, setLlmOpen] = useState(false);
@@ -337,6 +364,11 @@ function ShotPromptBox({
           onAccept={(v) => {
             onChange(v);
             setLlmOpen(false);
+          }}
+          onSplit={(parts) => {
+            void onSplit(parts).then((applied) => {
+              if (applied) setLlmOpen(false);
+            });
           }}
           onCancel={() => setLlmOpen(false)}
         />

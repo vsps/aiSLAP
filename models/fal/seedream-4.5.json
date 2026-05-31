@@ -1,0 +1,49 @@
+{
+  "provider": "fal",
+  "family": "Seedream 4.5",
+  "category": "fal.ai/Image Generation",
+  "nodes": [
+    {
+      "id": "seedream45_txt2img",
+      "name": "Seedream 4.5 (txt2img)",
+      "endpoint": "fal-ai/bytedance/seedream/v4.5/text-to-image",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
+      ],
+      "outputs": [
+        { "name": "images", "data_type": "IMAGE", "api_field": "images" }
+      ],
+      "parameters": [
+        { "name": "image_size", "label": "Image Size", "type": "enum", "api_field": "image_size", "default": "auto_2K",
+          "options": ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9", "auto_2K", "auto_4K"] },
+        { "name": "num_images", "label": "Num Images", "type": "int", "api_field": "num_images", "default": 1, "min": 1, "max": 4 },
+        { "name": "max_images", "label": "Max Images", "type": "int", "api_field": "max_images", "default": 1, "min": 1, "max": 15 },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 },
+        { "name": "enable_safety_checker", "label": "Safety Checker", "type": "bool", "api_field": "enable_safety_checker", "default": true }
+      ]
+    },
+    {
+      "id": "seedream45_edit",
+      "name": "Seedream 4.5 (edit)",
+      "endpoint": "fal-ai/bytedance/seedream/v4.5/edit",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "required": true }
+      ],
+      "outputs": [
+        { "name": "images", "data_type": "IMAGE", "api_field": "images" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_urls", "max": 10 }
+      ],
+      "parameters": [
+        { "name": "image_size", "label": "Image Size", "type": "enum", "api_field": "image_size", "default": "auto_2K",
+          "options": ["square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9", "auto_2K", "auto_4K"] },
+        { "name": "num_images", "label": "Num Images", "type": "int", "api_field": "num_images", "default": 1, "min": 1, "max": 4 },
+        { "name": "max_images", "label": "Max Images", "type": "int", "api_field": "max_images", "default": 1, "min": 1, "max": 15 },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 },
+        { "name": "enable_safety_checker", "label": "Safety Checker", "type": "bool", "api_field": "enable_safety_checker", "default": true }
+      ]
+    }
+  ]
+}

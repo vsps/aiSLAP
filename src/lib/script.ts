@@ -54,3 +54,26 @@ export function findShotBody(
   const key = normalizeTitle(shotName);
   return arr.find((s) => normalizeTitle(s.title) === key)?.body ?? "";
 }
+
+/**
+ * Rewrite a `#`-level (depth=1) or `##`-level (depth=2) heading whose text
+ * matches `oldName` (case-insensitive, trim-equal) to use `newName`.
+ * Preserves line endings + leading-after-hash whitespace. Returns the
+ * original string when no match is found.
+ */
+export function rewriteScriptHeading(
+  raw: string,
+  depth: 1 | 2,
+  oldName: string,
+  newName: string,
+): string {
+  const trimmedOld = oldName.trim();
+  if (!trimmedOld) return raw;
+  const escaped = trimmedOld.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const hashes = "#".repeat(depth);
+  const re = new RegExp(
+    `^(${hashes})([ \\t]+)${escaped}[ \\t]*$`,
+    "gim",
+  );
+  return raw.replace(re, (_, h: string, ws: string) => `${h}${ws}${newName}`);
+}

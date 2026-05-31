@@ -37,6 +37,7 @@ function normalizeRefs(raw: (RefSnapshot | string)[] | undefined): RefImage[] {
 
 /** Apply a sidecar metadata record to the current editor state. */
 export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
+  restoredRefs: number;
   skippedRefs: number;
 }> {
   const models = useModelsStore.getState();
@@ -68,12 +69,17 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
     else skipped++;
   }
   gen.setRefImages(valid);
+  console.debug("[reuse] refs", {
+    total: refs.length,
+    restored: valid.length,
+    skipped,
+  });
 
   if (typeof meta.iterationTotal === "number" && meta.iterationTotal > 0) {
     gen.setIterations(meta.iterationTotal);
   }
 
-  return { skippedRefs: skipped };
+  return { restoredRefs: valid.length, skippedRefs: skipped };
 }
 
 /** Restore a full prompt chain into the work surface from a sidecar's
@@ -147,6 +153,13 @@ export async function computeTraceSet(imagePath: string): Promise<Set<string>> {
 /** Add a gallery image to the current refs. Images already inside the current
  *  project tree are referenced by path. External imports are copied into
  *  GLOBAL SRC at the project root. */
+export async function replaceImageRef(imagePath: string): Promise<void> {
+  const gen = useGenerationStore.getState();
+  gen.removeAllRefs();
+  gen.setShotPrompts([""]);
+  await addImageToRefs(imagePath);
+}
+
 export async function addImageToRefs(imagePath: string): Promise<string> {
   const { shotPath, projectPath } = useSessionStore.getState();
   if (!shotPath) throw new Error("no shot open");
@@ -173,6 +186,7 @@ export type ImageAction =
   | "zoom"
   | "select"
   | "add_to_refs"
+  | "replace_ref"
   | "copy_path"
   | "copy_image"
   | "copy_settings"
@@ -268,6 +282,13 @@ export async function performImageAction(
         await showMessage(String(e), { kind: "error" });
       }
       return;
+    case "replace_ref":
+      try {
+        await replaceImageRef(path);
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+      }
+      return;
     case "copy_to_global_src": {
       const { shotPath } = session;
       if (!shotPath) {
@@ -310,14 +331,12 @@ export async function performImageAction(
         { title: "Reuse prompt", kind: "warning" },
       );
       if (!ok) return;
-      const { skippedRefs } = await copySettingsFromMetadata(meta);
-      if (skippedRefs) {
-        await showMessage(
-          `Loaded. ${skippedRefs} ref(s) skipped (files missing).`,
-          {
-            kind: "info",
-          },
-        );
+      const { restoredRefs, skippedRefs } = await copySettingsFromMetadata(meta);
+      if (restoredRefs > 0 || skippedRefs > 0) {
+        const skip = skippedRefs ? `, ${skippedRefs} skipped (files missing)` : "";
+        await showMessage(`Reused. Restored ${restoredRefs} ref(s)${skip}.`, {
+          kind: "info",
+        });
       }
       return;
     }

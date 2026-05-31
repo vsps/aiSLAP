@@ -293,6 +293,30 @@ export type ShotSidecar = {
   promptHistory: PromptEntry[];
   /** Single exclusive "clip media" pick (set via the clapperboard icon on a thumb). */
   clipMediaPath?: string | null;
+  /** Per-version pinned "select" picks (stacked view). Key = version name
+   *  (e.g. "v003"), value = filename within that version dir. When unset for a
+   *  version, the latest image is used. */
+  versionSelects?: Record<string, string>;
+};
+
+// ---------- Stacked view (sequence-wide shot/version grid) ----------
+
+export type VersionStack = {
+  version: string;
+  images: GalleryImage[];
+  selectedFilename: string;
+};
+
+export type ShotStack = {
+  shotPath: string;
+  shotName: string;
+  versions: VersionStack[];
+  clipMediaPath?: string | null;
+};
+
+export type SequenceStacks = {
+  globalSrcImages: GalleryImage[];
+  shots: ShotStack[];
 };
 
 // ---------- Timeline (NLE) ----------

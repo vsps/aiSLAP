@@ -3,6 +3,7 @@ import type { GalleryImage } from "../lib/types";
 import { GalleryColumn, type DragState } from "./GalleryColumn";
 import { ImageZoomModal } from "./ImageZoomModal";
 import { RenameImageModal } from "./RenameImageModal";
+import { StackedView } from "./StackedView";
 import { StarredView } from "./StarredView";
 import { TraceView } from "./TraceView";
 import { Icon } from "../lib/icon";
@@ -43,6 +44,7 @@ export function Gallery() {
     setRenameImage,
     shotPath,
     sequencePath,
+    targetVersion,
     viewMode,
     setViewMode,
   } = session;
@@ -60,6 +62,26 @@ export function Gallery() {
 
   const [dragState, setDragState] = useState<DragState>(null);
 
+  // Per-column collapse state. Ephemeral — reset whenever the shot changes.
+  const [collapsedVersions, setCollapsedVersions] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // Auto-collapse mode: only GLOBAL SRC + the current target version stay
+  // expanded; everything else is forced collapsed regardless of the manual
+  // set. Survives shot navigation; reset only on explicit toggle.
+  const [autoCollapse, setAutoCollapse] = useState(false);
+  useEffect(() => {
+    setCollapsedVersions(new Set());
+  }, [shotPath]);
+  const toggleCollapsed = (version: string) => {
+    setCollapsedVersions((s) => {
+      const next = new Set(s);
+      if (next.has(version)) next.delete(version);
+      else next.add(version);
+      return next;
+    });
+  };
+
   const destDirFor = useCallback(
     (col: { isSrc: boolean; id: string; version: string }): string => {
       // SRC columns store full path in `id`; version columns store the bare name.
@@ -73,11 +95,15 @@ export function Gallery() {
     (payload: {
       fromPath: string;
       fromColumnVersion: string;
+      fromShotPath?: string;
+      fromVersionName?: string;
       pointerEvent: React.PointerEvent;
     }) => {
       setDragState({
         fromPath: payload.fromPath,
         fromColumnVersion: payload.fromColumnVersion,
+        fromShotPath: payload.fromShotPath,
+        fromVersionName: payload.fromVersionName,
         overColumnVersion: null,
         shiftHeld: payload.pointerEvent.shiftKey,
         pointerX: payload.pointerEvent.clientX,
@@ -115,6 +141,31 @@ export function Gallery() {
       return !!(el as HTMLElement).closest("[data-ref-drop]");
     }
 
+    function findStackedTargetAt(
+      x: number,
+      y: number,
+    ):
+      | { kind: "cell"; shotPath: string; version: string }
+      | { kind: "row"; shotPath: string }
+      | null {
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      const cell = (el as HTMLElement).closest<HTMLElement>(
+        "[data-version-cell-shot][data-version-cell-version]",
+      );
+      if (cell) {
+        const shot = cell.dataset.versionCellShot ?? "";
+        const version = cell.dataset.versionCellVersion ?? "";
+        if (shot && version) return { kind: "cell", shotPath: shot, version };
+      }
+      const row = (el as HTMLElement).closest<HTMLElement>("[data-shot-row]");
+      if (row) {
+        const shot = row.dataset.shotRow ?? "";
+        if (shot) return { kind: "row", shotPath: shot };
+      }
+      return null;
+    }
+
     const onMove = (e: PointerEvent) => {
       const hit = findColumnAt(e.clientX, e.clientY);
       setDragState((prev) =>
@@ -149,13 +200,21 @@ export function Gallery() {
 
     const onUp = (e: PointerEvent) => {
       const current = dragState;
-      const hitCol = findColumnAt(e.clientX, e.clientY);
       const hitRef = isOverRefPanel(e.clientX, e.clientY);
+      // Stacked-style targets are picked up from any view that stamps the
+      // markers — stacked view stamps both cell+row; favorite/trace stamp
+      // row only. Columns view stamps neither, so this stays null there.
+      const hitStacked = findStackedTargetAt(e.clientX, e.clientY);
+      const hitCol = !hitStacked ? findColumnAt(e.clientX, e.clientY) : null;
       setDragState(null);
       session.setImageDrag(null);
       if (!current) return;
       if (hitRef) {
         void commitRefDrop(current.fromPath);
+        return;
+      }
+      if (hitStacked) {
+        void commitStackedDrop(current, hitStacked, e.shiftKey);
         return;
       }
       if (!hitCol) return;
@@ -217,6 +276,58 @@ export function Gallery() {
       await session.rescanShot();
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
+    }
+  }
+
+  async function commitStackedDrop(
+    current: NonNullable<DragState>,
+    target:
+      | { kind: "cell"; shotPath: string; version: string }
+      | { kind: "row"; shotPath: string },
+    shift: boolean,
+  ) {
+    const fromShot = current.fromShotPath;
+    const fromVersion = current.fromVersionName;
+    // Whole-stack semantics only apply when the source knows its version slot
+    // (i.e. it came from a stacked-view drag). Favorite/trace sources are
+    // single images — shift-drag falls back to plain move.
+    const stackMove = shift && !!fromShot && !!fromVersion;
+
+    const sameCell =
+      target.kind === "cell" &&
+      target.shotPath === fromShot &&
+      target.version === fromVersion;
+    if (sameCell) return;
+
+    try {
+      if (stackMove) {
+        const dstVersion = target.kind === "cell" ? target.version : null;
+        await cmd.version_stack_move(fromShot!, fromVersion!, target.shotPath, dstVersion);
+      } else {
+        // Single-file move (the current select / dragged thumb).
+        let destDir: string;
+        if (target.kind === "cell") {
+          destDir = `${target.shotPath}/${target.version}`;
+        } else {
+          // Allocate the next version on the destination shot.
+          const next = await cmd.version_create_next(target.shotPath);
+          destDir = `${target.shotPath}/${next}`;
+        }
+        await cmd.image_move_to_dir(current.fromPath, destDir);
+      }
+      await session.rescanSequenceStacks();
+      await session.rescanShot();
+      if (session.viewMode === "starred") await session.rescanStarred();
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("FILENAME_EXISTS")) {
+        await showMessage(
+          `Skipped: ${basename(current.fromPath)} already exists at destination`,
+          { kind: "warning" },
+        );
+      } else {
+        await showMessage(msg, { kind: "error" });
+      }
     }
   }
 
@@ -319,10 +430,34 @@ export function Gallery() {
           className={`${
             viewMode === "starred" ? "bg-accent" : "accent-hover"
           } px-3 py-2 flex items-center justify-center`}
-          title={viewMode === "starred" ? "Back to versions" : "Show visible"}
+          title={viewMode === "starred" ? "Back to versions" : "Favorites"}
           onClick={() => setViewMode(viewMode === "starred" ? "columns" : "starred")}
         >
           <Icon name="visibility" size={22} fill={viewMode === "starred"} />
+        </button>
+      )}
+      {sequencePath && (
+        <button
+          className={`${
+            viewMode === "stacked" ? "bg-accent" : "accent-hover"
+          } px-3 py-2 flex items-center justify-center`}
+          title={viewMode === "stacked" ? "Back to versions" : "Stacked view"}
+          onClick={() => setViewMode(viewMode === "stacked" ? "columns" : "stacked")}
+        >
+          <Icon name="view_module" size={22} fill={viewMode === "stacked"} />
+        </button>
+      )}
+      {viewMode === "columns" && session.shotPath && (
+        <button
+          className={`${autoCollapse ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
+          title={
+            autoCollapse
+              ? "Auto-collapse: ON (only GLOBAL SRC + target expanded)"
+              : "Auto-collapse: OFF"
+          }
+          onClick={() => setAutoCollapse((v) => !v)}
+        >
+          <Icon name="unfold_less" size={22} fill={autoCollapse} className="rotate-90" />
         </button>
       )}
       {selectedImagePath && (
@@ -358,8 +493,13 @@ export function Gallery() {
           <StarredView onDragStart={onDragStart} />
           {splitButtons}
         </>
+      ) : viewMode === "stacked" ? (
+        <>
+          <StackedView onDragStart={onDragStart} />
+          {splitButtons}
+        </>
       ) : (
-        <div className="flex flex-1 min-w-0 gap-gallery-surface overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
+        <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
           {columns.length === 0 ? (
             <div className="text-sm text-dim p-4">Open a shot to see its versions.</div>
           ) : (
@@ -371,6 +511,13 @@ export function Gallery() {
                     width={thumbColWidth}
                     destDir={destDirFor(c)}
                     dragState={dragState}
+                    collapsed={
+                      autoCollapse
+                        ? !c.isSrc && c.version !== targetVersion
+                        : collapsedVersions.has(c.version)
+                    }
+                    autoCollapse={autoCollapse}
+                    onToggleCollapsed={() => toggleCollapsed(c.version)}
                     onFolderDelete={() => onFolderDelete(c.version)}
                     onImageAction={onImageAction}
                     onRefresh={c.isSrc ? () => session.rescanShot() : undefined}

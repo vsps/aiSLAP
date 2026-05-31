@@ -8,6 +8,7 @@ import {
   type ResolvedClipMedia,
 } from "../stores/timelineStore";
 import { fileSrc } from "../lib/assets";
+import { IconBtn } from "./IconBtn";
 import { PathContextMenu } from "./PathContextMenu";
 import { performImageAction } from "../lib/actions";
 import type {
@@ -35,12 +36,25 @@ export function LatestImageColumn() {
   const tlPlayhead = useTimelineStore((s) => s.playheadSec);
   const tlShotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
   const tlVideoDurations = useTimelineStore((s) => s.videoDurations);
+  const shotPath = useSessionStore((s) => s.shotPath);
+  const clipMediaPath = useTimelineStore((s) =>
+    shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
+  );
+  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const timelineActive = tlPlaying || tlPlayhead > 0;
 
   const image = useMemo(
     () => pickImage(columns, selectedImagePath, targetVersion),
     [columns, selectedImagePath, targetVersion],
+  );
+  // Clip media only applies to images living in a shot version dir, not SRC refs.
+  const isSrcImage = useMemo(
+    () =>
+      image
+        ? columns.find((c) => c.images.some((i) => i.path === image.path))?.isSrc ?? false
+        : false,
+    [columns, image],
   );
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -105,6 +119,72 @@ export function LatestImageColumn() {
           </div>
         )}
       </div>
+      {!timelineActive && image && (
+        <div className="flex items-center justify-center gap-2 py-1">
+          <IconBtn
+            name="zoom_in"
+            size={22}
+            title="Zoom"
+            onClick={() => void performImageAction("zoom", image.path)}
+          />
+          <IconBtn
+            name="copy_all"
+            size={22}
+            title="Reuse prompt"
+            onClick={() => void performImageAction("copy_settings", image.path)}
+          />
+          <IconBtn
+            name="add_photo_alternate"
+            size={22}
+            title="Use as reference (Ctrl: replace all)"
+            onClick={(e) =>
+              void performImageAction(
+                e.ctrlKey || e.metaKey ? "replace_ref" : "add_to_refs",
+                image.path,
+              )
+            }
+          />
+          <IconBtn
+            name="visibility"
+            size={22}
+            fill={!!image.starred}
+            title={image.starred ? "Demote from gallery" : "Promote to gallery"}
+            onClick={() => void performImageAction("toggle_star", image.path)}
+          />
+          {shotPath && !isSrcImage && (
+            <IconBtn
+              name="movie"
+              size={22}
+              fill={image.path === clipMediaPath}
+              title={
+                image.path === clipMediaPath ? "Clear clip media" : "Set as clip media"
+              }
+              onClick={() =>
+                void setShotClipMedia(
+                  shotPath,
+                  image.path === clipMediaPath ? null : image.path,
+                )
+              }
+            />
+          )}
+          {!image.isVideo && (
+            <IconBtn
+              name="edit"
+              size={22}
+              title="Edit (draw)"
+              onClick={() => void performImageAction("edit", image.path)}
+            />
+          )}
+          {!image.isVideo && (
+            <IconBtn
+              name="crop"
+              size={22}
+              title="Crop"
+              onClick={() => void performImageAction("crop", image.path)}
+            />
+          )}
+        </div>
+      )}
       {menuPos && image && !timelineActive && (
         <PathContextMenu
           x={menuPos.x}

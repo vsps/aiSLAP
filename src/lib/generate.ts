@@ -97,6 +97,56 @@ function buildCombinedForLink(
   });
 }
 
+/** Fan a link's shot prompts out into one combined prompt per included,
+ *  non-empty shot prompt. Shared parts (sequence script + sequence prompt +
+ *  shot script) are prepended to each — respecting their inclusion flags —
+ *  exactly like buildCombinedForLink, but only one shot prompt per entry.
+ *  When no shot prompt qualifies but a shared header exists, returns a single
+ *  header-only entry. Returns [] only when everything is empty. */
+function buildPromptsForLink(
+  link: ChainLink,
+  sequencePath: string | null,
+  shotPath: string | null,
+): { combined: string; shotPrompt: string }[] {
+  const parsed = useScriptStore.getState().parsed;
+  const seqName = sequencePath ? basename(sequencePath) : "";
+  const shotName = shotPath ? basename(shotPath) : "";
+  const sequenceScript = seqName ? findSequenceBody(parsed, seqName) : "";
+  const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
+  const shotIncludes = link.shotPromptsIncluded ?? link.shotPrompts.map(() => true);
+  const headerIncludes = {
+    sequenceScript: link.sequenceScriptIncluded !== false,
+    sequencePrompt: link.sequencePromptIncluded !== false,
+    shotScript: link.shotScriptIncluded !== false,
+  };
+
+  const runs: { combined: string; shotPrompt: string }[] = [];
+  link.shotPrompts.forEach((sp, i) => {
+    if (shotIncludes[i] === false) return;
+    if (sp.trim().length === 0) return;
+    const combined = combinePromptParts({
+      sequenceScript,
+      sequencePrompt: link.sequencePrompt,
+      shotScript,
+      shotPrompts: [sp],
+      includes: { ...headerIncludes, shotPrompts: [true] },
+    });
+    if (combined.length > 0) runs.push({ combined, shotPrompt: sp.trim() });
+  });
+
+  if (runs.length === 0) {
+    const headerOnly = combinePromptParts({
+      sequenceScript,
+      sequencePrompt: link.sequencePrompt,
+      shotScript,
+      shotPrompts: [],
+      includes: { ...headerIncludes, shotPrompts: [] },
+    });
+    if (headerOnly.length > 0) runs.push({ combined: headerOnly, shotPrompt: "" });
+  }
+  return runs;
+}
+
 /** Preflight ref-role check. Returns false when the user cancels. */
 async function preflightRefs(
   node: ModelNode,
@@ -146,8 +196,8 @@ export async function enqueueGeneration(): Promise<void> {
   }
 
   const activeLink = gen.expandedIdx != null ? gen.links[gen.expandedIdx] : gen.links[0];
-  const combined = buildCombinedForLink(activeLink, session.sequencePath, session.shotPath);
-  if (combined.length === 0) {
+  const runs = buildPromptsForLink(activeLink, session.sequencePath, session.shotPath);
+  if (runs.length === 0) {
     gen.setError("Both prompts are empty.");
     return;
   }
@@ -174,66 +224,69 @@ export async function enqueueGeneration(): Promise<void> {
     useSessionStore.setState({ targetVersion });
   }
 
-  const id = crypto.randomUUID();
-  const tag = id.slice(0, 6);
-  const shotPrompts = gen.shotPrompts.slice();
-  const shotPrompt = shotPrompts
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
   const iterations = Math.max(1, gen.iterations | 0);
+  const sequencePromptText = gen.sequencePrompt;
+  const allShotPrompts = gen.shotPrompts.slice();
+  const baseSettings = { ...gen.settings };
+  const baseRefs = gen.refImages.slice();
 
-  const spec: JobSpec = {
-    id,
-    tag,
-    node,
-    sequencePrompt: gen.sequencePrompt,
-    shotPrompts,
-    shotPrompt,
-    combinedPrompt: combined,
-    settings: { ...gen.settings },
-    refs: gen.refImages.slice(),
-    iterations,
-    shotPath: session.shotPath,
-    targetVersion,
-    ffmpegPath,
-    filenameTemplate,
-  };
-  jobSpecs.set(id, spec);
+  // Fan out: one queued job per shot prompt. They run in parallel up to the
+  // concurrency cap once pumpQueue dispatches below.
+  for (const run of runs) {
+    const id = crypto.randomUUID();
+    const tag = id.slice(0, 6);
 
-  const job: Job = {
-    id,
-    status: "queued",
-    progressMessage: "Queued",
-    currentIteration: 0,
-    iterations,
-    modelName: node.name,
-    shotPath: session.shotPath,
-    targetVersion,
-    startedAt: performance.now(),
-  };
-  gen.addJob(job);
+    const spec: JobSpec = {
+      id,
+      tag,
+      node,
+      sequencePrompt: sequencePromptText,
+      shotPrompts: run.shotPrompt ? [run.shotPrompt] : [],
+      shotPrompt: run.shotPrompt,
+      combinedPrompt: run.combined,
+      settings: { ...baseSettings },
+      refs: baseRefs.slice(),
+      iterations,
+      shotPath: session.shotPath,
+      targetVersion,
+      ffmpegPath,
+      filenameTemplate,
+    };
+    jobSpecs.set(id, spec);
+
+    const job: Job = {
+      id,
+      status: "queued",
+      progressMessage: "Queued",
+      currentIteration: 0,
+      iterations,
+      modelName: node.name,
+      shotPath: session.shotPath,
+      targetVersion,
+      startedAt: performance.now(),
+    };
+    gen.addJob(job);
+    pushLog("INFO", `Queued: ${node.name}`, tag);
+  }
   gen.setError(null);
 
-  pushLog("INFO", `Queued: ${node.name}`, tag);
-
   // Append prompt histories synchronously at submit time so the navigation UI
-  // reflects the latest prompts even before the job is dispatched.
-  if (session.sequencePath && spec.sequencePrompt.length > 0) {
+  // reflects the latest prompts even before the jobs are dispatched.
+  if (session.sequencePath && sequencePromptText.length > 0) {
     try {
       const sidecar = await cmd.sequence_prompt_append(
         session.sequencePath,
-        spec.sequencePrompt,
+        sequencePromptText,
       );
       useSessionStore.getState().hydrateSequenceSidecar(sidecar);
     } catch {
       /* swallow — history append failures are non-fatal */
     }
   }
-  const nonEmptyPanels = spec.shotPrompts.map((p) => p.trim()).filter((p) => p.length > 0);
+  const nonEmptyPanels = allShotPrompts.map((p) => p.trim()).filter((p) => p.length > 0);
   if (nonEmptyPanels.length > 0) {
     try {
-      const sidecar = await cmd.shot_prompts_append(spec.shotPath, nonEmptyPanels);
+      const sidecar = await cmd.shot_prompts_append(session.shotPath, nonEmptyPanels);
       useSessionStore.getState().hydrateShotSidecar(sidecar);
     } catch {
       /* swallow */

@@ -1,0 +1,49 @@
+{
+  "provider": "replicate",
+  "family": "Seedream 4.5",
+  "category": "Replicate/Image Generation",
+  "nodes": [
+    {
+      "id": "replicate_seedream45_txt2img",
+      "name": "Seedream 4.5 (txt2img)",
+      "endpoint": "bytedance/seedream-4.5",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
+      ],
+      "outputs": [
+        { "name": "images", "data_type": "IMAGE", "api_field": "images" }
+      ],
+      "parameters": [
+        { "name": "size", "label": "Size", "type": "enum", "api_field": "size", "default": "2K", "options": ["2K", "4K"] },
+        { "name": "aspect_ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "aspect_ratio", "default": "1:1",
+          "options": ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"] },
+        { "name": "max_images", "label": "Max Images", "type": "int", "api_field": "max_images", "default": 1, "min": 1, "max": 15 },
+        { "name": "sequential_image_generation", "label": "Sequential", "type": "enum", "api_field": "sequential_image_generation", "default": "disabled", "options": ["disabled", "auto"] },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 }
+      ]
+    },
+    {
+      "id": "replicate_seedream45_edit",
+      "name": "Seedream 4.5 (edit)",
+      "endpoint": "bytedance/seedream-4.5",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_input", "api_format": "array", "required": true }
+      ],
+      "outputs": [
+        { "name": "images", "data_type": "IMAGE", "api_field": "images" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_input", "max": 10 }
+      ],
+      "parameters": [
+        { "name": "size", "label": "Size", "type": "enum", "api_field": "size", "default": "2K", "options": ["2K", "4K"] },
+        { "name": "aspect_ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "aspect_ratio", "default": "match_input_image",
+          "options": ["match_input_image", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"] },
+        { "name": "max_images", "label": "Max Images", "type": "int", "api_field": "max_images", "default": 1, "min": 1, "max": 15 },
+        { "name": "sequential_image_generation", "label": "Sequential", "type": "enum", "api_field": "sequential_image_generation", "default": "disabled", "options": ["disabled", "auto"] },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 }
+      ]
+    }
+  ]
+}

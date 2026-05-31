@@ -26,8 +26,10 @@ pub fn run() {
             commands::session::project_open,
             commands::session::sequence_open,
             commands::session::sequence_create,
+            commands::session::sequence_rename,
             commands::session::shot_open,
             commands::session::shot_create,
+            commands::session::shot_rename,
             commands::session::shot_rescan,
             commands::session::version_create_next,
             commands::session::project_starred_scan,
@@ -53,6 +55,11 @@ pub fn run() {
             commands::session::timeline_init,
             commands::session::sequence_timeline_save,
             commands::session::shot_clip_media_set,
+            commands::session::dirs_exist,
+            commands::session::dir_ensure,
+            commands::session::sequence_stacks_scan,
+            commands::session::shot_version_select_set,
+            commands::session::version_stack_move,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

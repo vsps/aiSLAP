@@ -50,6 +50,13 @@ type Actions = {
     mediaPath: string | null,
   ) => Promise<void>;
   /**
+   * Rewrite every in-memory path that starts with `oldPrefix` (or equals
+   * it) so it uses `newPrefix` instead. Used after a sequence/shot rename
+   * to keep the timeline coherent without a reload. The on-disk
+   * timeline.json was already rewritten by the Rust rename command.
+   */
+  renameShotPathPrefix: (oldPrefix: string, newPrefix: string) => void;
+  /**
    * Reset structural edits: restore clip order to disk order, set each clip's
    * duration to total/N, clear sourceOffsetSec and re-enable all clips.
    * Preserves per-clip `mediaPath` overrides (and the shot's `clipMediaPath`,
@@ -376,6 +383,44 @@ export const useTimelineStore = create<State & Actions>((set, get) => ({
     const { totalDurationSec } = get();
     const clamped = Math.max(0, Math.min(totalDurationSec, sec));
     set({ playheadSec: clamped });
+  },
+
+  renameShotPathPrefix(oldPrefix, newPrefix) {
+    if (!oldPrefix || oldPrefix === newPrefix) return;
+    const matches = (s: string) =>
+      s === oldPrefix || s.startsWith(oldPrefix + "/");
+    const rewrite = (s: string) =>
+      s === oldPrefix ? newPrefix : newPrefix + s.slice(oldPrefix.length);
+    set((s) => {
+      const clips = s.clips.map((c) => {
+        const next: typeof c = { ...c };
+        if (c.shotPath && matches(c.shotPath)) {
+          next.shotPath = rewrite(c.shotPath);
+        }
+        if (c.mediaPath && matches(c.mediaPath)) {
+          next.mediaPath = rewrite(c.mediaPath);
+        }
+        return next;
+      });
+      const shotsLatestMedia = new Map<string, ShotLatestMedia>();
+      for (const [k, v] of s.shotsLatestMedia) {
+        const newKey = matches(k) ? rewrite(k) : k;
+        const newVal: ShotLatestMedia = {
+          ...v,
+          shotPath: matches(v.shotPath) ? rewrite(v.shotPath) : v.shotPath,
+          mediaPath:
+            v.mediaPath && matches(v.mediaPath) ? rewrite(v.mediaPath) : v.mediaPath,
+          clipMediaPath:
+            v.clipMediaPath && matches(v.clipMediaPath)
+              ? rewrite(v.clipMediaPath)
+              : v.clipMediaPath,
+        };
+        shotsLatestMedia.set(newKey, newVal);
+      }
+      const seqPath =
+        s.seqPath && matches(s.seqPath) ? rewrite(s.seqPath) : s.seqPath;
+      return { clips, shotsLatestMedia, seqPath };
+    });
   },
 
   recordVideoDuration(path, durSec) {

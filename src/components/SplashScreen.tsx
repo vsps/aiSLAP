@@ -11,7 +11,13 @@ const LOADING_MESSAGES = [
 ];
 const MESSAGE_INTERVAL_MS = 600;
 
-export function SplashScreen({ ready, version }: { ready: boolean; version: string }) {
+export function SplashScreen({
+  ready,
+  version,
+}: {
+  ready: boolean;
+  version: string;
+}) {
   const [dismissed, setDismissed] = useState(false);
   const [mounted, setMounted] = useState(true);
   const [msgIdx, setMsgIdx] = useState(0);
@@ -21,7 +27,7 @@ export function SplashScreen({ ready, version }: { ready: boolean; version: stri
     if (ready) return;
     const t = setInterval(
       () => setMsgIdx((i) => (i + 1) % LOADING_MESSAGES.length),
-      MESSAGE_INTERVAL_MS
+      MESSAGE_INTERVAL_MS,
     );
     return () => clearInterval(t);
   }, [ready]);
@@ -54,8 +60,10 @@ export function SplashScreen({ ready, version }: { ready: boolean; version: stri
         {LOGO}
       </pre>
       <div className="mt-6 text-sm text-dim tracking-wide">
-        a desktop GUI for fal.ai
-        {version && <span className="ml-2 opacity-70 font-mono">v{version}</span>}
+        a desktop token furnace
+        {version && (
+          <span className="ml-2 opacity-70 font-mono">v{version}</span>
+        )}
       </div>
       <div
         className={`mt-8 text-xs font-mono tracking-wide ${
