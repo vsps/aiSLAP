@@ -1,8 +1,13 @@
+<<<<<<< HEAD
 name: Build & Release
+=======
+name: release
+>>>>>>> dev
 
 on:
   push:
     branches: [main]
+<<<<<<< HEAD
     paths:
       - 'src-tauri/tauri.conf.json'   # only run when this file changes
 
@@ -32,6 +37,12 @@ jobs:
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
+=======
+
+jobs:
+  check-version:
+    # unchanged ...
+>>>>>>> dev
 
   create-release:
     needs: check-version
@@ -41,14 +52,25 @@ jobs:
       release_id: ${{ steps.create-release.outputs.releaseId }}
     steps:
       - uses: actions/checkout@v4
+<<<<<<< HEAD
       - name: Create draft release
         id: create-release
         uses: tauri-apps/tauri-action@v0
+=======
+
+      - name: Create draft release
+        id: create-release
+        uses: tauri-apps/tauri-action@v0.5.21
+>>>>>>> dev
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: app-v__VERSION__
+<<<<<<< HEAD
           releaseName: 'App v__VERSION__'
+=======
+          releaseName: "App v__VERSION__"
+>>>>>>> dev
           releaseDraft: true
           prerelease: false
 
@@ -60,6 +82,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
+<<<<<<< HEAD
             args: '--target aarch64-apple-darwin'
           - os: macos-latest
             args: '--target x86_64-apple-darwin'
@@ -67,6 +90,15 @@ jobs:
             args: ''
           - os: windows-latest
             args: ''
+=======
+            args: "--target aarch64-apple-darwin"
+          - os: macos-latest
+            args: "--target x86_64-apple-darwin"
+          - os: ubuntu-22.04
+            args: ""
+          - os: windows-latest
+            args: ""
+>>>>>>> dev
 
     runs-on: ${{ matrix.os }}
 
@@ -77,7 +109,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+<<<<<<< HEAD
           cache: 'npm'
+=======
+          cache: "pnpm"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+>>>>>>> dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -87,7 +128,11 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
+<<<<<<< HEAD
           workspaces: './src-tauri -> target'
+=======
+          workspaces: "./src-tauri -> target"
+>>>>>>> dev
 
       - name: Install Ubuntu dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -101,14 +146,25 @@ jobs:
             libgtk-3-dev
 
       - name: Install frontend deps
+<<<<<<< HEAD
         run: npm ci
 
       - name: Build & upload to release
         uses: tauri-apps/tauri-action@v0
+=======
+        run: pnpm install --frozen-lockfile
+
+      - name: Build & upload to release
+        uses: tauri-apps/tauri-action@v0.5.21
+>>>>>>> dev
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
+<<<<<<< HEAD
+=======
+          tauriScript: pnpm tauri
+>>>>>>> dev
           args: ${{ matrix.args }}
 
   publish-release:
