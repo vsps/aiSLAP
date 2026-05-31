@@ -12,12 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Check if version files changed
         id: check-changes
         run: |
-          if git diff --name-only HEAD^ HEAD | grep -qE '^(package\.json|src-tauri/Cargo\.toml|src-tauri/tauri\.conf\.json)$'; then
+          if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -qE '^(package\.json|src-tauri/Cargo\.toml|src-tauri/tauri\.conf\.json)$'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
