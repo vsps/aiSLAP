@@ -163,7 +163,7 @@ export function Thumbnail({
         }}
         className={`absolute bottom-1 left-1 drop-shadow transition-opacity ${
           image.starred
-            ? "opacity-100 text-accent"
+            ? "opacity-100 text-accent bg-accent/25 rounded"
             : "opacity-0 group-hover:opacity-100"
         }`}
       />
@@ -179,7 +179,7 @@ export function Thumbnail({
           }}
           className={`absolute bottom-1 right-1 drop-shadow transition-opacity ${
             clipMediaSelected
-              ? "opacity-100 text-accent"
+              ? "opacity-100 text-accent bg-accent/25 rounded"
               : "opacity-0 group-hover:opacity-100"
           }`}
         />
