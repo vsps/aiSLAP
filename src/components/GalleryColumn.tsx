@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
 import type { ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
@@ -6,6 +7,9 @@ import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { basename } from "../lib/paths";
+import { classifyMedia } from "../lib/media";
+import { cmd } from "../lib/tauri";
+import { showMessage } from "../lib/dialog";
 
 export type DragState = {
   fromPath: string;
@@ -64,7 +68,68 @@ export function GalleryColumn({
   const comment = useSessionStore((s) => s.versionComments[column.version] ?? "");
   const setVersionComment = useSessionStore((s) => s.setVersionComment);
   const [editing, setEditing] = useState(false);
+  const [osDragOver, setOsDragOver] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const twoCol = !collapsed && width > 220;
+
+  // OS file drag-drop onto the SRC column → copy each file into GLOBAL SRC
+  // via the same command the REFERENCES panel uses, then rescan so it appears.
+  // Listener is only registered on SRC columns so other columns don't compete.
+  useEffect(() => {
+    if (!column.isSrc) return;
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    const hitTest = (x: number, y: number): boolean => {
+      const el = panelRef.current;
+      if (!el) return false;
+      const dpr = window.devicePixelRatio || 1;
+      const r = el.getBoundingClientRect();
+      const cx = x / dpr;
+      const cy = y / dpr;
+      return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+    };
+    const ingest = async (paths: string[]) => {
+      const shot = useSessionStore.getState().shotPath;
+      if (!shot) {
+        await showMessage("Open a shot first", { kind: "warning" });
+        return;
+      }
+      const media = paths.filter((p) => classifyMedia(p) !== null);
+      if (media.length === 0) return;
+      let any = false;
+      for (const p of media) {
+        try {
+          await cmd.ref_copy_to_global_src(shot, p);
+          any = true;
+        } catch (e) {
+          await showMessage(`Failed to add ${basename(p)}: ${e}`, { kind: "error" });
+        }
+      }
+      if (any) await useSessionStore.getState().rescanShot();
+    };
+    getCurrentWebview()
+      .onDragDropEvent(async (event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          setOsDragOver(hitTest(p.position.x, p.position.y));
+        } else if (p.type === "leave") {
+          setOsDragOver(false);
+        } else if (p.type === "drop") {
+          const inside = hitTest(p.position.x, p.position.y);
+          setOsDragOver(false);
+          if (inside) await ingest(p.paths);
+        }
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch((e) => console.error("onDragDropEvent registration failed:", e));
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [column.isSrc]);
 
   const isTarget = targetVersion === column.version;
   const headerClass = isTarget
@@ -112,10 +177,11 @@ export function GalleryColumn({
 
   return (
     <div
+      ref={panelRef}
       data-column-version={column.version}
       data-column-dest={destDir}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
-        isDropTarget ? "outline outline-2 outline-accent border-transparent" : "border-border"
+        isDropTarget || osDragOver ? "outline outline-2 outline-accent border-transparent" : "border-border"
       } p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
       style={{ width: `${effectiveWidth}px` }}
     >
@@ -213,10 +279,6 @@ export function GalleryColumn({
                 {column.isSrc ? "No refs" : "Empty"}
               </div>
             )}
-          </div>
-          {/* small footer showing column file path */}
-          <div className="text-[10px] text-dim font-mono truncate" title={column.id}>
-            {basename(column.id)}
           </div>
         </>
       )}
