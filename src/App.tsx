@@ -8,6 +8,7 @@ import { Timeline } from "./components/Timeline";
 import { Gallery } from "./components/Gallery";
 import { ErrorPopup } from "./components/ErrorPopup";
 import { LogWindow } from "./components/LogWindow";
+import { QueueChecklist } from "./components/QueueChecklist";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { SplashScreen } from "./components/SplashScreen";
@@ -106,7 +107,13 @@ export default function App() {
         grow="up"
       />
 
-      <LogWindow height={logHeight} />
+      <div
+        className="shrink-0 flex flex-row min-h-0"
+        style={{ height: `${logHeight}px` }}
+      >
+        <QueueChecklist height={logHeight} className="flex-1 min-w-0" />
+        <LogWindow height={logHeight} className="flex-1 min-w-0" />
+      </div>
       <StatusBar ready={ready} bootError={bootError} />
       <ErrorPopup />
       {settingsOpen && (

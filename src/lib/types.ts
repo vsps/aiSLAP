@@ -243,6 +243,9 @@ export type Job = {
   targetVersion: string;
   error?: string;
   startedAt: number;
+  /** First 1–120 chars of the shot prompt (newlines collapsed to spaces),
+   *  captured at enqueue for display in the queue checklist. */
+  shotPromptPreview?: string;
 };
 
 /** Persisted variant of ChainLink — model is stored by id and resolved

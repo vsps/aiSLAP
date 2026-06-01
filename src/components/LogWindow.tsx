@@ -11,7 +11,13 @@ const LEVEL_CLASS: Record<string, string> = {
 const LINE_H = 14;
 const PAD_V = 8; // py-1 = 4px top + 4px bottom
 
-export function LogWindow({ height }: { height: number }) {
+export function LogWindow({
+  height,
+  className = "",
+}: {
+  height: number;
+  className?: string;
+}) {
   const lines = useLogStore((s) => s.lines);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -27,7 +33,7 @@ export function LogWindow({ height }: { height: number }) {
   return (
     <div
       ref={ref}
-      className="bg-panel text-dim px-2 py-1 font-mono overflow-hidden flex flex-col shrink-0"
+      className={`bg-panel text-dim px-2 py-1 font-mono overflow-hidden flex flex-col shrink-0 ${className}`}
       style={{ fontSize: 11, height: `${height}px` }}
     >
       {visible.length === 0 ? (
