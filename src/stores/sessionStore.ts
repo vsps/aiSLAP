@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   GalleryColumn,
   PromptHistoryChannel,
+  RefImage,
   SequenceSidecar,
   SequenceStacks,
   ShotSidecar,
@@ -38,7 +39,13 @@ type State = {
   /** Per-version short comments for the current shot, keyed by version dir name. */
   versionComments: Record<string, string>;
 
-  traceActive: { imagePath: string; traceSet: Set<string> } | null;
+  /** Active trace: the seed image, the full ancestor set, and the parent
+   *  refs captured during traversal (used to draw the dependency edges). */
+  traceActive: {
+    imagePath: string;
+    traceSet: Set<string>;
+    parents: Map<string, RefImage[]>;
+  } | null;
 
   viewMode: ViewMode;
   starredGroups: SeqStarredGroup[];
