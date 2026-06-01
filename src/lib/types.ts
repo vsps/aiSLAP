@@ -238,6 +238,9 @@ export type Job = {
   progressMessage: string;
   currentIteration: number;
   iterations: number;
+  /** Number of iterations whose media has been fully written to disk.
+   *  0 until the first download lands; bumps to k after iter k completes. */
+  completedIterations: number;
   modelName: string;
   shotPath: string;
   targetVersion: string;

@@ -23,24 +23,36 @@ export function QueueChecklist({
       {visible.length === 0 ? (
         <span className="opacity-40">queue empty</span>
       ) : (
-        visible.map((j) => {
-          const done = j.status === "done";
-          const failed = j.status === "failed";
-          const glyph = done ? "☑" : failed ? "✕" : "☐";
-          const color = done ? "text-ok" : failed ? "text-bad" : "text-dim";
+        visible.flatMap((j) => {
+          const total = Math.max(1, j.iterations);
           const preview = j.shotPromptPreview ?? "";
-          return (
-            <div
-              key={j.id}
-              className={`flex items-baseline gap-1 truncate ${color}`}
-              title={preview || j.progressMessage}
-            >
-              <span className="w-3 shrink-0 text-center">{glyph}</span>
-              <span className="flex-1 truncate">
-                {preview || "(no prompt)"}
-              </span>
-            </div>
-          );
+          return Array.from({ length: total }, (_, idx) => {
+            const k = idx + 1;
+            const done = j.status === "done" || k <= j.completedIterations;
+            // The single iter that was in flight when the job failed.
+            const failed =
+              j.status === "failed" && k === j.completedIterations + 1;
+            const glyph = done ? "☑" : failed ? "✕" : "☐";
+            const color = done
+              ? "text-ok"
+              : failed
+                ? "text-bad"
+                : "text-dim";
+            const suffix = total > 1 ? ` ${k}/${total}` : "";
+            return (
+              <div
+                key={`${j.id}-${k}`}
+                className={`flex items-baseline gap-1 truncate ${color}`}
+                title={preview || j.progressMessage}
+              >
+                <span className="w-3 shrink-0 text-center">{glyph}</span>
+                <span className="flex-1 truncate">
+                  {preview || "(no prompt)"}
+                  {suffix && <span className="opacity-50">{suffix}</span>}
+                </span>
+              </div>
+            );
+          });
         })
       )}
     </div>
