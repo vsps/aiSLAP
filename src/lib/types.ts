@@ -238,11 +238,17 @@ export type Job = {
   progressMessage: string;
   currentIteration: number;
   iterations: number;
+  /** Number of iterations whose media has been fully written to disk.
+   *  0 until the first download lands; bumps to k after iter k completes. */
+  completedIterations: number;
   modelName: string;
   shotPath: string;
   targetVersion: string;
   error?: string;
   startedAt: number;
+  /** First 1–120 chars of the shot prompt (newlines collapsed to spaces),
+   *  captured at enqueue for display in the queue checklist. */
+  shotPromptPreview?: string;
 };
 
 /** Persisted variant of ChainLink — model is stored by id and resolved
@@ -297,6 +303,8 @@ export type ShotSidecar = {
    *  (e.g. "v003"), value = filename within that version dir. When unset for a
    *  version, the latest image is used. */
   versionSelects?: Record<string, string>;
+  /** Per-version short free-text comments. Folders are not renamed. */
+  versionComments?: Record<string, string>;
 };
 
 // ---------- Stacked view (sequence-wide shot/version grid) ----------

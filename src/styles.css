@@ -82,14 +82,12 @@ body {
         "opsz" 24;
 }
 
-input,
-textarea,
-select,
-button {
-    font-family: inherit;
-    font-size: inherit;
-    color: inherit;
-}
+/* Tailwind's preflight (in @layer base) already sets `color: inherit` and
+ * `font: inherit` on form elements. Repeating that as an UNLAYERED rule used
+ * to shadow every `text-*` utility applied to a <button>, so e.g. `text-accent`
+ * on an IconBtn never actually coloured the glyph. Don't add such an
+ * unlayered duplicate back — it silently breaks utility classes on form
+ * elements due to CSS cascade-layer ordering (unlayered > layered). */
 
 textarea {
     resize: vertical;

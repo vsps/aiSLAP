@@ -145,7 +145,7 @@ export function SettingsDialog({ onClose }: Props) {
                 type={revealKey ? "text" : "password"}
                 value={falKey}
                 onChange={(e) => setFalKey(e.currentTarget.value)}
-                className="flex-1 bg-bg px-2 py-1 font-mono text-xs"
+                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                 placeholder="fal-…"
               />
               <button
@@ -170,7 +170,7 @@ export function SettingsDialog({ onClose }: Props) {
                   falLifecycle: v ? (v as FalLifecycle) : undefined,
                 }));
               }}
-              className="bg-bg px-2 py-1 text-xs font-mono"
+              className="bg-inset px-2 py-1 text-xs font-mono"
             >
               {FAL_LIFECYCLE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -189,7 +189,7 @@ export function SettingsDialog({ onClose }: Props) {
                 type={revealReplicate ? "text" : "password"}
                 value={replicateKey}
                 onChange={(e) => setReplicateKey(e.currentTarget.value)}
-                className="flex-1 bg-bg px-2 py-1 font-mono text-xs"
+                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                 placeholder="r8_…"
               />
               <button
@@ -210,7 +210,7 @@ export function SettingsDialog({ onClose }: Props) {
                   const value = e.currentTarget.value;
                   setConfig((c) => ({ ...c, ffmpegPath: value }));
                 }}
-                className="flex-1 bg-bg px-2 py-1 text-xs font-mono"
+                className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
                 placeholder="ffmpeg.exe (optional)"
               />
               <button className="px-2 bg-bg text-xs" onClick={browseFfmpeg}>
@@ -234,7 +234,7 @@ export function SettingsDialog({ onClose }: Props) {
                     : 3,
                 }));
               }}
-              className="bg-bg px-2 py-1 text-xs font-mono w-20"
+              className="bg-inset px-2 py-1 text-xs font-mono w-20"
               title="Caps how many submissions hit fal.ai in parallel. Extra submits sit in a local queue."
             />
             <div className="text-xs text-dim mt-1">
@@ -319,7 +319,7 @@ function ColorRow({
         type="text"
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
-        className="flex-1 bg-bg px-2 py-1 font-mono text-xs"
+        className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
         spellCheck={false}
       />
     </div>

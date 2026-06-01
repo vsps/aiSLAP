@@ -262,6 +262,10 @@ pub struct ShotSidecar {
     /// value = filename within that version dir. When unset, the latest image is used.
     #[serde(default, skip_serializing_if = "map_is_empty")]
     pub version_selects: HashMap<String, String>,
+    /// Per-version short free-text comments. Key = version name (e.g., "v003"),
+    /// value = comment shown next to the version label. Folders are not renamed.
+    #[serde(default, skip_serializing_if = "map_is_empty")]
+    pub version_comments: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +307,10 @@ pub struct ShotLatestMedia {
     pub clip_media_path: Option<String>,
 }
 
+fn default_version_prefix() -> String {
+    "gen".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSidecar {
@@ -313,6 +321,10 @@ pub struct ProjectSidecar {
     /// Forward-slash paths relative to project root for images marked visible.
     #[serde(default)]
     pub visible: Vec<String>,
+    /// Letter (+ `_`/`-`) prefix used when minting new version folders. The
+    /// 3-digit suffix is appended at creation time. Defaults to "gen".
+    #[serde(default = "default_version_prefix")]
+    pub version_prefix: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

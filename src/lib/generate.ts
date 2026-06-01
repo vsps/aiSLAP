@@ -148,6 +148,11 @@ function buildPromptsForLink(
 }
 
 /** Preflight ref-role check. Returns false when the user cancels. */
+/** Single-line, 120-char-max snapshot of a shot prompt for the queue checklist. */
+function previewShotPrompt(s: string): string {
+  return s.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
 async function preflightRefs(
   node: ModelNode,
   refs: RefImage[],
@@ -260,10 +265,12 @@ export async function enqueueGeneration(): Promise<void> {
       progressMessage: "Queued",
       currentIteration: 0,
       iterations,
+      completedIterations: 0,
       modelName: node.name,
       shotPath: session.shotPath,
       targetVersion,
       startedAt: performance.now(),
+      shotPromptPreview: previewShotPrompt(spec.shotPrompt),
     };
     gen.addJob(job);
     pushLog("INFO", `Queued: ${node.name}`, tag);
@@ -510,10 +517,12 @@ function queueAndAwait(spec: JobSpec): Promise<string[] | null> {
         : "Queued",
       currentIteration: 0,
       iterations: spec.iterations,
+      completedIterations: 0,
       modelName: spec.node.name,
       shotPath: spec.shotPath,
       targetVersion: spec.targetVersion,
       startedAt: performance.now(),
+      shotPromptPreview: previewShotPrompt(spec.shotPrompt),
     };
     jobSpecs.set(spec.id, spec);
     useGenerationStore.getState().addJob(job);
@@ -693,6 +702,7 @@ async function runJob(spec: JobSpec): Promise<void> {
         chain: spec.chain,
       });
       totalOutputs.push(...outs);
+      gen.updateJob(spec.id, { completedIterations: k });
       // Rescan only when the freshly-written shot is what the user is viewing;
       // otherwise the gallery would briefly flicker to the job's shot.
       if (useSessionStore.getState().shotPath === spec.shotPath) {

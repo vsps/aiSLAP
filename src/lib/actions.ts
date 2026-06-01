@@ -131,23 +131,36 @@ export function copyPromptFromMetadata(meta: ImageMetadata): void {
   }
 }
 
-/** Compute ancestor set for a trace: {image} ∪ {all ancestors via sidecar.refs}. */
-export async function computeTraceSet(imagePath: string): Promise<Set<string>> {
-  const visited = new Set<string>();
+/** Result of a trace traversal: the set of visited paths plus the parent
+ *  refs for each node, captured during the same BFS so the consumer can draw
+ *  the dependency graph without re-reading metadata. */
+export type TraceResult = {
+  nodes: Set<string>;
+  /** child path → ordered list of refs that produced it (parent path + role). */
+  parents: Map<string, RefImage[]>;
+};
+
+/** Compute ancestor set for a trace: {image} ∪ {all ancestors via sidecar.refs},
+ *  retaining the parent→child edges discovered along the way. */
+export async function computeTraceSet(imagePath: string): Promise<TraceResult> {
+  const nodes = new Set<string>();
+  const parents = new Map<string, RefImage[]>();
   const queue: string[] = [imagePath];
   while (queue.length) {
     const p = queue.shift()!;
-    if (visited.has(p)) continue;
-    visited.add(p);
+    if (nodes.has(p)) continue;
+    nodes.add(p);
     const meta = (await cmd
       .image_metadata_read(p)
       .catch(() => null)) as ImageMetadata | null;
     if (!meta) continue;
-    for (const r of normalizeRefs(meta.refs)) {
-      if (!visited.has(r.path)) queue.push(r.path);
+    const refs = normalizeRefs(meta.refs);
+    if (refs.length > 0) parents.set(p, refs);
+    for (const r of refs) {
+      if (!nodes.has(r.path)) queue.push(r.path);
     }
   }
-  return visited;
+  return { nodes, parents };
 }
 
 /** Add a gallery image to the current refs. Images already inside the current
@@ -416,8 +429,8 @@ export async function performImageAction(
         session.setTrace(null);
         return;
       }
-      const set = await computeTraceSet(path);
-      session.setTrace({ imagePath: path, traceSet: set });
+      const { nodes, parents } = await computeTraceSet(path);
+      session.setTrace({ imagePath: path, traceSet: nodes, parents });
       return;
     }
     case "toggle_star": {

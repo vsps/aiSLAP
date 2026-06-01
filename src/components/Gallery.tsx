@@ -478,6 +478,15 @@ export function Gallery() {
           <Icon name="delete" size={22} />
         </button>
       )}
+      {session.shotPath && (
+        <button
+          className="accent-hover px-3 py-2 flex items-center justify-center"
+          title="Rescan shot from disk"
+          onClick={() => void session.rescanShot()}
+        >
+          <Icon name="refresh" size={22} />
+        </button>
+      )}
     </div>
   );
 
