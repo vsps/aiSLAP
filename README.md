@@ -28,6 +28,15 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
 ---
 
+# Releases:
+
+I have some auto-builds via github happening here (only Windows is being actively tested but any feedback is always welcome)
+These will be in sync with the main branch, to build the latest head down to the intallation instructions.
+
+### [LATEST BUILDS](https://github.com/vsps/aiSLAP/releases)
+
+---
+
 ## Key Features:
 
 - choice of API providers
@@ -83,8 +92,6 @@ npm run tauri build     # installer → src-tauri/target/release/bundle
 ```
 
 > Prefer pnpm? `npm install -g pnpm` then use `pnpm` in place of `npm run`.
-
-Pre-built Windows installer tracks `main`: [Releases](https://github.com/vsps/aiSLAP/releases)
 
 ---
 
