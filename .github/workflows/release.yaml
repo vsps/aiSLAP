@@ -47,8 +47,8 @@ jobs:
         id: create-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: app-v${{ steps.pkg.outputs.version }}
-          name: "App v${{ steps.pkg.outputs.version }}"
+          tag_name: aiSLAP-v${{ steps.pkg.outputs.version }}
+          name: "aiSLAP v${{ steps.pkg.outputs.version }}"
           draft: true
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}

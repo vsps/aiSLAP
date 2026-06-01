@@ -28,12 +28,21 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
 ---
 
-# Releases:
+# Releases
 
-I have some auto-builds via github happening here (only Windows is being actively tested but any feedback is always welcome)
-These will be in sync with the main branch, to build the latest head down to the intallation instructions.
+Pre-built installers are available on the [Releases page](https://github.com/vsps/aiSLAP/releases). Builds track the `main` branch. Only Windows is actively tested — macOS/Linux feedback welcome.
 
 ### [LATEST BUILDS](https://github.com/vsps/aiSLAP/releases)
+
+**Windows**
+1. Download the `.msi` installer from the latest release.
+2. Double-click to install.
+3. > ⚠️ **SmartScreen warning**: the installer is self-signed, so Windows may show "Windows protected your PC". Click **More info → Run anyway** to proceed.
+
+**macOS**
+1. Download the `.dmg` from the latest release.
+2. Open the `.dmg` and drag aiSLAP to Applications.
+3. > ⚠️ **Gatekeeper warning**: because the app is not notarized, macOS will block it on first launch. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. Alternatively, right-click the app in Finder and choose **Open**.
 
 ---
 
