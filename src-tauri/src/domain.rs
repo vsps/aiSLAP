@@ -262,6 +262,10 @@ pub struct ShotSidecar {
     /// value = filename within that version dir. When unset, the latest image is used.
     #[serde(default, skip_serializing_if = "map_is_empty")]
     pub version_selects: HashMap<String, String>,
+    /// Per-version short free-text comments. Key = version name (e.g., "v003"),
+    /// value = comment shown next to the version label. Folders are not renamed.
+    #[serde(default, skip_serializing_if = "map_is_empty")]
+    pub version_comments: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

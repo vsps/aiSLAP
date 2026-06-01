@@ -169,6 +169,12 @@ export const cmd = {
     mediaPath: string | null,
   ): Promise<void> =>
     rawInvoke("shot_clip_media_set", { shotPath, mediaPath }),
+  shot_version_comment_set: (
+    shotPath: string,
+    version: string,
+    comment: string | null,
+  ): Promise<void> =>
+    rawInvoke("shot_version_comment_set", { shotPath, version, comment }),
   timeline_export: (params: TimelineExportParams): Promise<void> =>
     rawInvoke("timeline_export", { params }),
 };

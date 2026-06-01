@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
 import type { ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
@@ -60,6 +61,9 @@ export function GalleryColumn({
     shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
   );
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
+  const comment = useSessionStore((s) => s.versionComments[column.version] ?? "");
+  const setVersionComment = useSessionStore((s) => s.setVersionComment);
+  const [editing, setEditing] = useState(false);
   const twoCol = !collapsed && width > 220;
 
   const isTarget = targetVersion === column.version;
@@ -77,11 +81,13 @@ export function GalleryColumn({
 
   function onHeaderClick() {
     if (autoCollapse) {
-      // In auto-collapse mode the display is derived from targetVersion;
-      // the manual collapsed set is bypassed. Click on any non-target,
-      // non-SRC column promotes it to target — that's how the user expands
-      // any version. SRC + already-target clicks are no-ops.
-      if (column.isSrc || isTarget) return;
+      // Auto-collapse: SRC inert; non-target promotes; clicking the active
+      // non-SRC column opens the comment editor.
+      if (column.isSrc) return;
+      if (isTarget) {
+        setEditing(true);
+        return;
+      }
       setTargetVersion(column.version);
       return;
     }
@@ -94,7 +100,9 @@ export function GalleryColumn({
       return;
     }
     if (isTarget) {
-      onToggleCollapsed();
+      // Second click on the active non-SRC column opens the inline comment
+      // editor (replaces the prior collapse-on-re-click).
+      setEditing(true);
       return;
     }
     setTargetVersion(column.version);
@@ -130,7 +138,30 @@ export function GalleryColumn({
             className={`flex items-center h-[25px] px-[5px] text-sm cursor-pointer shrink-0 ${headerClass}`}
             onClick={onHeaderClick}
           >
-            <span className="flex-1 truncate">{column.version}</span>
+            {editing && !column.isSrc ? (
+              <VersionCommentInput
+                initial={comment}
+                onCommit={async (v) => {
+                  setEditing(false);
+                  try {
+                    await setVersionComment(column.version, v);
+                  } catch {
+                    /* logged in store */
+                  }
+                }}
+                onCancel={() => setEditing(false)}
+              />
+            ) : (
+              <span
+                className="flex-1 truncate"
+                title={
+                  comment ? `${column.version}: ${comment}` : column.version
+                }
+              >
+                {column.version}
+                {comment ? `: ${comment}` : ""}
+              </span>
+            )}
             {column.isSrc && onRefresh && (
               <IconBtn
                 name="refresh"
@@ -190,5 +221,58 @@ export function GalleryColumn({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Inline editor for a version's short comment. Auto-focuses + selects,
+ * commits on Enter and blur (empty value clears), cancels on Escape.
+ * Click inside the input does not bubble to the header click handler.
+ */
+function VersionCommentInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (v: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+  const committed = useRef(false);
+
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+
+  return (
+    <input
+      ref={ref}
+      type="text"
+      value={value}
+      placeholder="comment…"
+      className="flex-1 min-w-0 bg-bg text-text text-sm px-1 py-0 outline-none border border-accent"
+      onChange={(e) => setValue(e.currentTarget.value)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (committed.current) return;
+          committed.current = true;
+          onCommit(value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          committed.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={() => {
+        if (committed.current) return;
+        committed.current = true;
+        onCommit(value);
+      }}
+    />
   );
 }

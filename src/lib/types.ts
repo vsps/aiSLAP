@@ -297,6 +297,8 @@ export type ShotSidecar = {
    *  (e.g. "v003"), value = filename within that version dir. When unset for a
    *  version, the latest image is used. */
   versionSelects?: Record<string, string>;
+  /** Per-version short free-text comments. Folders are not renamed. */
+  versionComments?: Record<string, string>;
 };
 
 // ---------- Stacked view (sequence-wide shot/version grid) ----------

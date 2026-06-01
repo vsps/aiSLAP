@@ -35,6 +35,8 @@ type State = {
 
   sequenceHistory: PromptHistoryChannel;
   shotHistory: PromptHistoryChannel;
+  /** Per-version short comments for the current shot, keyed by version dir name. */
+  versionComments: Record<string, string>;
 
   traceActive: { imagePath: string; traceSet: Set<string> } | null;
 
@@ -78,6 +80,8 @@ type Actions = {
 
   hydrateSequenceSidecar: (sidecar: SequenceSidecar | null) => void;
   hydrateShotSidecar: (sidecar: ShotSidecar | null) => void;
+  /** Set or clear a per-version comment on the current shot; persists to shot.json. */
+  setVersionComment: (version: string, comment: string) => Promise<void>;
 
   setGalleryHeight: (n: number) => void;
   setThumbColWidth: (n: number) => void;
@@ -121,6 +125,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
 
   sequenceHistory: emptyChannel(),
   shotHistory: emptyChannel(),
+  versionComments: {},
 
   traceActive: null,
 
@@ -151,6 +156,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       selectedImagePath: null,
       sequenceHistory: emptyChannel(),
       shotHistory: emptyChannel(),
+      versionComments: {},
     });
     useTimelineStore.getState().reset();
     void useScriptStore.getState().loadFor(normalized);
@@ -170,6 +176,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
         cursor: sidecar.promptHistory.length,
       },
       shotHistory: emptyChannel(),
+      versionComments: {},
       starredGroups: [],
     });
     if (get().viewMode === "starred") {
@@ -197,6 +204,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       columns,
       targetVersion: latestVersion(columns),
       selectedImagePath: null,
+      versionComments: sidecar.versionComments ?? {},
       shotHistory: {
         entries: sidecar.promptHistory,
         cursor: sidecar.promptHistory.length,
@@ -473,7 +481,28 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   },
   hydrateShotSidecar(sidecar) {
     const entries = sidecar?.promptHistory ?? [];
-    set({ shotHistory: { entries, cursor: entries.length } });
+    set({
+      shotHistory: { entries, cursor: entries.length },
+      versionComments: sidecar?.versionComments ?? {},
+    });
+  },
+
+  async setVersionComment(version, comment) {
+    const shotPath = get().shotPath;
+    if (!shotPath) return;
+    const trimmed = comment.trim();
+    try {
+      await cmd.shot_version_comment_set(shotPath, version, trimmed || null);
+    } catch (e) {
+      console.error("[versionComment] save failed", e);
+      throw e;
+    }
+    set((s) => {
+      const next = { ...s.versionComments };
+      if (trimmed) next[version] = trimmed;
+      else delete next[version];
+      return { versionComments: next };
+    });
   },
 
   setGalleryHeight(n) {

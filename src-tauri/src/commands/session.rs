@@ -295,6 +295,7 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
                 prompt_history: vec![],
                 clip_media_path: None,
                 version_selects: Default::default(),
+                version_comments: Default::default(),
             },
         )?;
     }
@@ -1534,5 +1535,28 @@ pub fn shot_clip_media_set(shot_path: String, media_path: Option<String>) -> App
     let path = root.join(SHOT_SIDECAR);
     let mut sidecar: ShotSidecar = read_sidecar(&path)?;
     sidecar.clip_media_path = media_path;
+    write_sidecar_atomic(&path, &sidecar)
+}
+
+/// Set or clear the short comment associated with a version folder. Trimmed
+/// empty input removes the entry; the version folder itself is never renamed.
+#[tauri::command]
+pub fn shot_version_comment_set(
+    shot_path: String,
+    version: String,
+    comment: Option<String>,
+) -> AppResult<()> {
+    let root = PathBuf::from(&shot_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
+    }
+    let path = root.join(SHOT_SIDECAR);
+    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
+    let trimmed = comment.unwrap_or_default().trim().to_string();
+    if trimmed.is_empty() {
+        sidecar.version_comments.remove(&version);
+    } else {
+        sidecar.version_comments.insert(version, trimmed);
+    }
     write_sidecar_atomic(&path, &sidecar)
 }
