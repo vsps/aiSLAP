@@ -11,6 +11,9 @@ import { fileSrc } from "../lib/assets";
 import { IconBtn } from "./IconBtn";
 import { PathContextMenu } from "./PathContextMenu";
 import { performImageAction } from "../lib/actions";
+import { cmd } from "../lib/tauri";
+import { showMessage } from "../lib/dialog";
+import { basename, dirname } from "../lib/paths";
 import type {
   GalleryImage,
   GalleryColumn,
@@ -57,6 +60,41 @@ export function LatestImageColumn() {
     [columns, image],
   );
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  async function exportCurrentFrame(): Promise<void> {
+    const v = videoRef.current;
+    if (!image || !v) return;
+    const w = v.videoWidth;
+    const h = v.videoHeight;
+    if (w === 0 || h === 0) {
+      await showMessage("Video not ready yet — wait for it to load.", { kind: "warning" });
+      return;
+    }
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext("2d");
+    if (!ctx) {
+      await showMessage("canvas 2d context unavailable", { kind: "error" });
+      return;
+    }
+    try {
+      ctx.drawImage(v, 0, 0, w, h);
+      const base64 = cv.toDataURL("image/png").split(",")[1] ?? "";
+      const t = v.currentTime;
+      const sec = Math.floor(t);
+      const ms3 = String(Math.round((t - sec) * 1000)).padStart(3, "0");
+      const stem = basename(image.path).replace(/\.[^.]+$/, "");
+      const savePath = `${dirname(image.path)}/${stem}_frame_t${sec}s${ms3}.png`;
+      await cmd.save_png_base64(savePath, base64);
+      const session = useSessionStore.getState();
+      await session.rescanShot();
+      session.setSelectedImage(savePath);
+    } catch (e) {
+      await showMessage(`Frame export failed: ${e}`, { kind: "error" });
+    }
+  }
 
   const onCtx = (e: React.MouseEvent) => {
     if (!image) return;
@@ -97,6 +135,7 @@ export function LatestImageColumn() {
             {image ? (
               image.isVideo ? (
                 <video
+                  ref={videoRef}
                   key={image.path}
                   src={fileSrc(image.path)}
                   controls
@@ -165,6 +204,14 @@ export function LatestImageColumn() {
                   image.path === clipMediaPath ? null : image.path,
                 )
               }
+            />
+          )}
+          {image.isVideo && (
+            <IconBtn
+              name="photo_camera"
+              size={22}
+              title="Save current frame as still"
+              onClick={() => void exportCurrentFrame()}
             />
           )}
           {!image.isVideo && (
