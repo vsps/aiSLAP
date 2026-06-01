@@ -26,6 +26,8 @@ Built with React + Tailwind (frontend) on a Rust + Tauri (native) host. Windows 
 
 ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
+![aiSLAP 0.2.6](https://github.com/user-attachments/assets/a44c39e4-2cde-4738-b379-dad411c1d9c5)
+
 ---
 
 # Releases
