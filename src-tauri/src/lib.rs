@@ -56,6 +56,8 @@ pub fn run() {
             commands::session::sequence_timeline_save,
             commands::session::shot_clip_media_set,
             commands::session::shot_version_comment_set,
+            commands::session::project_version_prefix_get,
+            commands::session::project_version_prefix_set,
             commands::session::dirs_exist,
             commands::session::dir_ensure,
             commands::session::sequence_stacks_scan,

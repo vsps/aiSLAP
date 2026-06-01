@@ -307,6 +307,10 @@ pub struct ShotLatestMedia {
     pub clip_media_path: Option<String>,
 }
 
+fn default_version_prefix() -> String {
+    "gen".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSidecar {
@@ -317,6 +321,10 @@ pub struct ProjectSidecar {
     /// Forward-slash paths relative to project root for images marked visible.
     #[serde(default)]
     pub visible: Vec<String>,
+    /// Letter (+ `_`/`-`) prefix used when minting new version folders. The
+    /// 3-digit suffix is appended at creation time. Defaults to "gen".
+    #[serde(default = "default_version_prefix")]
+    pub version_prefix: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

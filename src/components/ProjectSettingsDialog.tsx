@@ -13,6 +13,9 @@ type Props = {
 const FILENAME_TEMPLATE_DEFAULT =
   "<date>_<time>_<sequence>_<shot>_<model>_<version>";
 
+const VERSION_PREFIX_DEFAULT = "gen";
+const VERSION_PREFIX_RE = /^[A-Za-z][A-Za-z_-]*$/;
+
 export function ProjectSettingsDialog({ onClose }: Props) {
   const projectPath = useSessionStore((s) => s.projectPath);
   const scriptRaw = useScriptStore((s) => s.raw);
@@ -20,6 +23,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const [config, setConfig] = useState<Config | null>(null);
   const [script, setScript] = useState(scriptRaw);
   const [busy, setBusy] = useState(false);
+  const [versionPrefix, setVersionPrefix] = useState<string>(VERSION_PREFIX_DEFAULT);
+  const [versionPrefixOriginal, setVersionPrefixOriginal] =
+    useState<string>(VERSION_PREFIX_DEFAULT);
 
   type PendingShot = { name: string; isNew: boolean };
   type PendingSeq  = { seq: string; isNew: boolean; shots: PendingShot[] };
@@ -38,6 +44,21 @@ export function ProjectSettingsDialog({ onClose }: Props) {
       setConfig(c);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!projectPath) return;
+    void (async () => {
+      const p = await cmd
+        .project_version_prefix_get(projectPath)
+        .catch(() => VERSION_PREFIX_DEFAULT);
+      const initial = p || VERSION_PREFIX_DEFAULT;
+      setVersionPrefix(initial);
+      setVersionPrefixOriginal(initial);
+    })();
+  }, [projectPath]);
+
+  const versionPrefixValid = VERSION_PREFIX_RE.test(versionPrefix);
+  const versionPrefixDirty = versionPrefix !== versionPrefixOriginal;
 
   useEffect(() => {
     const trimmed = scriptRaw.trimStart();
@@ -134,6 +155,10 @@ export function ProjectSettingsDialog({ onClose }: Props) {
       if (projectPath && script !== scriptRaw) {
         await saveScript(projectPath, script);
       }
+      if (projectPath && versionPrefixDirty && versionPrefixValid) {
+        await cmd.project_version_prefix_set(projectPath, versionPrefix);
+        setVersionPrefixOriginal(versionPrefix);
+      }
       onClose();
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
@@ -195,6 +220,49 @@ export function ProjectSettingsDialog({ onClose }: Props) {
 
           <div className="flex flex-col gap-1">
             <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+              Version folder prefix
+            </div>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={versionPrefix}
+                onChange={(e) => setVersionPrefix(e.currentTarget.value)}
+                disabled={!projectPath}
+                className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
+                placeholder={VERSION_PREFIX_DEFAULT}
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="px-2 bg-bg text-xs"
+                onClick={() => setVersionPrefix(VERSION_PREFIX_DEFAULT)}
+              >
+                reset
+              </button>
+            </div>
+            <div className="text-xs text-dim mt-1">
+              {versionPrefixValid ? (
+                <>
+                  Next folder:{" "}
+                  <code>
+                    {versionPrefix}
+                    001
+                  </code>
+                  . Letters only (<code>_</code> / <code>-</code> allowed); a
+                  3-digit number is appended automatically. Existing folders
+                  are not renamed.
+                </>
+              ) : (
+                <span className="text-red-500">
+                  Prefix must start with a letter; allowed chars: A–Z, a–z,{" "}
+                  <code>_</code>, <code>-</code>.
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
               Script (script.md)
             </div>
             <textarea
@@ -227,7 +295,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
           </button>
           <button
             className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
-            disabled={busy || !config}
+            disabled={busy || !config || !versionPrefixValid}
             onClick={save}
           >
             Save

@@ -25,8 +25,49 @@ fn as_str(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
+/// A version-folder name is `<letter-prefix><3 ASCII digits>`, where the
+/// prefix is at least one letter and may also contain `_` or `-`. Old `v###`
+/// folders still match; the project's configured prefix decides what newly
+/// minted folders are named (see `version_prefix_for`).
 fn is_version_name(name: &str) -> bool {
-    name.len() == 4 && name.starts_with('v') && name[1..].chars().all(|c| c.is_ascii_digit())
+    if name.len() < 4 {
+        return false;
+    }
+    let (prefix, digits) = name.split_at(name.len() - 3);
+    if prefix.is_empty() {
+        return false;
+    }
+    let mut chars = prefix.chars();
+    let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
+    first_ok
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-')
+        && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Extract the 3-digit numeric suffix of a version-folder name.
+fn version_number(name: &str) -> Option<u32> {
+    if !is_version_name(name) {
+        return None;
+    }
+    name[name.len() - 3..].parse::<u32>().ok()
+}
+
+/// Read the project's configured version-folder prefix, falling back to "gen"
+/// for projects that don't have the field set yet.
+fn version_prefix_for(path: &Path) -> String {
+    let root = match project_root_for(path) {
+        Ok(r) => r,
+        Err(_) => return "gen".into(),
+    };
+    let sidecar: ProjectSidecar =
+        read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    if sidecar.version_prefix.is_empty() {
+        "gen".into()
+    } else {
+        sidecar.version_prefix
+    }
 }
 
 fn read_sidecar<T: serde::de::DeserializeOwned + Default>(path: &Path) -> AppResult<T> {
@@ -205,6 +246,7 @@ pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
                 title,
                 created: Utc::now().to_rfc3339(),
                 visible: vec![],
+                version_prefix: "gen".into(),
             },
         )?;
     }
@@ -285,7 +327,8 @@ pub fn shot_rescan(shot_path: String) -> AppResult<Vec<GalleryColumn>> {
 pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
     let target = PathBuf::from(&sequence_path).join(sanitize(&name));
     ensure_dir(&target)?;
-    ensure_dir(&target.join("v001"))?;
+    let prefix = version_prefix_for(&target);
+    ensure_dir(&target.join(format!("{}001", prefix)))?;
     let sidecar_path = target.join(SHOT_SIDECAR);
     if !sidecar_path.exists() {
         write_sidecar_atomic(
@@ -599,17 +642,15 @@ pub fn version_create_next(shot_path: String) -> AppResult<String> {
     if let Ok(it) = std::fs::read_dir(&root) {
         for e in it.flatten() {
             if let Some(name) = e.file_name().to_str() {
-                if is_version_name(name) {
-                    if let Ok(n) = name[1..].parse::<u32>() {
-                        if n > max_n {
-                            max_n = n;
-                        }
+                if let Some(n) = version_number(name) {
+                    if n > max_n {
+                        max_n = n;
                     }
                 }
             }
         }
     }
-    let next = format!("v{:03}", max_n + 1);
+    let next = format!("{}{:03}", version_prefix_for(&root), max_n + 1);
     ensure_dir(&root.join(&next))?;
     Ok(next)
 }
@@ -766,17 +807,15 @@ pub fn version_stack_move(
             if let Ok(it) = std::fs::read_dir(&dst_root) {
                 for e in it.flatten() {
                     if let Some(name) = e.file_name().to_str() {
-                        if is_version_name(name) {
-                            if let Ok(n) = name[1..].parse::<u32>() {
-                                if n > max_n {
-                                    max_n = n;
-                                }
+                        if let Some(n) = version_number(name) {
+                            if n > max_n {
+                                max_n = n;
                             }
                         }
                     }
                 }
             }
-            format!("v{:03}", max_n + 1)
+            format!("{}{:03}", version_prefix_for(&dst_root), max_n + 1)
         }
     };
     let dst_dir = dst_root.join(&dst_version_name);
@@ -1524,6 +1563,53 @@ pub fn sequence_timeline_save(seq_path: String, timeline: SequenceTimeline) -> A
         return Err(AppError::Msg(format!("not a directory: {seq_path}")));
     }
     write_sidecar_atomic(&root.join(TIMELINE_SIDECAR), &timeline)
+}
+
+/// Read the project's configured version-folder prefix (defaults to "gen"
+/// for projects without the field set).
+#[tauri::command]
+pub fn project_version_prefix_get(project_path: String) -> AppResult<String> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let sidecar: ProjectSidecar =
+        read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    Ok(if sidecar.version_prefix.is_empty() {
+        "gen".into()
+    } else {
+        sidecar.version_prefix
+    })
+}
+
+/// Set the project's version-folder prefix. Accepts ASCII letters plus `_`/`-`
+/// only (must start with a letter). Existing folders are not renamed; only
+/// newly-minted version folders use the new prefix.
+#[tauri::command]
+pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppResult<()> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let trimmed = prefix.trim().to_string();
+    let valid = !trimmed.is_empty()
+        && trimmed
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-');
+    if !valid {
+        return Err(AppError::Msg(
+            "Prefix must start with a letter and contain only letters, `_`, or `-`."
+                .into(),
+        ));
+    }
+    let path = root.join(PROJECT_SIDECAR);
+    let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
+    sidecar.version_prefix = trimmed;
+    write_sidecar_atomic(&path, &sidecar)
 }
 
 #[tauri::command]
