@@ -65,24 +65,62 @@ export function LatestImageColumn() {
   async function exportCurrentFrame(): Promise<void> {
     const v = videoRef.current;
     if (!image || !v) return;
-    const w = v.videoWidth;
-    const h = v.videoHeight;
-    if (w === 0 || h === 0) {
+    if (v.videoWidth === 0 || v.videoHeight === 0) {
       await showMessage("Video not ready yet — wait for it to load.", { kind: "warning" });
       return;
     }
-    const cv = document.createElement("canvas");
-    cv.width = w;
-    cv.height = h;
-    const ctx = cv.getContext("2d");
-    if (!ctx) {
-      await showMessage("canvas 2d context unavailable", { kind: "error" });
-      return;
-    }
+    // The visible <video> loads via the tauri:// asset protocol, which taints
+    // a canvas drawn from it. Refetch the bytes through fetch() so we get a
+    // same-origin Blob, then draw from an offscreen <video> over a blob URL.
+    const t = v.currentTime;
+    let blobUrl: string | null = null;
+    let off: HTMLVideoElement | null = null;
     try {
-      ctx.drawImage(v, 0, 0, w, h);
+      const resp = await fetch(fileSrc(image.path));
+      if (!resp.ok) throw new Error(`fetch failed (${resp.status})`);
+      const blob = await resp.blob();
+      blobUrl = URL.createObjectURL(blob);
+
+      off = document.createElement("video");
+      off.muted = true;
+      off.preload = "auto";
+      off.crossOrigin = "anonymous";
+      off.src = blobUrl;
+
+      await new Promise<void>((res, rej) => {
+        const ok = () => { cleanup(); res(); };
+        const fail = () => { cleanup(); rej(new Error("offscreen video load failed")); };
+        const cleanup = () => {
+          off!.removeEventListener("loadedmetadata", ok);
+          off!.removeEventListener("error", fail);
+        };
+        off!.addEventListener("loadedmetadata", ok, { once: true });
+        off!.addEventListener("error", fail, { once: true });
+      });
+
+      const target = Math.min(t, Math.max(0, (off.duration || t) - 0.001));
+      await new Promise<void>((res, rej) => {
+        const ok = () => { cleanup(); res(); };
+        const fail = () => { cleanup(); rej(new Error("seek failed")); };
+        const cleanup = () => {
+          off!.removeEventListener("seeked", ok);
+          off!.removeEventListener("error", fail);
+        };
+        off!.addEventListener("seeked", ok, { once: true });
+        off!.addEventListener("error", fail, { once: true });
+        off!.currentTime = target;
+      });
+
+      const w = off.videoWidth;
+      const h = off.videoHeight;
+      const cv = document.createElement("canvas");
+      cv.width = w;
+      cv.height = h;
+      const ctx = cv.getContext("2d");
+      if (!ctx) throw new Error("canvas 2d context unavailable");
+      ctx.drawImage(off, 0, 0, w, h);
       const base64 = cv.toDataURL("image/png").split(",")[1] ?? "";
-      const t = v.currentTime;
+
       const sec = Math.floor(t);
       const ms3 = String(Math.round((t - sec) * 1000)).padStart(3, "0");
       const stem = basename(image.path).replace(/\.[^.]+$/, "");
@@ -93,6 +131,13 @@ export function LatestImageColumn() {
       session.setSelectedImage(savePath);
     } catch (e) {
       await showMessage(`Frame export failed: ${e}`, { kind: "error" });
+    } finally {
+      if (off) {
+        off.src = "";
+        off.removeAttribute("src");
+        off.load();
+      }
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
     }
   }
 
