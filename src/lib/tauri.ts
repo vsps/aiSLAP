@@ -8,6 +8,7 @@ import type {
   SequenceSidecar,
   ShotSidecar,
   ImageMetadata,
+  PendingSubmission,
   SeqStarredGroup,
   SequenceStacks,
   SequenceTimeline,
@@ -182,6 +183,14 @@ export const cmd = {
     prefix: string,
   ): Promise<void> =>
     rawInvoke("project_version_prefix_set", { projectPath, prefix }),
+
+  // Orphan recovery
+  pending_load: (): Promise<PendingSubmission[]> => rawInvoke("pending_load"),
+  pending_add: (record: PendingSubmission): Promise<void> =>
+    rawInvoke("pending_add", { record }),
+  pending_remove: (id: string): Promise<void> =>
+    rawInvoke("pending_remove", { id }),
+
   timeline_export: (params: TimelineExportParams): Promise<void> =>
     rawInvoke("timeline_export", { params }),
 };

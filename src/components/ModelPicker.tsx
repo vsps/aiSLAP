@@ -2,77 +2,109 @@ import { useMemo, useState } from "react";
 import { useModelsStore } from "../stores/modelsStore";
 import { useGenerationStore } from "../stores/generationStore";
 
-type Filter = "all" | "fal" | "replicate";
-
-const FILTERS: { id: Filter; label: string }[] = [
-  { id: "all", label: "all" },
-  { id: "fal", label: "fal" },
-  { id: "replicate", label: "replicate" },
-];
+type Provider = "fal" | "replicate";
 
 export function ModelPicker() {
   const { entries, loaded } = useModelsStore();
   const { currentModel, selectModel } = useGenerationStore();
-  const [filter, setFilter] = useState<Filter>("all");
 
-  const visible = useMemo(
-    () =>
-      entries.filter((e) =>
-        filter === "all" ? true : (e.node.provider ?? "fal") === filter,
-      ),
-    [entries, filter],
+  const [provider, setProvider] = useState<Provider>(
+    () => ((currentModel?.provider ?? "fal") as Provider),
+  );
+  const [manualFamily, setManualFamily] = useState<string | null>(null);
+
+  const providerEntries = useMemo(
+    () => entries.filter((e) => (e.node.provider ?? "fal") === provider),
+    [entries, provider],
   );
 
-  const images = visible.filter((e) => e.node.kind === "image");
-  const videos = visible.filter((e) => e.node.kind === "video");
+  const imageFamilies = useMemo(() => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const e of providerEntries.filter((e) => e.node.kind === "image")) {
+      if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
+    }
+    return result;
+  }, [providerEntries]);
+
+  const videoFamilies = useMemo(() => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const e of providerEntries.filter((e) => e.node.kind === "video")) {
+      if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
+    }
+    return result;
+  }, [providerEntries]);
+
+  const families = useMemo(() => [...imageFamilies, ...videoFamilies], [imageFamilies, videoFamilies]);
+
+  const currentFamily = useMemo(() => {
+    if (!currentModel) return null;
+    const entry = entries.find((e) => e.node.id === currentModel.id);
+    if (!entry || (entry.node.provider ?? "fal") !== provider) return null;
+    return entry.family;
+  }, [currentModel, entries, provider]);
+
+  const selectedFamily = manualFamily ?? currentFamily ?? families[0] ?? null;
+
+  const familyModels = useMemo(
+    () => providerEntries.filter((e) => e.family === selectedFamily),
+    [providerEntries, selectedFamily],
+  );
 
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-1 text-xs font-mono">
-        {FILTERS.map((f) => (
+        {(["fal", "replicate"] as Provider[]).map((p) => (
           <button
-            key={f.id}
+            key={p}
             type="button"
-            onClick={() => setFilter(f.id)}
+            onClick={() => { setProvider(p); setManualFamily(null); }}
             className={
-              filter === f.id
+              provider === p
                 ? "px-2 py-[1px] bg-accent text-bg"
                 : "px-2 py-[1px] bg-bg text-text hover:opacity-80"
             }
           >
-            {f.label}
+            {p}
           </button>
         ))}
       </div>
       <select
         className="bg-bg text-text px-1 py-[2px] w-full"
-        value={currentModel?.id ?? ""}
-        onChange={(e) => {
-          const id = e.currentTarget.value;
-          const node = entries.find((x) => x.node.id === id)?.node ?? null;
-          selectModel(node);
-        }}
+        value={selectedFamily ?? ""}
+        onChange={(e) => setManualFamily(e.currentTarget.value || null)}
       >
-        <option value="">{loaded ? "— choose model —" : "Loading…"}</option>
-        {images.length > 0 && (
+        {imageFamilies.length > 0 && (
           <optgroup label="Image">
-            {images.map((e) => (
-              <option key={e.node.id} value={e.node.id}>
-                {e.node.provider ?? "fal"} · {e.node.name}
-              </option>
-            ))}
+            {imageFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
           </optgroup>
         )}
-        {videos.length > 0 && (
+        {videoFamilies.length > 0 && (
           <optgroup label="Video">
-            {videos.map((e) => (
-              <option key={e.node.id} value={e.node.id}>
-                {e.node.provider ?? "fal"} · {e.node.name}
-              </option>
-            ))}
+            {videoFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
           </optgroup>
         )}
       </select>
+      <div className="flex flex-wrap gap-1">
+        {familyModels.map((e) => (
+          <button
+            key={e.node.id}
+            type="button"
+            onClick={() => selectModel(e.node)}
+            className={
+              currentModel?.id === e.node.id
+                ? "px-2 py-[1px] text-xs font-mono bg-accent text-bg"
+                : "px-2 py-[1px] text-xs font-mono bg-bg text-text hover:opacity-80"
+            }
+          >
+            {e.node.name}
+          </button>
+        ))}
+        {familyModels.length === 0 && loaded && (
+          <span className="text-xs text-dim">—</span>
+        )}
+      </div>
     </div>
   );
 }

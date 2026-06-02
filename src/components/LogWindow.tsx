@@ -8,9 +8,6 @@ const LEVEL_CLASS: Record<string, string> = {
   ERROR: "text-bad",
 };
 
-const LINE_H = 14;
-const PAD_V = 8; // py-1 = 4px top + 4px bottom
-
 export function LogWindow({
   height,
   className = "",
@@ -21,28 +18,26 @@ export function LogWindow({
   const lines = useLogStore((s) => s.lines);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll to the newest line on each push so the latest activity is
+  // visible without manual scrolling; user can scroll up to inspect history.
   useEffect(() => {
     if (!ref.current) return;
     ref.current.scrollTop = ref.current.scrollHeight;
   }, [lines.length, height]);
 
-  // Rolling window sized to the available rows — grows/shrinks with the drag.
-  const rows = Math.max(1, Math.floor((height - PAD_V) / LINE_H));
-  const visible = lines.slice(-rows);
-
   return (
     <div
       ref={ref}
-      className={`bg-panel text-dim px-2 py-1 font-mono overflow-hidden flex flex-col shrink-0 ${className}`}
+      className={`bg-panel text-dim px-2 py-1 font-mono overflow-y-auto thin-scroll flex flex-col shrink-0 ${className}`}
       style={{ fontSize: 11, height: `${height}px` }}
     >
-      {visible.length === 0 ? (
+      {lines.length === 0 ? (
         <span className="opacity-40">—</span>
       ) : (
-        visible.map((l) => (
+        lines.map((l) => (
           <div
             key={l.id}
-            className={`truncate ${LEVEL_CLASS[l.level] ?? "text-text"}`}
+            className={`truncate shrink-0 ${LEVEL_CLASS[l.level] ?? "text-text"}`}
             title={`${l.timestamp} ${l.level} ${l.tag ? `[${l.tag}] ` : ""}${l.message}`}
           >
             <span className="opacity-60">{formatTime(l.timestamp)}</span>

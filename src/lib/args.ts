@@ -77,17 +77,39 @@ export function buildArgs(
     // Auto-element fallback: if the model supports "element" AND the user
     // assigned no roles to anything, promote each unassigned ref to its own
     // element group. Lets Kling 3 ref2vid accept "just these images" without
-    // forcing a role click for every thumb.
-    const hasElementRole = node.ref_roles.some((r) => r.role === "element");
+    // forcing a role click for every thumb. Crucially, only sweep refs whose
+    // media kind matches what the element role expects — otherwise on models
+    // that ALSO have a "source" video slot (Kling 3 vid2vid ref) the user's
+    // video would get pulled into elements and `video_url` would be left
+    // empty, causing fal to error out with "field required".
+    const elementRole = node.ref_roles.find((r) => r.role === "element");
+    const elementInput = elementRole
+      ? node.inputs.find((i) => i.api_field === elementRole.api_field)
+      : null;
+    const elementKind: MediaKind =
+      elementInput?.data_type === "VIDEO"
+        ? "video"
+        : elementInput?.data_type === "AUDIO"
+          ? "audio"
+          : "image";
     if (
-      hasElementRole &&
+      elementRole &&
       Object.keys(bucket).length === 0 &&
       unassigned.length > 0
     ) {
-      unassigned.forEach((u, i) => {
+      const sweep: UploadedRef[] = [];
+      const keep: UploadedRef[] = [];
+      for (const u of unassigned) {
+        if (classifyMedia(u.ref.path) === elementKind) sweep.push(u);
+        else keep.push(u);
+      }
+      sweep.forEach((u, i) => {
         bucket[`element:${i + 1}`] = [u];
       });
+      // Mutate `unassigned` in place so the later selectForRole call sees
+      // the filtered list (it's still the same array reference).
       unassigned.length = 0;
+      unassigned.push(...keep);
     }
 
     let sourceConsumed = false;

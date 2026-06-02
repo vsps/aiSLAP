@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { IconBtn } from "./IconBtn";
 import { RoleMenu } from "./RoleMenu";
@@ -124,23 +124,44 @@ export function RefImagesColumn() {
   }, [imageDrag]);
 
   async function ingestPaths(paths: string[]) {
-    const shotPath = useSessionStore.getState().shotPath;
+    const session = useSessionStore.getState();
+    const { shotPath, targetVersion, columns: sessionCols } = session;
     if (!shotPath) {
       await showMessage("Open a shot first", { kind: "warning" });
       return;
     }
+    if (!targetVersion) {
+      await showMessage("Pick a target version first", { kind: "warning" });
+      return;
+    }
+    // Refs must not silently land in GLOBAL SRC — that path is now
+    // explicit-only (drop on the SRC column).
+    const targetCol = sessionCols.find((c) => c.version === targetVersion);
+    if (targetCol?.isSrc) {
+      await showMessage(
+        "Select a non-SRC version as target (drop on SRC explicitly to save there).",
+        { kind: "warning" },
+      );
+      return;
+    }
+    const destDir = `${shotPath}/${targetVersion}`;
     const media = paths.filter(isMedia);
     if (media.length === 0) return;
     const copied: string[] = [];
     for (const p of media) {
       try {
-        const dest = await cmd.ref_copy_to_global_src(shotPath, p);
+        const dest = await cmd.image_copy_to_dir(p, destDir);
         copied.push(dest);
       } catch (e) {
         await showMessage(`Failed to add ${basename(p)}: ${e}`, { kind: "error" });
       }
     }
-    if (copied.length) addRefs(copied);
+    if (copied.length) {
+      addRefs(copied);
+      // Files now also live in the current gen folder — rescan so the
+      // version column reflects them too.
+      await useSessionStore.getState().rescanShot();
+    }
   }
 
   async function onAdd() {
@@ -376,7 +397,9 @@ function isAudioPath(path: string): boolean {
   return classifyMedia(path) === "audio";
 }
 
-function RefThumb({
+// memo'd: many refs render in the grid; skip re-rendering thumbs whose props
+// are unchanged when a sibling drag updates the parent.
+const RefThumb = memo(function RefThumb({
   index,
   ref_,
   color,
@@ -482,7 +505,7 @@ function RefThumb({
       </div>
     </div>
   );
-}
+});
 
 function RoleSlotPlaceholder({ kind }: { kind: "start" | "end" }) {
   const color = kind === "start" ? START_COLOR : END_COLOR;

@@ -11,7 +11,9 @@ import type {
   ImageMetadata,
   Job,
   ModelNode,
+  PendingSubmission,
   RefImage,
+  RefSnapshot,
   RoleAssignment,
   UploadedRef,
 } from "./types";
@@ -38,8 +40,52 @@ const jobSpecs = new Map<string, JobSpec>();
 let cachedMaxConcurrent = 3;
 
 // Reentrancy guard for pumpQueue. The pump itself is async because it calls
-// runJob; without this flag, two enqueues could race and over-dispatch.
+// runJob; without this flag, two concurrent enqueues could both enter the
+// dispatch loop and run more than `cachedMaxConcurrent` jobs at once.
 let pumping = false;
+
+// Length of the short id prefix shown in log lines (e.g. "a1b2c3").
+const SHORT_ID_LEN = 6;
+const shortId = (id: string) => id.slice(0, SHORT_ID_LEN);
+
+/** Load Config over IPC, swallowing errors (returns null if unavailable). */
+async function loadConfigSafely(): Promise<Config | null> {
+  return (await cmd.config_load().catch(() => null)) as Config | null;
+}
+
+/** Trim each prompt and drop the empties. */
+function nonEmptyTrimmed(prompts: string[]): string[] {
+  return prompts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/** Append sequence + shot prompt history to their sidecars and hydrate the
+ *  session store so the navigation UI reflects them immediately. Best-effort:
+ *  failures are non-fatal and swallowed so a history hiccup never blocks a
+ *  generation. */
+async function appendPromptHistories(
+  sequencePath: string | null | undefined,
+  sequenceText: string,
+  shotPath: string,
+  shotPrompts: string[],
+): Promise<void> {
+  if (sequencePath && sequenceText.length > 0) {
+    try {
+      const sidecar = await cmd.sequence_prompt_append(sequencePath, sequenceText);
+      useSessionStore.getState().hydrateSequenceSidecar(sidecar);
+    } catch {
+      /* swallow — history append failures are non-fatal */
+    }
+  }
+  const panels = nonEmptyTrimmed(shotPrompts);
+  if (panels.length > 0) {
+    try {
+      const sidecar = await cmd.shot_prompts_append(shotPath, panels);
+      useSessionStore.getState().hydrateShotSidecar(sidecar);
+    } catch {
+      /* swallow — history append failures are non-fatal */
+    }
+  }
+}
 
 
 type JobSpec = {
@@ -153,6 +199,48 @@ function previewShotPrompt(s: string): string {
   return s.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
+/** Build a PendingSubmission record from the JobSpec for the iteration that
+ *  just got a requestId back from the provider. Used by the orphan-recovery
+ *  layer; written before we wait for the result and removed once the file
+ *  is on disk (or the iteration aborts non-resumably). */
+function buildPendingRecord(
+  pendingId: string,
+  spec: JobSpec,
+  iterationIndex: number,
+  requestId: string,
+): PendingSubmission {
+  const provider: "fal" | "replicate" =
+    spec.node.provider === "replicate" ? "replicate" : "fal";
+  return {
+    id: pendingId,
+    provider,
+    endpoint: spec.node.endpoint,
+    requestId,
+    shotPath: spec.shotPath,
+    targetVersion: spec.targetVersion,
+    ffmpegPath: spec.ffmpegPath,
+    filenameTemplate: spec.filenameTemplate,
+    modelId: spec.node.id,
+    modelName: spec.node.name,
+    modelEndpoint: spec.node.endpoint,
+    modelProvider: provider,
+    batchField: spec.node.batch_field,
+    sequencePrompt: spec.sequencePrompt,
+    shotPrompt: spec.shotPrompt,
+    shotPrompts: spec.shotPrompts,
+    combinedPrompt: spec.combinedPrompt,
+    settings: { ...spec.settings },
+    refs: spec.refs.map((r) => ({
+      path: r.path,
+      roleAssignment: r.roleAssignment ?? null,
+    })),
+    iterations: spec.iterations,
+    iterationIndex,
+    chain: spec.chain ?? null,
+    enqueuedAt: new Date().toISOString(),
+  };
+}
+
 async function preflightRefs(
   node: ModelNode,
   refs: RefImage[],
@@ -209,7 +297,7 @@ export async function enqueueGeneration(): Promise<void> {
 
   if (!(await preflightRefs(node, gen.refImages))) return;
 
-  const config = (await cmd.config_load().catch(() => null)) as Config | null;
+  const config = await loadConfigSafely();
   const ffmpegPath = config?.ffmpegPath ?? "";
   const filenameTemplate = config?.filenameTemplate ?? "";
   cachedMaxConcurrent = Math.max(1, config?.maxConcurrentJobs ?? 3);
@@ -239,7 +327,7 @@ export async function enqueueGeneration(): Promise<void> {
   // concurrency cap once pumpQueue dispatches below.
   for (const run of runs) {
     const id = crypto.randomUUID();
-    const tag = id.slice(0, 6);
+    const tag = shortId(id);
 
     const spec: JobSpec = {
       id,
@@ -270,6 +358,7 @@ export async function enqueueGeneration(): Promise<void> {
       shotPath: session.shotPath,
       targetVersion,
       startedAt: performance.now(),
+      enqueuedAt: new Date().toISOString(),
       shotPromptPreview: previewShotPrompt(spec.shotPrompt),
     };
     gen.addJob(job);
@@ -279,26 +368,12 @@ export async function enqueueGeneration(): Promise<void> {
 
   // Append prompt histories synchronously at submit time so the navigation UI
   // reflects the latest prompts even before the jobs are dispatched.
-  if (session.sequencePath && sequencePromptText.length > 0) {
-    try {
-      const sidecar = await cmd.sequence_prompt_append(
-        session.sequencePath,
-        sequencePromptText,
-      );
-      useSessionStore.getState().hydrateSequenceSidecar(sidecar);
-    } catch {
-      /* swallow — history append failures are non-fatal */
-    }
-  }
-  const nonEmptyPanels = allShotPrompts.map((p) => p.trim()).filter((p) => p.length > 0);
-  if (nonEmptyPanels.length > 0) {
-    try {
-      const sidecar = await cmd.shot_prompts_append(session.shotPath, nonEmptyPanels);
-      useSessionStore.getState().hydrateShotSidecar(sidecar);
-    } catch {
-      /* swallow */
-    }
-  }
+  await appendPromptHistories(
+    session.sequencePath,
+    sequencePromptText,
+    session.shotPath,
+    allShotPrompts,
+  );
 
   void pumpQueue();
 }
@@ -377,7 +452,7 @@ export async function enqueueChain(): Promise<void> {
   // a synthetic prev-ref so their role expectations are met automatically.
   if (!(await preflightRefs(headLink.model, headLink.refImages))) return;
 
-  const config = (await cmd.config_load().catch(() => null)) as Config | null;
+  const config = await loadConfigSafely();
   const ffmpegPath = config?.ffmpegPath ?? "";
   const filenameTemplate = config?.filenameTemplate ?? "";
   cachedMaxConcurrent = Math.max(1, config?.maxConcurrentJobs ?? 3);
@@ -397,31 +472,12 @@ export async function enqueueChain(): Promise<void> {
 
   // Append history once from the head link (per design decision: chain
   // submissions log only the entrance into the chain).
-  if (session.sequencePath && headLink.sequencePrompt.length > 0) {
-    try {
-      const sidecar = await cmd.sequence_prompt_append(
-        session.sequencePath,
-        headLink.sequencePrompt,
-      );
-      useSessionStore.getState().hydrateSequenceSidecar(sidecar);
-    } catch {
-      /* swallow */
-    }
-  }
-  const headPanels = headLink.shotPrompts
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
-  if (headPanels.length > 0) {
-    try {
-      const sidecar = await cmd.shot_prompts_append(
-        session.shotPath,
-        headPanels,
-      );
-      useSessionStore.getState().hydrateShotSidecar(sidecar);
-    } catch {
-      /* swallow */
-    }
-  }
+  await appendPromptHistories(
+    session.sequencePath,
+    headLink.sequencePrompt,
+    session.shotPath,
+    headLink.shotPrompts,
+  );
 
   const chainId = crypto.randomUUID();
   const linksSnapshot = links.map(persistLink);
@@ -430,7 +486,7 @@ export async function enqueueChain(): Promise<void> {
   const tFfmpeg = ffmpegPath;
   const tTemplate = filenameTemplate;
 
-  pushLog("INFO", `Chain started · ${activeLinks.length} links`, chainId.slice(0, 6));
+  pushLog("INFO", `Chain started · ${activeLinks.length} links`, shortId(chainId));
 
   // Fire-and-forget driver — runs each link, awaits, feeds the next.
   void (async () => {
@@ -451,11 +507,8 @@ export async function enqueueChain(): Promise<void> {
       }
 
       const id = crypto.randomUUID();
-      const tag = id.slice(0, 6);
-      const combinedShot = link.shotPrompts
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-        .join("\n\n");
+      const tag = shortId(id);
+      const combinedShot = nonEmptyTrimmed(link.shotPrompts).join("\n\n");
 
       const linkCombined = buildCombinedForLink(link, session.sequencePath, shotPath);
       const spec: JobSpec = {
@@ -485,7 +538,7 @@ export async function enqueueChain(): Promise<void> {
 
       const outputs = await queueAndAwait(spec);
       if (outputs == null || outputs.length === 0) {
-        pushLog("INFO", `Chain aborted at link ${i + 1}`, chainId.slice(0, 6));
+        pushLog("INFO", `Chain aborted at link ${i + 1}`, shortId(chainId));
         return;
       }
 
@@ -499,7 +552,7 @@ export async function enqueueChain(): Promise<void> {
 
       prevMediaPath = outputs[0];
     }
-    pushLog("SUCCESS", "Chain finished", chainId.slice(0, 6));
+    pushLog("SUCCESS", "Chain finished", shortId(chainId));
   })();
 }
 
@@ -522,6 +575,7 @@ function queueAndAwait(spec: JobSpec): Promise<string[] | null> {
       shotPath: spec.shotPath,
       targetVersion: spec.targetVersion,
       startedAt: performance.now(),
+      enqueuedAt: new Date().toISOString(),
       shotPromptPreview: previewShotPrompt(spec.shotPrompt),
     };
     jobSpecs.set(spec.id, spec);
@@ -609,8 +663,7 @@ export function cancelAllGenerations(): void {
         status: "cancelled",
         progressMessage: "Cancelled",
       });
-      schedulePrune(j.id);
-      pushLog("INFO", "Cancelled (was queued)", j.id.slice(0, 6));
+      pushLog("INFO", "Cancelled (was queued)", shortId(j.id));
       spec?.onCancelled?.();
       continue;
     }
@@ -620,13 +673,6 @@ export function cancelAllGenerations(): void {
     });
     abortControllers.get(j.id)?.abort();
   }
-}
-
-function schedulePrune(jobId: string, delayMs = 5000): void {
-  setTimeout(() => {
-    useGenerationStore.getState().removeJob(jobId);
-    jobSpecs.delete(jobId);
-  }, delayMs);
 }
 
 /** Runs one job to completion / cancellation / failure. */
@@ -673,40 +719,58 @@ async function runJob(spec: JobSpec): Promise<void> {
         currentIteration: k,
         progressMessage: `Generating (${k}/${spec.iterations})…`,
       });
-      const out = await provider.run(
-        spec.node.endpoint,
-        baseArgs,
-        controller.signal,
-        (e) => reportProgress(spec.id, k, spec.iterations, e),
-      );
-      gen.updateJob(spec.id, {
-        status: "downloading",
-        progressMessage: `Downloading (${k}/${spec.iterations})…`,
-      });
-      const outs = await downloadAndWrite({
-        out,
-        node: spec.node,
-        sequencePrompt: spec.sequencePrompt,
-        shotPrompt: spec.shotPrompt,
-        shotPrompts: spec.shotPrompts,
-        settings: spec.settings,
-        refs: uploaded,
-        shotPath: spec.shotPath,
-        versionDir,
-        targetVersion: spec.targetVersion,
-        iterationBase: k,
-        iterationTotal: spec.iterations,
-        expandToIterations: false,
-        ffmpegPath: spec.ffmpegPath,
-        filenameTemplate: spec.filenameTemplate,
-        chain: spec.chain,
-      });
-      totalOutputs.push(...outs);
-      gen.updateJob(spec.id, { completedIterations: k });
-      // Rescan only when the freshly-written shot is what the user is viewing;
-      // otherwise the gallery would briefly flicker to the job's shot.
-      if (useSessionStore.getState().shotPath === spec.shotPath) {
-        await useSessionStore.getState().rescanShot();
+      const pendingId = crypto.randomUUID();
+      try {
+        const out = await provider.run(
+          spec.node.endpoint,
+          baseArgs,
+          controller.signal,
+          (e) => reportProgress(spec.id, k, spec.iterations, e),
+          {
+            onSubmitted: async (requestId) => {
+              await cmd
+                .pending_add(buildPendingRecord(pendingId, spec, k, requestId))
+                .catch(() => {
+                  /* persistence is best-effort — never fail the job over it */
+                });
+            },
+          },
+        );
+        gen.updateJob(spec.id, {
+          status: "downloading",
+          progressMessage: `Downloading (${k}/${spec.iterations})…`,
+        });
+        const outs = await downloadAndWrite({
+          out,
+          node: spec.node,
+          sequencePrompt: spec.sequencePrompt,
+          shotPrompt: spec.shotPrompt,
+          shotPrompts: spec.shotPrompts,
+          settings: spec.settings,
+          refs: uploaded,
+          refSnapshots: undefined,
+          shotPath: spec.shotPath,
+          versionDir,
+          targetVersion: spec.targetVersion,
+          iterationBase: k,
+          iterationTotal: spec.iterations,
+          expandToIterations: false,
+          ffmpegPath: spec.ffmpegPath,
+          filenameTemplate: spec.filenameTemplate,
+          chain: spec.chain,
+        });
+        totalOutputs.push(...outs);
+        gen.updateJob(spec.id, { completedIterations: k });
+        // Rescan only when the freshly-written shot is what the user is viewing;
+        // otherwise the gallery would briefly flicker to the job's shot.
+        if (useSessionStore.getState().shotPath === spec.shotPath) {
+          await useSessionStore.getState().rescanShot();
+        }
+      } finally {
+        // Whether the iter succeeded, failed, or was aborted, the pending
+        // record's job is done. Crash-path is the one case `finally` doesn't
+        // fire — that's exactly when the recovery flow picks it up later.
+        await cmd.pending_remove(pendingId).catch(() => {});
       }
     }
 
@@ -752,7 +816,6 @@ async function runJob(spec: JobSpec): Promise<void> {
   } finally {
     abortControllers.delete(spec.id);
     jobSpecs.delete(spec.id);
-    schedulePrune(spec.id);
     void pumpQueue();
   }
 }
@@ -809,14 +872,18 @@ async function uploadRefs(
 const DEFAULT_FILENAME_TEMPLATE =
   "<date>_<time>_<sequence>_<shot>_<model>_<version>";
 
-type DownloadCtx = {
+export type DownloadCtx = {
   out: ProviderOutput;
   node: ModelNode;
   sequencePrompt: string;
   shotPrompt: string;
   shotPrompts: string[];
   settings: Record<string, unknown>;
+  /** Uploaded refs (live path). Empty in recovery — see `refSnapshots`. */
   refs: UploadedRef[];
+  /** Alternative source for sidecar refs when `refs` (uploaded) is empty.
+   *  Used by the orphan-recovery driver, which doesn't have upload URLs. */
+  refSnapshots?: RefSnapshot[];
   shotPath: string;
   versionDir: string;
   targetVersion: string;
@@ -828,7 +895,7 @@ type DownloadCtx = {
   chain?: Omit<ChainMetadataBlock, "nextMediaPaths">;
 };
 
-async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
+export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   const written: string[] = [];
   const files = ctx.out.files;
   const multipleFiles = files.length > 1;
@@ -878,10 +945,7 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
   }
-  const combined = [ctx.sequencePrompt, ctx.shotPrompt]
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
+  const combined = nonEmptyTrimmed([ctx.sequencePrompt, ctx.shotPrompt]).join("\n\n");
   return {
     model: ctx.node.name,
     modelId: ctx.node.id,
@@ -891,10 +955,12 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
     shotPrompts: ctx.shotPrompts,
     combinedPrompt: combined,
     settings: cleaned,
-    refs: ctx.refs.map((r) => ({
-      path: r.ref.path,
-      roleAssignment: r.ref.roleAssignment as RoleAssignment | null,
-    })),
+    refs:
+      ctx.refSnapshots ??
+      ctx.refs.map((r) => ({
+        path: r.ref.path,
+        roleAssignment: r.ref.roleAssignment as RoleAssignment | null,
+      })),
     iterationIndex,
     iterationTotal: ctx.iterationTotal > 1 ? ctx.iterationTotal : undefined,
     timestamp: new Date().toISOString(),
