@@ -69,6 +69,7 @@ export function GalleryColumn({
   const setVersionComment = useSessionStore((s) => s.setVersionComment);
   const [editing, setEditing] = useState(false);
   const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
+  const [refsCollapsed, setRefsCollapsed] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const srcStripRef = useRef<HTMLDivElement>(null);
   const twoCol = !collapsed && width > 220;
@@ -269,30 +270,39 @@ export function GalleryColumn({
             )}
           </div>
           {!column.isSrc && (
-            <div
-              ref={srcStripRef}
-              className={`shrink-0 border-b border-dim/50 ${
-                osDragTarget === "src" ? "outline outline-2 outline-accent" : ""
-              } ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[26px]" : "flex flex-wrap gap-[3px] p-[3px]"}`}
-            >
-              {column.srcImages.length === 0 ? (
-                <span className="text-[10px] text-dim/40 border border-dashed border-dim/25 px-2 py-px select-none">
-                  refs
-                </span>
-              ) : (
-                column.srcImages.map((img) => (
-                  <Thumbnail
-                    key={img.path}
-                    image={img}
-                    selected={selectedImagePath === img.path}
-                    columnVersion={column.version}
-                    isDragSource={dragState?.fromPath === img.path}
-                    onSelect={() => onImageAction("select", img.path)}
-                    onToggleStar={() => onImageAction("toggle_star", img.path)}
-                    onDragStart={onDragStart}
-                    clipMediaSelected={false}
-                  />
-                ))
+            <div className="shrink-0 border-b border-dim/50">
+              <div
+                className="flex items-center h-[18px] px-1 cursor-pointer select-none"
+                onClick={() => setRefsCollapsed((v) => !v)}
+              >
+                <span className="text-[10px] text-dim/50 font-mono flex-1">refs</span>
+                <span className="text-[10px] text-dim/40" style={{ transform: refsCollapsed ? "rotate(-90deg)" : undefined, display: "inline-block" }}>▾</span>
+              </div>
+              {!refsCollapsed && (
+                <div
+                  ref={srcStripRef}
+                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : "flex flex-wrap gap-[3px] p-[3px]"}`}
+                >
+                  {column.srcImages.length === 0 ? (
+                    <span className="text-[10px] text-dim/30 border border-dashed border-dim/20 px-2 py-px select-none">
+                      drop here
+                    </span>
+                  ) : (
+                    column.srcImages.map((img) => (
+                      <Thumbnail
+                        key={img.path}
+                        image={img}
+                        selected={selectedImagePath === img.path}
+                        columnVersion={column.version}
+                        isDragSource={dragState?.fromPath === img.path}
+                        onSelect={() => onImageAction("select", img.path)}
+                        onToggleStar={() => onImageAction("toggle_star", img.path)}
+                        onDragStart={onDragStart}
+                        clipMediaSelected={false}
+                      />
+                    ))
+                  )}
+                </div>
               )}
             </div>
           )}
