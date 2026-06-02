@@ -63,7 +63,8 @@ jobs:
             CHANGELOG=$(git log --pretty=format:"- %s" --no-merges | head -80)
           fi
 
-          BODY="## What's changed
+          BODY=$(cat <<RELEASE_BODY
+## What's changed
 
 ${CHANGELOG}
 
@@ -71,8 +72,8 @@ ${CHANGELOG}
 
 ## Downloads
 
-> **Windows SmartScreen warning:** the installer is self-signed. Click **More info → Run anyway** to proceed.
-> **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings → Privacy & Security → Open Anyway**.
+> **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.
+> **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.
 
 ### Windows
 | | |
@@ -90,7 +91,9 @@ ${CHANGELOG}
 | | |
 |---|---|
 | AppImage | [aiSLAP_${VERSION}_amd64.AppImage](${BASE}/aiSLAP_${VERSION}_amd64.AppImage) |
-| .deb | [aiSLAP_${VERSION}_amd64.deb](${BASE}/aiSLAP_${VERSION}_amd64.deb) |"
+| .deb | [aiSLAP_${VERSION}_amd64.deb](${BASE}/aiSLAP_${VERSION}_amd64.deb) |
+RELEASE_BODY
+)
 
           {
             printf '%s\n' 'body<<RELEASE_EOF'
@@ -104,7 +107,8 @@ ${CHANGELOG}
         with:
           tag_name: aiSLAP-v${{ steps.pkg.outputs.version }}
           name: "aiSLAP v${{ steps.pkg.outputs.version }}"
-          body: ${{ steps.notes.outputs.body }}
+          body: |
+            ${{ steps.notes.outputs.body }}
           draft: true
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
