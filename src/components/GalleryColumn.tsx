@@ -71,15 +71,13 @@ export function GalleryColumn({
   const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
   const [refsCollapsed, setRefsCollapsed] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-  const srcStripRef = useRef<HTMLDivElement>(null);
   const twoCol = !collapsed && width > 220;
 
-  // OS file drag-drop onto any column → copy each file into the column's
-  // own folder, then rescan so it appears. SRC uses ref_copy_to_global_src
-  // (project-level, overwrite-on-collision); version columns use the
-  // generic image_copy_to_dir (error-on-collision so a generated output is
-  // never silently replaced by a dropped file). Drops onto the SRC strip
-  // of a version column go into the column's SRC/ subfolder.
+  // OS file drag-drop onto a column → copy each file in, then rescan so it
+  // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
+  // overwrite-on-collision). A version (generation) column routes EVERY drop
+  // into its refs (SRC/) subfolder — dropped files are references, never loose
+  // generated outputs, so they never land in the version folder itself.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
@@ -91,7 +89,7 @@ export function GalleryColumn({
       const cy = y / dpr;
       return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
     };
-    const ingest = async (paths: string[], toSrc: boolean) => {
+    const ingest = async (paths: string[]) => {
       const shot = useSessionStore.getState().shotPath;
       if (!shot) {
         await showMessage("Open a shot first", { kind: "warning" });
@@ -104,12 +102,10 @@ export function GalleryColumn({
         try {
           if (column.isSrc) {
             await cmd.ref_copy_to_global_src(shot, p);
-          } else if (toSrc) {
+          } else {
             const srcDir = `${destDir}/SRC`;
             await cmd.dir_ensure(srcDir);
             await cmd.image_copy_to_dir(p, srcDir);
-          } else {
-            await cmd.image_copy_to_dir(p, destDir);
           }
           any = true;
         } catch (e) {
@@ -123,19 +119,15 @@ export function GalleryColumn({
         const p = event.payload;
         if (p.type === "enter" || p.type === "over") {
           const inside = hitEl(panelRef.current, p.position.x, p.position.y);
-          if (inside) {
-            const inSrc = hitEl(srcStripRef.current, p.position.x, p.position.y);
-            setOsDragTarget(inSrc ? "src" : "main");
-          } else {
-            setOsDragTarget(null);
-          }
+          // Version columns highlight their refs strip (drop destination);
+          // the GLOBAL SRC column highlights as a whole.
+          setOsDragTarget(inside ? (column.isSrc ? "main" : "src") : null);
         } else if (p.type === "leave") {
           setOsDragTarget(null);
         } else if (p.type === "drop") {
           const inside = hitEl(panelRef.current, p.position.x, p.position.y);
-          const inSrc = inside && hitEl(srcStripRef.current, p.position.x, p.position.y);
           setOsDragTarget(null);
-          if (inside) await ingest(p.paths, inSrc);
+          if (inside) await ingest(p.paths);
         }
       })
       .then((fn) => {
@@ -199,7 +191,7 @@ export function GalleryColumn({
       data-column-version={column.version}
       data-column-dest={destDir}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
-        isDropTarget || osDragTarget === "main" ? "outline outline-2 outline-accent border-transparent" : "border-border"
+        isDropTarget || osDragTarget != null ? "outline outline-2 outline-accent border-transparent" : "border-border"
       } p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
       style={{ width: `${effectiveWidth}px` }}
     >
@@ -280,7 +272,6 @@ export function GalleryColumn({
               </div>
               {!refsCollapsed && (
                 <div
-                  ref={srcStripRef}
                   className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : "flex flex-wrap gap-[3px] p-[3px]"}`}
                 >
                   {column.srcImages.length === 0 ? (
