@@ -609,7 +609,6 @@ export function cancelAllGenerations(): void {
         status: "cancelled",
         progressMessage: "Cancelled",
       });
-      schedulePrune(j.id);
       pushLog("INFO", "Cancelled (was queued)", j.id.slice(0, 6));
       spec?.onCancelled?.();
       continue;
@@ -620,13 +619,6 @@ export function cancelAllGenerations(): void {
     });
     abortControllers.get(j.id)?.abort();
   }
-}
-
-function schedulePrune(jobId: string, delayMs = 5000): void {
-  setTimeout(() => {
-    useGenerationStore.getState().removeJob(jobId);
-    jobSpecs.delete(jobId);
-  }, delayMs);
 }
 
 /** Runs one job to completion / cancellation / failure. */
@@ -752,7 +744,6 @@ async function runJob(spec: JobSpec): Promise<void> {
   } finally {
     abortControllers.delete(spec.id);
     jobSpecs.delete(spec.id);
-    schedulePrune(spec.id);
     void pumpQueue();
   }
 }

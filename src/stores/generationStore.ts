@@ -526,7 +526,21 @@ export const useGenerationStore = create<State & Actions>((set) => {
     },
 
     addJob(job) {
-      set((s) => ({ jobs: [...s.jobs, job] }));
+      set((s) => {
+        const next = [...s.jobs, job];
+        const MAX = 50;
+        if (next.length <= MAX) return { jobs: next };
+        // Drop oldest *completed* jobs first so active work is never evicted.
+        const completed = (j: Job) =>
+          j.status === "done" || j.status === "failed" || j.status === "cancelled";
+        const trimmed = next.slice();
+        for (let i = 0; trimmed.length > MAX && i < trimmed.length; ) {
+          if (completed(trimmed[i])) trimmed.splice(i, 1);
+          else i++;
+        }
+        // If still over (>50 active jobs at once — pathological), keep newest.
+        return { jobs: trimmed.length > MAX ? trimmed.slice(-MAX) : trimmed };
+      });
     },
     updateJob(id, patch) {
       set((s) => ({

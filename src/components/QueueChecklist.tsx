@@ -1,9 +1,11 @@
+import { useEffect, useRef } from "react";
 import { useGenerationStore } from "../stores/generationStore";
 
 /**
- * Left half of the log surface — one row per in-flight or recently completed
- * submission, ticked when the job's media is on disk. Rows disappear ~5s
- * after `done` (existing schedulePrune in generate.ts).
+ * Left half of the log surface — one row per submission iteration, ticked
+ * when the iteration's media is on disk. Completed rows persist (the store
+ * caps total jobs at 50, dropping the oldest completed first); the list
+ * scrolls and auto-pins to the newest activity.
  */
 export function QueueChecklist({
   height,
@@ -15,8 +17,18 @@ export function QueueChecklist({
   const jobs = useGenerationStore((s) => s.jobs);
   const visible = jobs.filter((j) => j.status !== "cancelled");
 
+  const ref = useRef<HTMLDivElement>(null);
+  // Auto-scroll to the bottom on changes so the latest submission/iter is
+  // visible; the user can scroll up to inspect history.
+  const completedTotal = visible.reduce((s, j) => s + j.completedIterations, 0);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.scrollTop = ref.current.scrollHeight;
+  }, [visible.length, completedTotal, height]);
+
   return (
     <div
+      ref={ref}
       className={`bg-panel text-dim px-2 py-1 font-mono overflow-y-auto thin-scroll flex flex-col shrink-0 ${className}`}
       style={{ fontSize: 11, height: `${height}px` }}
     >
@@ -42,7 +54,7 @@ export function QueueChecklist({
             return (
               <div
                 key={`${j.id}-${k}`}
-                className={`flex items-baseline gap-1 truncate ${color}`}
+                className={`flex items-baseline gap-1 truncate shrink-0 ${color}`}
                 title={preview || j.progressMessage}
               >
                 <span className="w-3 shrink-0 text-center">{glyph}</span>

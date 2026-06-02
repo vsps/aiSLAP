@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { LogEvent } from "../lib/types";
 
-const MAX = 200;
+const MAX = 50;
 
 type LogLine = LogEvent & { id: number; timestamp: string };
 
