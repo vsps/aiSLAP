@@ -18,14 +18,25 @@ export function ModelPicker() {
     [entries, provider],
   );
 
-  const families = useMemo(() => {
+  const imageFamilies = useMemo(() => {
     const seen = new Set<string>();
     const result: string[] = [];
-    for (const e of providerEntries) {
+    for (const e of providerEntries.filter((e) => e.node.kind === "image")) {
       if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
     }
     return result;
   }, [providerEntries]);
+
+  const videoFamilies = useMemo(() => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const e of providerEntries.filter((e) => e.node.kind === "video")) {
+      if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
+    }
+    return result;
+  }, [providerEntries]);
+
+  const families = useMemo(() => [...imageFamilies, ...videoFamilies], [imageFamilies, videoFamilies]);
 
   const currentFamily = useMemo(() => {
     if (!currentModel) return null;
@@ -64,9 +75,16 @@ export function ModelPicker() {
         value={selectedFamily ?? ""}
         onChange={(e) => setManualFamily(e.currentTarget.value || null)}
       >
-        {families.map((f) => (
-          <option key={f} value={f}>{f}</option>
-        ))}
+        {imageFamilies.length > 0 && (
+          <optgroup label="Image">
+            {imageFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+          </optgroup>
+        )}
+        {videoFamilies.length > 0 && (
+          <optgroup label="Video">
+            {videoFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+          </optgroup>
+        )}
       </select>
       <div className="flex flex-wrap gap-1">
         {familyModels.map((e) => (
