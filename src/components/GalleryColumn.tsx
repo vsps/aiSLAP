@@ -68,20 +68,21 @@ export function GalleryColumn({
   const comment = useSessionStore((s) => s.versionComments[column.version] ?? "");
   const setVersionComment = useSessionStore((s) => s.setVersionComment);
   const [editing, setEditing] = useState(false);
-  const [osDragOver, setOsDragOver] = useState(false);
+  const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const srcStripRef = useRef<HTMLDivElement>(null);
   const twoCol = !collapsed && width > 220;
 
   // OS file drag-drop onto any column → copy each file into the column's
   // own folder, then rescan so it appears. SRC uses ref_copy_to_global_src
   // (project-level, overwrite-on-collision); version columns use the
   // generic image_copy_to_dir (error-on-collision so a generated output is
-  // never silently replaced by a dropped file).
+  // never silently replaced by a dropped file). Drops onto the SRC strip
+  // of a version column go into the column's SRC/ subfolder.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
-    const hitTest = (x: number, y: number): boolean => {
-      const el = panelRef.current;
+    const hitEl = (el: HTMLElement | null, x: number, y: number): boolean => {
       if (!el) return false;
       const dpr = window.devicePixelRatio || 1;
       const r = el.getBoundingClientRect();
@@ -89,7 +90,7 @@ export function GalleryColumn({
       const cy = y / dpr;
       return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
     };
-    const ingest = async (paths: string[]) => {
+    const ingest = async (paths: string[], toSrc: boolean) => {
       const shot = useSessionStore.getState().shotPath;
       if (!shot) {
         await showMessage("Open a shot first", { kind: "warning" });
@@ -102,6 +103,10 @@ export function GalleryColumn({
         try {
           if (column.isSrc) {
             await cmd.ref_copy_to_global_src(shot, p);
+          } else if (toSrc) {
+            const srcDir = `${destDir}/SRC`;
+            await cmd.dir_ensure(srcDir);
+            await cmd.image_copy_to_dir(p, srcDir);
           } else {
             await cmd.image_copy_to_dir(p, destDir);
           }
@@ -116,13 +121,20 @@ export function GalleryColumn({
       .onDragDropEvent(async (event) => {
         const p = event.payload;
         if (p.type === "enter" || p.type === "over") {
-          setOsDragOver(hitTest(p.position.x, p.position.y));
+          const inside = hitEl(panelRef.current, p.position.x, p.position.y);
+          if (inside) {
+            const inSrc = hitEl(srcStripRef.current, p.position.x, p.position.y);
+            setOsDragTarget(inSrc ? "src" : "main");
+          } else {
+            setOsDragTarget(null);
+          }
         } else if (p.type === "leave") {
-          setOsDragOver(false);
+          setOsDragTarget(null);
         } else if (p.type === "drop") {
-          const inside = hitTest(p.position.x, p.position.y);
-          setOsDragOver(false);
-          if (inside) await ingest(p.paths);
+          const inside = hitEl(panelRef.current, p.position.x, p.position.y);
+          const inSrc = inside && hitEl(srcStripRef.current, p.position.x, p.position.y);
+          setOsDragTarget(null);
+          if (inside) await ingest(p.paths, inSrc);
         }
       })
       .then((fn) => {
@@ -186,7 +198,7 @@ export function GalleryColumn({
       data-column-version={column.version}
       data-column-dest={destDir}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
-        isDropTarget || osDragOver ? "outline outline-2 outline-accent border-transparent" : "border-border"
+        isDropTarget || osDragTarget === "main" ? "outline outline-2 outline-accent border-transparent" : "border-border"
       } p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
       style={{ width: `${effectiveWidth}px` }}
     >
@@ -194,13 +206,13 @@ export function GalleryColumn({
         <div
           className={`flex-1 min-h-0 flex items-center justify-center text-sm cursor-pointer ${headerClass}`}
           onClick={onHeaderClick}
-          title={`Expand ${column.version}`}
+          title={comment ? `${column.version}: ${comment}` : `Expand ${column.version}`}
         >
           <span
             className="font-mono"
             style={{ writingMode: "vertical-rl" }}
           >
-            {column.version}
+            {column.version}{comment ? ` · ${comment}` : ""}
           </span>
         </div>
       ) : (
@@ -256,6 +268,34 @@ export function GalleryColumn({
               />
             )}
           </div>
+          {!column.isSrc && (
+            <div
+              ref={srcStripRef}
+              className={`shrink-0 border-b border-dim/50 ${
+                osDragTarget === "src" ? "outline outline-2 outline-accent" : ""
+              } ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[26px]" : "flex flex-wrap gap-[3px] p-[3px]"}`}
+            >
+              {column.srcImages.length === 0 ? (
+                <span className="text-[10px] text-dim/40 border border-dashed border-dim/25 px-2 py-px select-none">
+                  refs
+                </span>
+              ) : (
+                column.srcImages.map((img) => (
+                  <Thumbnail
+                    key={img.path}
+                    image={img}
+                    selected={selectedImagePath === img.path}
+                    columnVersion={column.version}
+                    isDragSource={dragState?.fromPath === img.path}
+                    onSelect={() => onImageAction("select", img.path)}
+                    onToggleStar={() => onImageAction("toggle_star", img.path)}
+                    onDragStart={onDragStart}
+                    clipMediaSelected={false}
+                  />
+                ))
+              )}
+            </div>
+          )}
           <div className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${twoCol ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}>
             {column.images.map((img) => (
           <Thumbnail

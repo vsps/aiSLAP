@@ -534,6 +534,7 @@ fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
                 version: "GLOBAL SRC".to_string(),
                 is_src: true,
                 images,
+                src_images: Vec::new(),
                 timestamp: None,
                 model_name: None,
             });
@@ -555,11 +556,18 @@ fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
             continue;
         }
         let images = scan_directory_images(&p, project_root.as_deref(), &visible)?;
+        let src_sub = p.join("SRC");
+        let src_images = if src_sub.is_dir() {
+            scan_directory_images(&src_sub, project_root.as_deref(), &visible)?
+        } else {
+            Vec::new()
+        };
         cols.push(GalleryColumn {
             id: name.clone(),
             version: name,
             is_src: false,
             images,
+            src_images,
             timestamp: None,
             model_name: None,
         });

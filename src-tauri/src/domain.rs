@@ -347,6 +347,7 @@ pub struct GalleryColumn {
     pub version: String,
     pub is_src: bool,
     pub images: Vec<GalleryImage>,
+    pub src_images: Vec<GalleryImage>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

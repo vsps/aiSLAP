@@ -173,6 +173,7 @@ export type GalleryColumn = {
   version: string;
   isSrc: boolean;
   images: GalleryImage[];
+  srcImages: GalleryImage[];
   timestamp?: string;
   modelName?: string;
 };
