@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { GalleryImage } from "../lib/types";
 import { GalleryColumn, type DragState } from "./GalleryColumn";
+import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
 import { RenameImageModal } from "./RenameImageModal";
 import { StackedView } from "./StackedView";
@@ -42,6 +43,8 @@ export function Gallery() {
     setZoomImage,
     renameImagePath,
     setRenameImage,
+    infoImagePath,
+    setInfoImage,
     shotPath,
     sequencePath,
     targetVersion,
@@ -594,6 +597,13 @@ export function Gallery() {
         <RenameImageModal
           image={renameImage}
           onClose={() => setRenameImage(null)}
+        />
+      )}
+
+      {infoImagePath && (
+        <ImageInfoModal
+          path={infoImagePath}
+          onClose={() => setInfoImage(null)}
         />
       )}
     </div>

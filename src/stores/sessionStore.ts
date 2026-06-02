@@ -29,6 +29,7 @@ type State = {
   columns: GalleryColumn[];
   selectedImagePath: string | null;
   zoomImagePath: string | null;
+  infoImagePath: string | null;
   zoomInitialMode: "draw" | "crop" | null;
   renameImagePath: string | null;
   imageDrag: { fromPath: string } | null;
@@ -73,6 +74,7 @@ type Actions = {
 
   setSelectedImage: (path: string | null) => void;
   setZoomImage: (path: string | null) => void;
+  setInfoImage: (path: string | null) => void;
   setZoomInitialMode: (mode: "draw" | "crop" | null) => void;
   setRenameImage: (path: string | null) => void;
   setImageDrag: (drag: State["imageDrag"]) => void;
@@ -125,6 +127,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   columns: [],
   selectedImagePath: null,
   zoomImagePath: null,
+  infoImagePath: null,
   zoomInitialMode: null,
   renameImagePath: null,
   imageDrag: null,
@@ -409,6 +412,10 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
 
   setRenameImage(path) {
     set({ renameImagePath: path });
+  },
+
+  setInfoImage(path) {
+    set({ infoImagePath: path });
   },
 
   setImageDrag(drag) {

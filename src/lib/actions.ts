@@ -214,7 +214,8 @@ export type ImageAction =
   | "edit"
   | "crop"
   | "toggle_star"
-  | "restore_chain";
+  | "restore_chain"
+  | "show_info";
 
 const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
 
@@ -475,6 +476,9 @@ export async function performImageAction(
       }
       return;
     }
+    case "show_info":
+      useSessionStore.getState().setInfoImage(path);
+      return;
   }
 }
 
