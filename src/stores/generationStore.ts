@@ -165,6 +165,15 @@ function activeOf(s: State): ChainLink | null {
   return s.links[s.expandedIdx] ?? null;
 }
 
+/** Copy of a link's per-shot inclusion flags, defaulting to all-true and
+ *  padded to match the current shotPrompts length (older links may lack the
+ *  field or have a stale, shorter array). */
+function shotPromptIncludes(link: ChainLink): boolean[] {
+  const inc = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
+  while (inc.length < link.shotPrompts.length) inc.push(true);
+  return inc;
+}
+
 export const useGenerationStore = create<State & Actions>((set) => {
   const initialLink = makeChainLink();
   return {
@@ -209,8 +218,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         const insertAt = Math.max(0, Math.min(link.shotPrompts.length, idx + 1));
         const next = link.shotPrompts.slice();
         next.splice(insertAt, 0, "");
-        const inc = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
-        while (inc.length < link.shotPrompts.length) inc.push(true);
+        const inc = shotPromptIncludes(link);
         inc.splice(insertAt, 0, true);
         return patchActive(s, { shotPrompts: next, shotPromptsIncluded: inc });
       });
@@ -224,8 +232,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         }
         const next = link.shotPrompts.slice();
         next.splice(idx, 1);
-        const inc = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
-        while (inc.length < link.shotPrompts.length) inc.push(true);
+        const inc = shotPromptIncludes(link);
         inc.splice(idx, 1);
         return patchActive(s, { shotPrompts: next, shotPromptsIncluded: inc });
       });
@@ -256,8 +263,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         if (!link) return {} as Partial<State>;
         if (idx < 0 || idx >= link.shotPrompts.length)
           return {} as Partial<State>;
-        const next = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
-        while (next.length < link.shotPrompts.length) next.push(true);
+        const next = shotPromptIncludes(link);
         next[idx] = v;
         return patchActive(s, { shotPromptsIncluded: next });
       });

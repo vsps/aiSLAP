@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { IconBtn } from "./IconBtn";
 import { RoleMenu } from "./RoleMenu";
@@ -397,7 +397,9 @@ function isAudioPath(path: string): boolean {
   return classifyMedia(path) === "audio";
 }
 
-function RefThumb({
+// memo'd: many refs render in the grid; skip re-rendering thumbs whose props
+// are unchanged when a sibling drag updates the parent.
+const RefThumb = memo(function RefThumb({
   index,
   ref_,
   color,
@@ -503,7 +505,7 @@ function RefThumb({
       </div>
     </div>
   );
-}
+});
 
 function RoleSlotPlaceholder({ kind }: { kind: "start" | "end" }) {
   const color = kind === "start" ? START_COLOR : END_COLOR;
