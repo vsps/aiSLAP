@@ -28,6 +28,10 @@ pub fn presets_path() -> AppResult<PathBuf> {
     Ok(appdata_dir()?.join("presets.json"))
 }
 
+pub fn pending_path() -> AppResult<PathBuf> {
+    Ok(appdata_dir()?.join("pending.json"))
+}
+
 /// Locate `models/` — either sibling of the installed binary, or repo-root `models/`
 /// while developing. We try a few candidates.
 pub fn models_dir() -> AppResult<PathBuf> {

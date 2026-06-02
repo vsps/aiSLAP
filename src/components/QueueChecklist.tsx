@@ -55,9 +55,12 @@ export function QueueChecklist({
               <div
                 key={`${j.id}-${k}`}
                 className={`flex items-baseline gap-1 truncate shrink-0 ${color}`}
-                title={preview || j.progressMessage}
+                title={`${j.enqueuedAt} · ${preview || j.progressMessage}`}
               >
                 <span className="w-3 shrink-0 text-center">{glyph}</span>
+                <span className="opacity-60 shrink-0">
+                  {formatTime(j.enqueuedAt)}
+                </span>
                 <span className="flex-1 truncate">
                   {preview || "(no prompt)"}
                   {suffix && <span className="opacity-50">{suffix}</span>}
@@ -69,4 +72,10 @@ export function QueueChecklist({
       )}
     </div>
   );
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }

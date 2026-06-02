@@ -21,14 +21,22 @@ export interface Provider {
   /** Upload a local file; return a URL the API can fetch. */
   uploadFile(file: File, signal: AbortSignal): Promise<string>;
 
-  /** Submit, poll, and return normalized output. Surfaces queue events via `onProgress`. */
+  /** Submit, poll, and return normalized output. Surfaces queue events via `onProgress`.
+   *  `hooks.onSubmitted(requestId)` fires the moment the provider returns a
+   *  request id (used by the orphan-recovery layer to persist a record before
+   *  we await the result). Optional. */
   run(
     endpoint: string,
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,
+    hooks?: ProviderRunHooks,
   ): Promise<ProviderOutput>;
 }
+
+export type ProviderRunHooks = {
+  onSubmitted?: (requestId: string) => void | Promise<void>;
+};
 
 export type ProviderName = "fal" | "replicate";
 

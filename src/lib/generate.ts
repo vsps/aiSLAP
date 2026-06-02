@@ -11,7 +11,9 @@ import type {
   ImageMetadata,
   Job,
   ModelNode,
+  PendingSubmission,
   RefImage,
+  RefSnapshot,
   RoleAssignment,
   UploadedRef,
 } from "./types";
@@ -153,6 +155,48 @@ function previewShotPrompt(s: string): string {
   return s.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
+/** Build a PendingSubmission record from the JobSpec for the iteration that
+ *  just got a requestId back from the provider. Used by the orphan-recovery
+ *  layer; written before we wait for the result and removed once the file
+ *  is on disk (or the iteration aborts non-resumably). */
+function buildPendingRecord(
+  pendingId: string,
+  spec: JobSpec,
+  iterationIndex: number,
+  requestId: string,
+): PendingSubmission {
+  const provider: "fal" | "replicate" =
+    spec.node.provider === "replicate" ? "replicate" : "fal";
+  return {
+    id: pendingId,
+    provider,
+    endpoint: spec.node.endpoint,
+    requestId,
+    shotPath: spec.shotPath,
+    targetVersion: spec.targetVersion,
+    ffmpegPath: spec.ffmpegPath,
+    filenameTemplate: spec.filenameTemplate,
+    modelId: spec.node.id,
+    modelName: spec.node.name,
+    modelEndpoint: spec.node.endpoint,
+    modelProvider: provider,
+    batchField: spec.node.batch_field,
+    sequencePrompt: spec.sequencePrompt,
+    shotPrompt: spec.shotPrompt,
+    shotPrompts: spec.shotPrompts,
+    combinedPrompt: spec.combinedPrompt,
+    settings: { ...spec.settings },
+    refs: spec.refs.map((r) => ({
+      path: r.path,
+      roleAssignment: r.roleAssignment ?? null,
+    })),
+    iterations: spec.iterations,
+    iterationIndex,
+    chain: spec.chain ?? null,
+    enqueuedAt: new Date().toISOString(),
+  };
+}
+
 async function preflightRefs(
   node: ModelNode,
   refs: RefImage[],
@@ -270,6 +314,7 @@ export async function enqueueGeneration(): Promise<void> {
       shotPath: session.shotPath,
       targetVersion,
       startedAt: performance.now(),
+      enqueuedAt: new Date().toISOString(),
       shotPromptPreview: previewShotPrompt(spec.shotPrompt),
     };
     gen.addJob(job);
@@ -522,6 +567,7 @@ function queueAndAwait(spec: JobSpec): Promise<string[] | null> {
       shotPath: spec.shotPath,
       targetVersion: spec.targetVersion,
       startedAt: performance.now(),
+      enqueuedAt: new Date().toISOString(),
       shotPromptPreview: previewShotPrompt(spec.shotPrompt),
     };
     jobSpecs.set(spec.id, spec);
@@ -665,40 +711,58 @@ async function runJob(spec: JobSpec): Promise<void> {
         currentIteration: k,
         progressMessage: `Generating (${k}/${spec.iterations})…`,
       });
-      const out = await provider.run(
-        spec.node.endpoint,
-        baseArgs,
-        controller.signal,
-        (e) => reportProgress(spec.id, k, spec.iterations, e),
-      );
-      gen.updateJob(spec.id, {
-        status: "downloading",
-        progressMessage: `Downloading (${k}/${spec.iterations})…`,
-      });
-      const outs = await downloadAndWrite({
-        out,
-        node: spec.node,
-        sequencePrompt: spec.sequencePrompt,
-        shotPrompt: spec.shotPrompt,
-        shotPrompts: spec.shotPrompts,
-        settings: spec.settings,
-        refs: uploaded,
-        shotPath: spec.shotPath,
-        versionDir,
-        targetVersion: spec.targetVersion,
-        iterationBase: k,
-        iterationTotal: spec.iterations,
-        expandToIterations: false,
-        ffmpegPath: spec.ffmpegPath,
-        filenameTemplate: spec.filenameTemplate,
-        chain: spec.chain,
-      });
-      totalOutputs.push(...outs);
-      gen.updateJob(spec.id, { completedIterations: k });
-      // Rescan only when the freshly-written shot is what the user is viewing;
-      // otherwise the gallery would briefly flicker to the job's shot.
-      if (useSessionStore.getState().shotPath === spec.shotPath) {
-        await useSessionStore.getState().rescanShot();
+      const pendingId = crypto.randomUUID();
+      try {
+        const out = await provider.run(
+          spec.node.endpoint,
+          baseArgs,
+          controller.signal,
+          (e) => reportProgress(spec.id, k, spec.iterations, e),
+          {
+            onSubmitted: async (requestId) => {
+              await cmd
+                .pending_add(buildPendingRecord(pendingId, spec, k, requestId))
+                .catch(() => {
+                  /* persistence is best-effort — never fail the job over it */
+                });
+            },
+          },
+        );
+        gen.updateJob(spec.id, {
+          status: "downloading",
+          progressMessage: `Downloading (${k}/${spec.iterations})…`,
+        });
+        const outs = await downloadAndWrite({
+          out,
+          node: spec.node,
+          sequencePrompt: spec.sequencePrompt,
+          shotPrompt: spec.shotPrompt,
+          shotPrompts: spec.shotPrompts,
+          settings: spec.settings,
+          refs: uploaded,
+          refSnapshots: undefined,
+          shotPath: spec.shotPath,
+          versionDir,
+          targetVersion: spec.targetVersion,
+          iterationBase: k,
+          iterationTotal: spec.iterations,
+          expandToIterations: false,
+          ffmpegPath: spec.ffmpegPath,
+          filenameTemplate: spec.filenameTemplate,
+          chain: spec.chain,
+        });
+        totalOutputs.push(...outs);
+        gen.updateJob(spec.id, { completedIterations: k });
+        // Rescan only when the freshly-written shot is what the user is viewing;
+        // otherwise the gallery would briefly flicker to the job's shot.
+        if (useSessionStore.getState().shotPath === spec.shotPath) {
+          await useSessionStore.getState().rescanShot();
+        }
+      } finally {
+        // Whether the iter succeeded, failed, or was aborted, the pending
+        // record's job is done. Crash-path is the one case `finally` doesn't
+        // fire — that's exactly when the recovery flow picks it up later.
+        await cmd.pending_remove(pendingId).catch(() => {});
       }
     }
 
@@ -800,14 +864,18 @@ async function uploadRefs(
 const DEFAULT_FILENAME_TEMPLATE =
   "<date>_<time>_<sequence>_<shot>_<model>_<version>";
 
-type DownloadCtx = {
+export type DownloadCtx = {
   out: ProviderOutput;
   node: ModelNode;
   sequencePrompt: string;
   shotPrompt: string;
   shotPrompts: string[];
   settings: Record<string, unknown>;
+  /** Uploaded refs (live path). Empty in recovery — see `refSnapshots`. */
   refs: UploadedRef[];
+  /** Alternative source for sidecar refs when `refs` (uploaded) is empty.
+   *  Used by the orphan-recovery driver, which doesn't have upload URLs. */
+  refSnapshots?: RefSnapshot[];
   shotPath: string;
   versionDir: string;
   targetVersion: string;
@@ -819,7 +887,7 @@ type DownloadCtx = {
   chain?: Omit<ChainMetadataBlock, "nextMediaPaths">;
 };
 
-async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
+export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   const written: string[] = [];
   const files = ctx.out.files;
   const multipleFiles = files.length > 1;
@@ -882,10 +950,12 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
     shotPrompts: ctx.shotPrompts,
     combinedPrompt: combined,
     settings: cleaned,
-    refs: ctx.refs.map((r) => ({
-      path: r.ref.path,
-      roleAssignment: r.ref.roleAssignment as RoleAssignment | null,
-    })),
+    refs:
+      ctx.refSnapshots ??
+      ctx.refs.map((r) => ({
+        path: r.ref.path,
+        roleAssignment: r.ref.roleAssignment as RoleAssignment | null,
+      })),
     iterationIndex,
     iterationTotal: ctx.iterationTotal > 1 ? ctx.iterationTotal : undefined,
     timestamp: new Date().toISOString(),
