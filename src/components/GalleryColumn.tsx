@@ -72,11 +72,12 @@ export function GalleryColumn({
   const panelRef = useRef<HTMLDivElement>(null);
   const twoCol = !collapsed && width > 220;
 
-  // OS file drag-drop onto the SRC column → copy each file into GLOBAL SRC
-  // via the same command the REFERENCES panel uses, then rescan so it appears.
-  // Listener is only registered on SRC columns so other columns don't compete.
+  // OS file drag-drop onto any column → copy each file into the column's
+  // own folder, then rescan so it appears. SRC uses ref_copy_to_global_src
+  // (project-level, overwrite-on-collision); version columns use the
+  // generic image_copy_to_dir (error-on-collision so a generated output is
+  // never silently replaced by a dropped file).
   useEffect(() => {
-    if (!column.isSrc) return;
     let unlisten: (() => void) | null = null;
     let disposed = false;
     const hitTest = (x: number, y: number): boolean => {
@@ -99,7 +100,11 @@ export function GalleryColumn({
       let any = false;
       for (const p of media) {
         try {
-          await cmd.ref_copy_to_global_src(shot, p);
+          if (column.isSrc) {
+            await cmd.ref_copy_to_global_src(shot, p);
+          } else {
+            await cmd.image_copy_to_dir(p, destDir);
+          }
           any = true;
         } catch (e) {
           await showMessage(`Failed to add ${basename(p)}: ${e}`, { kind: "error" });
@@ -129,7 +134,7 @@ export function GalleryColumn({
       disposed = true;
       if (unlisten) unlisten();
     };
-  }, [column.isSrc]);
+  }, [column.isSrc, destDir]);
 
   const isTarget = targetVersion === column.version;
   const headerClass = isTarget
