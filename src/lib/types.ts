@@ -173,6 +173,7 @@ export type GalleryColumn = {
   version: string;
   isSrc: boolean;
   images: GalleryImage[];
+  srcImages: GalleryImage[];
   timestamp?: string;
   modelName?: string;
 };
@@ -246,6 +247,9 @@ export type Job = {
   targetVersion: string;
   error?: string;
   startedAt: number;
+  /** Wall-clock ISO timestamp captured when the job was enqueued, for
+   *  display in the queue checklist (formatted to HH:MM:SS per row). */
+  enqueuedAt: string;
   /** First 1–120 chars of the shot prompt (newlines collapsed to spaces),
    *  captured at enqueue for display in the queue checklist. */
   shotPromptPreview?: string;
@@ -433,6 +437,43 @@ export type ImageMetadata = {
   /** Chain provenance — present only when this media was produced as part
    *  of a multi-link chain submission. */
   chain?: ChainMetadataBlock;
+};
+
+// ---------- Pending submissions (orphan recovery) ----------
+
+/** Persistent record of an in-flight generation. Written by the provider
+ *  the moment the API returns its request id; removed when downloadAndWrite
+ *  completes (or the iteration aborts non-resumably). The recovery driver
+ *  walks survivors after a crash/restart and re-pulls completed ones. */
+export type PendingSubmission = {
+  id: string;
+  provider: "fal" | "replicate";
+  endpoint: string;
+  requestId: string;
+
+  // Destination
+  shotPath: string;
+  targetVersion: string;
+  ffmpegPath: string;
+  filenameTemplate: string;
+
+  // Model + iteration context (snapshotted for filename + sidecar)
+  modelId: string;
+  modelName: string;
+  modelEndpoint: string;
+  modelProvider?: "fal" | "replicate";
+  batchField?: string;
+  sequencePrompt: string;
+  shotPrompt: string;
+  shotPrompts: string[];
+  combinedPrompt: string;
+  settings: Record<string, unknown>;
+  refs: RefSnapshot[];
+  iterations: number;
+  iterationIndex: number;
+  chain?: ChainMetadataBlock | null;
+
+  enqueuedAt: string;
 };
 
 // ---------- Generation events ----------

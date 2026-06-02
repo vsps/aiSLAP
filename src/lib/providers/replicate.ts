@@ -8,6 +8,7 @@ import {
   type ProviderFile,
   type ProviderOutput,
   type ProviderProgress,
+  type ProviderRunHooks,
 } from "./provider";
 
 type Prediction = {
@@ -52,12 +53,16 @@ export class ReplicateProvider implements Provider {
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,
+    hooks?: ProviderRunHooks,
   ): Promise<ProviderOutput> {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
 
     const client = this.requireClient();
     const created = await createPrediction(client, endpoint, input);
     let prediction: Prediction = created;
+    // Fire the hook with replicate's prediction id — recovery isn't wired
+    // for replicate yet, but the persisted record keeps it available.
+    if (hooks?.onSubmitted) await hooks.onSubmitted(prediction.id);
 
     const onAbort = () => {
       void client.predictions.cancel(prediction.id).catch(() => {});

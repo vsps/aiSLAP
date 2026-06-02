@@ -26,6 +26,8 @@ Built with React + Tailwind (frontend) on a Rust + Tauri (native) host. Windows 
 
 ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
+![aiSLAP 0.2.6](https://github.com/user-attachments/assets/a44c39e4-2cde-4738-b379-dad411c1d9c5)
+
 ---
 
 # Releases
@@ -58,7 +60,6 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 - LLM prompt enhancement
 - prompt history
 - full metadata sidecar saved with media.
-
  
 ![aiSLAP](https://github.com/user-attachments/assets/dd66d818-f5a0-4ad3-b5e3-4c6ad7b881c9)
 

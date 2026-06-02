@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
+import { recoverOrphans } from "../lib/recovery";
+import { pushLog } from "../stores/logStore";
 import type { ColorOverrides, Config, FalLifecycle } from "../lib/types";
 
 const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
@@ -48,6 +50,9 @@ export function SettingsDialog({ onClose }: Props) {
   const [revealReplicate, setRevealReplicate] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT);
   const [originalColors, setOriginalColors] = useState<ColorOverrides | undefined>(undefined);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [orphanBusy, setOrphanBusy] = useState(false);
+  const [orphanStatus, setOrphanStatus] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -72,7 +77,33 @@ export function SettingsDialog({ onClose }: Props) {
       }
       setLoaded(true);
     })();
+    void (async () => {
+      const records = await cmd.pending_load().catch(() => []);
+      setPendingCount(records.length);
+    })();
   }, []);
+
+  async function checkOrphans() {
+    if (orphanBusy) return;
+    setOrphanBusy(true);
+    setOrphanStatus("Checking…");
+    try {
+      const r = await recoverOrphans();
+      const parts = [
+        `recovered ${r.recovered}`,
+        `still running ${r.stillRunning}`,
+        `failed ${r.failed}`,
+      ];
+      setOrphanStatus(`${parts.join(", ")} (of ${r.total}).`);
+      for (const n of r.notes) pushLog("INFO", `Orphan: ${n}`);
+      const remaining = await cmd.pending_load().catch(() => []);
+      setPendingCount(remaining.length);
+    } catch (e) {
+      setOrphanStatus(`Error: ${String(e)}`);
+    } finally {
+      setOrphanBusy(false);
+    }
+  }
 
   const handleCloseRef = useRef(handleClose);
   handleCloseRef.current = handleClose;
@@ -239,6 +270,28 @@ export function SettingsDialog({ onClose }: Props) {
             />
             <div className="text-xs text-dim mt-1">
               Extra submits beyond this cap wait in a local queue.
+            </div>
+          </Field>
+
+          <Field label="Pending submissions">
+            <div className="flex gap-1 items-center">
+              <button
+                type="button"
+                className="px-2 bg-bg text-xs disabled:opacity-50"
+                onClick={() => void checkOrphans()}
+                disabled={orphanBusy}
+              >
+                {orphanBusy ? "Checking…" : "Check for orphans"}
+              </button>
+              <span className="text-xs text-dim">
+                {pendingCount === null
+                  ? "—"
+                  : `${pendingCount} record${pendingCount === 1 ? "" : "s"} on file`}
+              </span>
+            </div>
+            <div className="text-xs text-dim mt-1">
+              {orphanStatus ??
+                "If the app was killed mid-submit, the result may still be on fal.ai. Click Check to pull it down."}
             </div>
           </Field>
 

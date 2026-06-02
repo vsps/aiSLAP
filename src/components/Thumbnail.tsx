@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { GalleryImage } from "../lib/types";
 import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
@@ -17,7 +17,6 @@ type Props = {
     fromColumnVersion: string;
     pointerEvent: React.PointerEvent;
   }) => void;
-  traceActive?: boolean;
   /** Disables drag start. Used in the starred view where drag-to-column has no destination. */
   dragDisabled?: boolean;
   /** Whether this image is currently the shot's exclusive "clip media" pick. */
@@ -28,7 +27,10 @@ type Props = {
 
 const DRAG_THRESHOLD_PX = 5;
 
-export function Thumbnail({
+// Renders in long gallery columns (100+ instances), so it's wrapped in memo:
+// a parent re-render skips re-rendering thumbs whose props are referentially
+// equal. Callers should pass stable props/callbacks to get the full benefit.
+export const Thumbnail = memo(function Thumbnail({
   image,
   selected,
   hidden,
@@ -195,4 +197,4 @@ export function Thumbnail({
       )}
     </div>
   );
-}
+});

@@ -25,6 +25,33 @@ fn as_str(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
+/// Case-insensitive extension match against a static set, without allocating.
+fn ext_matches(p: &Path, set: &[&str]) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| set.iter().any(|x| x.eq_ignore_ascii_case(e)))
+}
+
+fn is_image_ext(p: &Path) -> bool {
+    ext_matches(p, IMAGE_EXTS)
+}
+fn is_video_ext(p: &Path) -> bool {
+    ext_matches(p, VIDEO_EXTS)
+}
+fn is_media_ext(p: &Path) -> bool {
+    is_image_ext(p) || is_video_ext(p)
+}
+
+/// Sidecar (`<stem>.json`) sitting next to a media file.
+fn sidecar_path(media: &Path) -> PathBuf {
+    media.with_extension("json")
+}
+/// Video thumbnail (`<stem>.thumb.png`) sitting next to a media file.
+fn thumb_path(media: &Path) -> PathBuf {
+    let stem = media.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    media.with_file_name(format!("{stem}.thumb.png"))
+}
+
 /// A version-folder name is `<letter-prefix><3 ASCII digits>`, where the
 /// prefix is at least one letter and may also contain `_` or `-`. Old `v###`
 /// folders still match; the project's configured prefix decides what newly
@@ -442,6 +469,10 @@ pub fn shot_rename(shot_path: String, new_name: String) -> AppResult<String> {
     rename_subtree(&shot_path, &new_name, /* is_sequence */ false)
 }
 
+/// Rename a sequence or shot folder and keep every reference to it valid.
+/// Phases: (1) rename the folder on disk; (2) rewrite the absolute path stored
+/// inside each JSON sidecar in the subtree so they point at the new location;
+/// (3) remap the project's visible-set entries from the old prefix to the new.
 fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResult<String> {
     let trimmed = new_name.trim();
     if trimmed.is_empty() {
@@ -534,6 +565,7 @@ fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
                 version: "GLOBAL SRC".to_string(),
                 is_src: true,
                 images,
+                src_images: Vec::new(),
                 timestamp: None,
                 model_name: None,
             });
@@ -555,11 +587,18 @@ fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
             continue;
         }
         let images = scan_directory_images(&p, project_root.as_deref(), &visible)?;
+        let src_sub = p.join("SRC");
+        let src_images = if src_sub.is_dir() {
+            scan_directory_images(&src_sub, project_root.as_deref(), &visible)?
+        } else {
+            Vec::new()
+        };
         cols.push(GalleryColumn {
             id: name.clone(),
             version: name,
             is_src: false,
             images,
+            src_images,
             timestamp: None,
             model_name: None,
         });
@@ -593,24 +632,14 @@ fn scan_directory_images(
         if filename.ends_with(".thumb.png") {
             continue;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_ascii_lowercase())
-            .unwrap_or_default();
-        let is_image = IMAGE_EXTS.iter().any(|e| *e == ext);
-        let is_video = VIDEO_EXTS.iter().any(|e| *e == ext);
+        let is_image = is_image_ext(&path);
+        let is_video = is_video_ext(&path);
         if !is_image && !is_video {
             continue;
         }
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let meta_path = path.with_file_name(format!("{stem}.json"));
+        let meta_path = sidecar_path(&path);
         let thumb_path = if is_video {
-            let t = path.with_file_name(format!("{stem}.thumb.png"));
+            let t = thumb_path(&path);
             if t.exists() {
                 Some(as_str(&t))
             } else {
@@ -844,13 +873,7 @@ pub fn version_stack_move(
         if filename.ends_with(".thumb.png") {
             continue;
         }
-        let ext = p
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_ascii_lowercase())
-            .unwrap_or_default();
-        let is_media = IMAGE_EXTS.iter().any(|e| *e == ext) || VIDEO_EXTS.iter().any(|e| *e == ext);
-        if !is_media {
+        if !is_media_ext(&p) {
             continue;
         }
         moves.push(p);
@@ -935,24 +958,14 @@ fn make_gallery_image(abs_path: &Path) -> Option<GalleryImage> {
     if filename.ends_with(".thumb.png") {
         return None;
     }
-    let ext = abs_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
-    let is_image = IMAGE_EXTS.iter().any(|e| *e == ext);
-    let is_video = VIDEO_EXTS.iter().any(|e| *e == ext);
+    let is_image = is_image_ext(abs_path);
+    let is_video = is_video_ext(abs_path);
     if !is_image && !is_video {
         return None;
     }
-    let stem = abs_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
-    let meta_path = abs_path.with_file_name(format!("{stem}.json"));
+    let meta_path = sidecar_path(abs_path);
     let thumb_path = if is_video {
-        let t = abs_path.with_file_name(format!("{stem}.thumb.png"));
+        let t = thumb_path(abs_path);
         if t.exists() { Some(as_str(&t)) } else { None }
     } else {
         None
@@ -1068,12 +1081,10 @@ fn sibling_paths(p: &Path) -> AppResult<(String, String, PathBuf, PathBuf)> {
         .and_then(|s| s.to_str())
         .ok_or_else(|| AppError::Msg("no filename".into()))?
         .to_string();
-    let dir = p
-        .parent()
+    // Bail if there's no parent — keeps the returned sidecar/thumb paths valid.
+    p.parent()
         .ok_or_else(|| AppError::Msg("no parent dir".into()))?;
-    let sidecar = dir.join(format!("{stem}.json"));
-    let thumb = dir.join(format!("{stem}.thumb.png"));
-    Ok((stem, filename, sidecar, thumb))
+    Ok((stem, filename, sidecar_path(p), thumb_path(p)))
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -1107,14 +1118,15 @@ fn copy_triple_to_dir(src: &Path, dest_dir: &Path, policy: CollisionPolicy) -> A
             return Err(AppError::Msg(format!("FILENAME_EXISTS: {filename}")));
         }
     std::fs::copy(src, &dest_primary)?;
-    if src_sidecar.exists() {
-        let dest_sidecar = dest_dir.join(src_sidecar.file_name().unwrap());
+    // Sidecar/thumb are best-effort companions; skip silently if unnamed.
+    if let (true, Some(name)) = (src_sidecar.exists(), src_sidecar.file_name()) {
+        let dest_sidecar = dest_dir.join(name);
         if let Err(e) = std::fs::copy(&src_sidecar, &dest_sidecar) {
             eprintln!("sidecar copy failed: {e}");
         }
     }
-    if src_thumb.exists() {
-        let dest_thumb = dest_dir.join(src_thumb.file_name().unwrap());
+    if let (true, Some(name)) = (src_thumb.exists(), src_thumb.file_name()) {
+        let dest_thumb = dest_dir.join(name);
         if let Err(e) = std::fs::copy(&src_thumb, &dest_thumb) {
             eprintln!("thumb copy failed: {e}");
         }
@@ -1155,14 +1167,15 @@ fn move_triple_to_dir(src: &Path, dest_dir: &Path) -> AppResult<PathBuf> {
         return Err(AppError::Msg(format!("FILENAME_EXISTS: {filename}")));
     }
     move_one(src, &dest_primary)?;
-    if src_sidecar.exists() {
-        let dest_sidecar = dest_dir.join(src_sidecar.file_name().unwrap());
+    // Sidecar/thumb are best-effort companions; skip silently if unnamed.
+    if let (true, Some(name)) = (src_sidecar.exists(), src_sidecar.file_name()) {
+        let dest_sidecar = dest_dir.join(name);
         if let Err(e) = move_one(&src_sidecar, &dest_sidecar) {
             eprintln!("sidecar move failed: {e}");
         }
     }
-    if src_thumb.exists() {
-        let dest_thumb = dest_dir.join(src_thumb.file_name().unwrap());
+    if let (true, Some(name)) = (src_thumb.exists(), src_thumb.file_name()) {
+        let dest_thumb = dest_dir.join(name);
         if let Err(e) = move_one(&src_thumb, &dest_thumb) {
             eprintln!("thumb move failed: {e}");
         }
@@ -1482,22 +1495,12 @@ fn shot_latest_media(shot_path: &Path) -> Option<(PathBuf, bool)> {
             if name.ends_with(".thumb.png") {
                 return false;
             }
-            let ext = p
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|s| s.to_ascii_lowercase())
-                .unwrap_or_default();
-            IMAGE_EXTS.iter().any(|e| *e == ext) || VIDEO_EXTS.iter().any(|e| *e == ext)
+            is_media_ext(p)
         })
         .collect();
     media.sort();
     let last = media.into_iter().last()?;
-    let ext = last
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
-    let is_video = VIDEO_EXTS.iter().any(|e| *e == ext);
+    let is_video = is_video_ext(&last);
     Some((last, is_video))
 }
 
