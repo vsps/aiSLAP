@@ -70,34 +70,22 @@ export function ModelPicker() {
           </button>
         ))}
       </div>
-      <div className="flex flex-wrap gap-1 text-xs font-mono">
-        {imageFamilies.length > 0 && videoFamilies.length > 0 && (
-          <span className="text-[10px] text-dim w-full -mb-[2px]">Image</span>
+      <select
+        className="bg-bg text-text px-1 py-[2px] w-full"
+        value={selectedFamily ?? ""}
+        onChange={(e) => setManualFamily(e.currentTarget.value || null)}
+      >
+        {imageFamilies.length > 0 && (
+          <optgroup label="Image">
+            {imageFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+          </optgroup>
         )}
-        {imageFamilies.map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setManualFamily(f)}
-            className={selectedFamily === f ? "px-2 py-[1px] bg-accent text-bg" : "px-2 py-[1px] bg-bg text-text hover:opacity-80"}
-          >
-            {f}
-          </button>
-        ))}
-        {imageFamilies.length > 0 && videoFamilies.length > 0 && (
-          <span className="text-[10px] text-dim w-full -mb-[2px]">Video</span>
+        {videoFamilies.length > 0 && (
+          <optgroup label="Video">
+            {videoFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+          </optgroup>
         )}
-        {videoFamilies.map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setManualFamily(f)}
-            className={selectedFamily === f ? "px-2 py-[1px] bg-accent text-bg" : "px-2 py-[1px] bg-bg text-text hover:opacity-80"}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
+      </select>
       <div className="flex flex-wrap gap-1">
         {familyModels.map((e) => (
           <button
