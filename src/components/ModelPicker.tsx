@@ -68,22 +68,25 @@ export function ModelPicker() {
           <option key={f} value={f}>{f}</option>
         ))}
       </select>
-      <select
-        className="bg-bg text-text px-1 py-[2px] w-full"
-        value={currentModel?.id ?? ""}
-        onChange={(e) => {
-          const id = e.currentTarget.value;
-          const node = entries.find((x) => x.node.id === id)?.node ?? null;
-          selectModel(node);
-        }}
-      >
-        <option value="">{loaded ? "— choose model —" : "Loading…"}</option>
+      <div className="flex flex-wrap gap-1">
         {familyModels.map((e) => (
-          <option key={e.node.id} value={e.node.id}>
+          <button
+            key={e.node.id}
+            type="button"
+            onClick={() => selectModel(e.node)}
+            className={
+              currentModel?.id === e.node.id
+                ? "px-2 py-[1px] text-xs font-mono bg-accent text-bg"
+                : "px-2 py-[1px] text-xs font-mono bg-bg text-text hover:opacity-80"
+            }
+          >
             {e.node.name}
-          </option>
+          </button>
         ))}
-      </select>
+        {familyModels.length === 0 && loaded && (
+          <span className="text-xs text-dim">—</span>
+        )}
+      </div>
     </div>
   );
 }
