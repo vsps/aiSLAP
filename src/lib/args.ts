@@ -1,9 +1,45 @@
 import type { KlingElement, ModelNode, RefRoleSpec, UploadedRef } from "./types";
+import { classifyMedia, type MediaKind } from "./media";
+
+export type PromptParts = {
+  sequenceScript: string;
+  sequencePrompt: string;
+  shotScript: string;
+  shotPrompts: string[];
+  includes: {
+    sequenceScript: boolean;
+    sequencePrompt: boolean;
+    shotScript: boolean;
+    shotPrompts: boolean[];
+  };
+};
+
+export function combinePromptParts(parts: PromptParts): string {
+  const pieces: string[] = [];
+  if (parts.includes.sequenceScript && parts.sequenceScript) pieces.push(parts.sequenceScript);
+  if (parts.includes.sequencePrompt) pieces.push(parts.sequencePrompt);
+  if (parts.includes.shotScript && parts.shotScript) pieces.push(parts.shotScript);
+  parts.shotPrompts.forEach((p, i) => {
+    if (parts.includes.shotPrompts[i] !== false) pieces.push(p);
+  });
+  return pieces.map((s) => s.trim()).filter((s) => s.length > 0).join("\n\n");
+}
+
+/** Split LLM output into multiple prompts on a `---` delimiter line.
+ *  Splits on a line containing only the delimiter, trims each section, and
+ *  drops empties. Returns the trimmed whole as a single element when no
+ *  delimiter is present. */
+export function splitPromptsByDelimiter(text: string, delim = "---"): string[] {
+  const re = new RegExp(`^\\s*${delim}\\s*$`, "m");
+  return text
+    .split(re)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
 
 export function buildArgs(
   node: ModelNode,
-  sequencePrompt: string,
-  shotPrompt: string,
+  combinedPrompt: string,
   settings: Record<string, unknown>,
   uploaded: UploadedRef[],
 ): Record<string, unknown> {
@@ -18,11 +54,7 @@ export function buildArgs(
     args[k] = v;
   }
 
-  const combined = [sequencePrompt, shotPrompt]
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
-  if (combined.length > 0) args["prompt"] = combined;
+  if (combinedPrompt.length > 0) args["prompt"] = combinedPrompt;
 
   if (node.ref_roles && node.ref_roles.length > 0) {
     const bucket: Record<string, UploadedRef[]> = {};
@@ -45,17 +77,39 @@ export function buildArgs(
     // Auto-element fallback: if the model supports "element" AND the user
     // assigned no roles to anything, promote each unassigned ref to its own
     // element group. Lets Kling 3 ref2vid accept "just these images" without
-    // forcing a role click for every thumb.
-    const hasElementRole = node.ref_roles.some((r) => r.role === "element");
+    // forcing a role click for every thumb. Crucially, only sweep refs whose
+    // media kind matches what the element role expects — otherwise on models
+    // that ALSO have a "source" video slot (Kling 3 vid2vid ref) the user's
+    // video would get pulled into elements and `video_url` would be left
+    // empty, causing fal to error out with "field required".
+    const elementRole = node.ref_roles.find((r) => r.role === "element");
+    const elementInput = elementRole
+      ? node.inputs.find((i) => i.api_field === elementRole.api_field)
+      : null;
+    const elementKind: MediaKind =
+      elementInput?.data_type === "VIDEO"
+        ? "video"
+        : elementInput?.data_type === "AUDIO"
+          ? "audio"
+          : "image";
     if (
-      hasElementRole &&
+      elementRole &&
       Object.keys(bucket).length === 0 &&
       unassigned.length > 0
     ) {
-      unassigned.forEach((u, i) => {
+      const sweep: UploadedRef[] = [];
+      const keep: UploadedRef[] = [];
+      for (const u of unassigned) {
+        if (classifyMedia(u.ref.path) === elementKind) sweep.push(u);
+        else keep.push(u);
+      }
+      sweep.forEach((u, i) => {
         bucket[`element:${i + 1}`] = [u];
       });
+      // Mutate `unassigned` in place so the later selectForRole call sees
+      // the filtered list (it's still the same array reference).
       unassigned.length = 0;
+      unassigned.push(...keep);
     }
 
     let sourceConsumed = false;
@@ -78,7 +132,7 @@ export function buildArgs(
       args[role.api_field] = isScalar ? urls[0] : urls;
     }
   } else if (uploaded.length > 0) {
-    args["image_urls"] = uploaded.map((u) => u.url);
+    routeRefsByMediaType(node, uploaded, args);
   }
 
   for (const input of node.inputs) {
@@ -89,6 +143,49 @@ export function buildArgs(
   }
 
   return args;
+}
+
+const DATA_TYPE_TO_KIND: Record<string, MediaKind> = {
+  IMAGE: "image",
+  VIDEO: "video",
+  AUDIO: "audio",
+};
+
+// Route uploaded refs to the model's media-typed array inputs by classifying
+// each ref's file extension. Backwards-compatible: if the only matching input
+// is IMAGE (e.g. Happy Horse), every ref lands in image_urls as before.
+function routeRefsByMediaType(
+  node: ModelNode,
+  uploaded: UploadedRef[],
+  args: Record<string, unknown>,
+): void {
+  const slots = new Map<MediaKind, { api_field: string; max?: number }>();
+  for (const input of node.inputs) {
+    if (input.api_format !== "array") continue;
+    const kind = DATA_TYPE_TO_KIND[input.data_type];
+    if (!kind) continue;
+    if (!slots.has(kind)) slots.set(kind, { api_field: input.api_field, max: input.max });
+  }
+  if (slots.size === 0) return;
+
+  // Single-IMAGE-only nodes: accept everything into image_urls (legacy).
+  const onlyImage = slots.size === 1 && slots.has("image");
+  const buckets: Record<MediaKind, string[]> = { image: [], video: [], audio: [] };
+
+  for (const u of uploaded) {
+    const kind = onlyImage ? "image" : classifyMedia(u.ref.path);
+    if (!kind || !slots.has(kind)) {
+      console.warn(`[args] ref ${u.ref.path} has no matching input on ${node.id}; dropped`);
+      continue;
+    }
+    buckets[kind].push(u.url);
+  }
+
+  for (const [kind, slot] of slots) {
+    const list = buckets[kind];
+    if (list.length === 0) continue;
+    args[slot.api_field] = slot.max ? list.slice(0, slot.max) : list;
+  }
 }
 
 function selectForRole(

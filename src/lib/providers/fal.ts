@@ -3,19 +3,27 @@ import type { QueueStatus } from "@fal-ai/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
+import type { Config, FalLifecycle } from "../types";
 import {
   isVideoUrl,
   type Provider,
   type ProviderFile,
   type ProviderOutput,
   type ProviderProgress,
+  type ProviderRunHooks,
 } from "./provider";
 
 export class FalProvider implements Provider {
+  private lifecycle: FalLifecycle | undefined;
+
   async prepare(): Promise<void> {
-    const key = await cmd.provider_key_get("fal").catch(() => "");
+    const [key, cfg] = await Promise.all([
+      cmd.provider_key_get("fal").catch(() => ""),
+      cmd.config_load().catch(() => null),
+    ]);
     if (!key) throw new Error("FAL_KEY not configured — open Settings.");
     fal.config({ credentials: key, fetch: tauriFetch as unknown as typeof fetch });
+    this.lifecycle = (cfg as Config | null)?.falLifecycle;
   }
 
   async uploadFile(file: File, _signal: AbortSignal): Promise<string> {
@@ -27,11 +35,19 @@ export class FalProvider implements Provider {
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,
+    hooks?: ProviderRunHooks,
   ): Promise<ProviderOutput> {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
 
-    const enqueued = await fal.queue.submit(endpoint, { input, abortSignal: signal });
+    const enqueued = await fal.queue.submit(endpoint, {
+      input,
+      abortSignal: signal,
+      ...(this.lifecycle ? { storageSettings: { expiresIn: this.lifecycle } } : {}),
+    });
     const requestId = enqueued.request_id;
+    // Fire the hook before we start waiting — gives the caller a chance to
+    // persist a recovery record while the request is in fal's queue.
+    if (hooks?.onSubmitted) await hooks.onSubmitted(requestId);
 
     emitProgress(enqueued, onProgress);
 
@@ -49,11 +65,32 @@ export class FalProvider implements Provider {
         abortSignal: signal,
       });
       const res = await fal.queue.result(endpoint, { requestId, abortSignal: signal });
-      return unwrap(res.data);
+      return unwrapFalOutput(res.data);
     } finally {
       signal.removeEventListener("abort", onAbort);
     }
   }
+}
+
+/** One-shot status check — used by the orphan-recovery driver. */
+export async function falQueueStatus(
+  endpoint: string,
+  requestId: string,
+): Promise<"IN_QUEUE" | "IN_PROGRESS" | "COMPLETED" | "UNKNOWN"> {
+  const s = await fal.queue.status(endpoint, { requestId });
+  if (s.status === "IN_QUEUE") return "IN_QUEUE";
+  if (s.status === "IN_PROGRESS") return "IN_PROGRESS";
+  if (s.status === "COMPLETED") return "COMPLETED";
+  return "UNKNOWN";
+}
+
+/** Fetch a completed request's result. */
+export async function falQueueResult(
+  endpoint: string,
+  requestId: string,
+): Promise<ProviderOutput> {
+  const res = await fal.queue.result(endpoint, { requestId });
+  return unwrapFalOutput(res.data);
 }
 
 function emitProgress(u: QueueStatus, onProgress: (e: ProviderProgress) => void): void {
@@ -66,7 +103,7 @@ function emitProgress(u: QueueStatus, onProgress: (e: ProviderProgress) => void)
   }
 }
 
-function unwrap(result: unknown): ProviderOutput {
+export function unwrapFalOutput(result: unknown): ProviderOutput {
   const r = (result ?? {}) as Record<string, unknown>;
   const files: ProviderFile[] = [];
 

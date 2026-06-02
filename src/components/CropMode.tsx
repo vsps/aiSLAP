@@ -116,6 +116,9 @@ export function CropMode({ image, onSave, onCancel }: Props) {
   const [naturalSize, setNaturalSize] = useState<[number, number]>([0, 0]);
   const [crop, setCrop] = useState<Rect>({ x: 0, y: 0, w: 0, h: 0 });
   const [saving, setSaving] = useState(false);
+  const [rotation, setRotation] = useState<0 | 270>(0);
+  const [flipH, setFlipH] = useState(false);
+  const [flipV, setFlipV] = useState(false);
   const dragRef = useRef<{ handle: Handle; startX: number; startY: number; startCrop: Rect; imgW: number; imgH: number } | null>(null);
   const session = useSessionStore();
 
@@ -177,10 +180,19 @@ export function CropMode({ image, onSave, onCancel }: Props) {
       cleanImg.src = blobUrl;
       await new Promise<void>((res, rej) => { cleanImg.onload = () => res(); cleanImg.onerror = () => rej(new Error("load failed")); });
 
+      const outW = rotation === 270 ? sh : sw;
+      const outH = rotation === 270 ? sw : sh;
       const offscreen = document.createElement("canvas");
-      offscreen.width = sw;
-      offscreen.height = sh;
-      offscreen.getContext("2d")!.drawImage(cleanImg, sx, sy, sw, sh, 0, 0, sw, sh);
+      offscreen.width = outW;
+      offscreen.height = outH;
+      const ctx = offscreen.getContext("2d")!;
+      ctx.save();
+      ctx.translate(outW / 2, outH / 2);
+      if (rotation) ctx.rotate((rotation * Math.PI) / 180);
+      if (flipH) ctx.scale(-1, 1);
+      if (flipV) ctx.scale(1, -1);
+      ctx.drawImage(cleanImg, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
+      ctx.restore();
       URL.revokeObjectURL(blobUrl);
 
       const base64 = offscreen.toDataURL("image/png").split(",")[1];
@@ -209,7 +221,7 @@ export function CropMode({ image, onSave, onCancel }: Props) {
           alt=""
           draggable={false}
           className="max-h-full max-w-full object-contain select-none"
-          style={{ userSelect: "none" }}
+          style={{ userSelect: "none", transform: `rotate(${rotation}deg) scaleX(${flipH ? -1 : 1}) scaleY(${flipV ? -1 : 1})` }}
           onLoad={() => {
             const img = imgRef.current!;
             setNaturalSize([img.naturalWidth, img.naturalHeight]);
@@ -266,6 +278,28 @@ export function CropMode({ image, onSave, onCancel }: Props) {
           </span>
         )}
         <span className="text-xs text-dim">hold Shift for free aspect</span>
+        <div className="w-px h-4 bg-dim/40 mx-1" />
+        <button
+          title="Rotate 90° CCW"
+          onClick={() => setRotation((r) => (r === 270 ? 0 : 270))}
+          className={`text-xs px-2 py-0.5 border ${rotation ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
+        >
+          ↺ 90°
+        </button>
+        <button
+          title="Flip horizontal"
+          onClick={() => setFlipH((v) => !v)}
+          className={`text-xs px-2 py-0.5 border ${flipH ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
+        >
+          ↔
+        </button>
+        <button
+          title="Flip vertical"
+          onClick={() => setFlipV((v) => !v)}
+          className={`text-xs px-2 py-0.5 border ${flipV ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
+        >
+          ↕
+        </button>
         <div className="flex-1" />
         <button
           onClick={() => void save()}

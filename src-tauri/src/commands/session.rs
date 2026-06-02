@@ -5,13 +5,15 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::domain::{
-    GalleryColumn, GalleryImage, ProjectSidecar, PromptEntry, SequenceSidecar, ShotSidecar,
+    GalleryColumn, GalleryImage, ProjectSidecar, PromptEntry, SequenceSidecar, SequenceTimeline,
+    ShotLatestMedia, ShotSidecar,
 };
 use crate::error::{AppError, AppResult};
 
 const PROJECT_SIDECAR: &str = "project.json";
 const SEQUENCE_SIDECAR: &str = "sequence.json";
 const SHOT_SIDECAR: &str = "shot.json";
+const TIMELINE_SIDECAR: &str = "timeline.json";
 const SRC_DIR: &str = "SRC";
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
@@ -23,8 +25,76 @@ fn as_str(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
+/// Case-insensitive extension match against a static set, without allocating.
+fn ext_matches(p: &Path, set: &[&str]) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| set.iter().any(|x| x.eq_ignore_ascii_case(e)))
+}
+
+fn is_image_ext(p: &Path) -> bool {
+    ext_matches(p, IMAGE_EXTS)
+}
+fn is_video_ext(p: &Path) -> bool {
+    ext_matches(p, VIDEO_EXTS)
+}
+fn is_media_ext(p: &Path) -> bool {
+    is_image_ext(p) || is_video_ext(p)
+}
+
+/// Sidecar (`<stem>.json`) sitting next to a media file.
+fn sidecar_path(media: &Path) -> PathBuf {
+    media.with_extension("json")
+}
+/// Video thumbnail (`<stem>.thumb.png`) sitting next to a media file.
+fn thumb_path(media: &Path) -> PathBuf {
+    let stem = media.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    media.with_file_name(format!("{stem}.thumb.png"))
+}
+
+/// A version-folder name is `<letter-prefix><3 ASCII digits>`, where the
+/// prefix is at least one letter and may also contain `_` or `-`. Old `v###`
+/// folders still match; the project's configured prefix decides what newly
+/// minted folders are named (see `version_prefix_for`).
 fn is_version_name(name: &str) -> bool {
-    name.len() == 4 && name.starts_with('v') && name[1..].chars().all(|c| c.is_ascii_digit())
+    if name.len() < 4 {
+        return false;
+    }
+    let (prefix, digits) = name.split_at(name.len() - 3);
+    if prefix.is_empty() {
+        return false;
+    }
+    let mut chars = prefix.chars();
+    let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
+    first_ok
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-')
+        && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Extract the 3-digit numeric suffix of a version-folder name.
+fn version_number(name: &str) -> Option<u32> {
+    if !is_version_name(name) {
+        return None;
+    }
+    name[name.len() - 3..].parse::<u32>().ok()
+}
+
+/// Read the project's configured version-folder prefix, falling back to "gen"
+/// for projects that don't have the field set yet.
+fn version_prefix_for(path: &Path) -> String {
+    let root = match project_root_for(path) {
+        Ok(r) => r,
+        Err(_) => return "gen".into(),
+    };
+    let sidecar: ProjectSidecar =
+        read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    if sidecar.version_prefix.is_empty() {
+        "gen".into()
+    } else {
+        sidecar.version_prefix
+    }
 }
 
 fn read_sidecar<T: serde::de::DeserializeOwned + Default>(path: &Path) -> AppResult<T> {
@@ -94,6 +164,37 @@ fn save_visible_set(project_root: &Path, visible: &HashSet<String>) -> AppResult
     v.sort();
     sidecar.visible = v;
     write_sidecar_atomic(&path, &sidecar)
+}
+
+/// Rewrite the prefix of every entry in the project's visible set. Entries
+/// whose value equals `old_rel` (exact) or starts with `old_rel + "/"` are
+/// rewritten to use `new_rel`. Best-effort: no-op if there's no project root.
+fn visible_set_rename_prefix(project_root: &Path, old_rel: &str, new_rel: &str) -> AppResult<()> {
+    let old_clean = old_rel.trim_end_matches('/').to_string();
+    let new_clean = new_rel.trim_end_matches('/').to_string();
+    if old_clean == new_clean {
+        return Ok(());
+    }
+    let mut set = load_visible_set(project_root)?;
+    let prefix = format!("{}/", old_clean);
+    let mut changed = false;
+    let entries: Vec<String> = set.iter().cloned().collect();
+    for entry in entries {
+        if entry == old_clean {
+            set.remove(&entry);
+            set.insert(new_clean.clone());
+            changed = true;
+        } else if entry.starts_with(&prefix) {
+            set.remove(&entry);
+            let suffix = &entry[prefix.len()..];
+            set.insert(format!("{}/{}", new_clean, suffix));
+            changed = true;
+        }
+    }
+    if changed {
+        save_visible_set(project_root, &set)?;
+    }
+    Ok(())
 }
 
 /// Remove an image (or all images under a directory) from the project's visible
@@ -172,6 +273,7 @@ pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
                 title,
                 created: Utc::now().to_rfc3339(),
                 visible: vec![],
+                version_prefix: "gen".into(),
             },
         )?;
     }
@@ -252,7 +354,8 @@ pub fn shot_rescan(shot_path: String) -> AppResult<Vec<GalleryColumn>> {
 pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
     let target = PathBuf::from(&sequence_path).join(sanitize(&name));
     ensure_dir(&target)?;
-    ensure_dir(&target.join("v001"))?;
+    let prefix = version_prefix_for(&target);
+    ensure_dir(&target.join(format!("{}001", prefix)))?;
     let sidecar_path = target.join(SHOT_SIDECAR);
     if !sidecar_path.exists() {
         write_sidecar_atomic(
@@ -260,10 +363,187 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
             &ShotSidecar {
                 name,
                 prompt_history: vec![],
+                clip_media_path: None,
+                version_selects: Default::default(),
+                version_comments: Default::default(),
             },
         )?;
     }
     Ok(as_str(&target))
+}
+
+/// Recursively walk every `*.json` file under `dir`, invoking `cb` with each path.
+/// Errors from a single file are surfaced (no swallowing) — callers can choose
+/// to wrap with `.ok()` if best-effort semantics are wanted.
+fn walk_json_files(dir: &Path, cb: &mut dyn FnMut(&Path) -> AppResult<()>) -> AppResult<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.is_dir() {
+            walk_json_files(&p, cb)?;
+        } else if p.extension().and_then(|s| s.to_str()) == Some("json") {
+            cb(&p)?;
+        }
+    }
+    Ok(())
+}
+
+/// Recursively rewrite any string value in `v` whose contents start with
+/// `old_prefix + "/"` (or equal `old_prefix` exactly) to use `new_prefix`.
+/// Returns true if anything changed.
+fn rewrite_paths_in_value(
+    v: &mut serde_json::Value,
+    old_prefix: &str,
+    new_prefix: &str,
+) -> bool {
+    let mut changed = false;
+    match v {
+        serde_json::Value::String(s) => {
+            if s == old_prefix {
+                *s = new_prefix.to_string();
+                changed = true;
+            } else if s.starts_with(old_prefix)
+                && s.as_bytes().get(old_prefix.len()) == Some(&b'/')
+            {
+                *s = format!("{}{}", new_prefix, &s[old_prefix.len()..]);
+                changed = true;
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                if rewrite_paths_in_value(item, old_prefix, new_prefix) {
+                    changed = true;
+                }
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (_, val) in map.iter_mut() {
+                if rewrite_paths_in_value(val, old_prefix, new_prefix) {
+                    changed = true;
+                }
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+/// Walk every `*.json` under `root` and prefix-rewrite any absolute-path strings.
+/// Files that don't parse as JSON are skipped. Files that don't change are not
+/// rewritten. `old_prefix` / `new_prefix` should be forward-slash absolute paths
+/// without trailing slashes (the standard format `as_str` produces).
+fn rewrite_path_strings_in_subtree(
+    root: &Path,
+    old_prefix: &str,
+    new_prefix: &str,
+) -> AppResult<()> {
+    walk_json_files(root, &mut |path| {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(_) => return Ok(()),
+        };
+        let mut value: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
+        if rewrite_paths_in_value(&mut value, old_prefix, new_prefix) {
+            let bytes = serde_json::to_vec_pretty(&value)?;
+            let tmp = path.with_extension("json.tmp");
+            std::fs::write(&tmp, bytes)?;
+            std::fs::rename(&tmp, path)?;
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn sequence_rename(sequence_path: String, new_name: String) -> AppResult<String> {
+    rename_subtree(&sequence_path, &new_name, /* is_sequence */ true)
+}
+
+#[tauri::command]
+pub fn shot_rename(shot_path: String, new_name: String) -> AppResult<String> {
+    rename_subtree(&shot_path, &new_name, /* is_sequence */ false)
+}
+
+/// Rename a sequence or shot folder and keep every reference to it valid.
+/// Phases: (1) rename the folder on disk; (2) rewrite the absolute path stored
+/// inside each JSON sidecar in the subtree so they point at the new location;
+/// (3) remap the project's visible-set entries from the old prefix to the new.
+fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResult<String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Msg("New name cannot be empty.".into()));
+    }
+    let sanitized = sanitize(trimmed);
+    if sanitized.is_empty() {
+        return Err(AppError::Msg("New name has no usable characters.".into()));
+    }
+    let old = PathBuf::from(old_path);
+    if !old.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {old_path}")));
+    }
+    let current_base = old
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    if sanitized == current_base {
+        // No-op rename — return the existing path so callers can navigate uniformly.
+        return Ok(as_str(&old));
+    }
+    let parent = old
+        .parent()
+        .ok_or_else(|| AppError::Msg(format!("no parent for {old_path}")))?;
+    let new_path = parent.join(&sanitized);
+    if new_path.exists() {
+        return Err(AppError::Msg(format!(
+            "A folder named '{sanitized}' already exists."
+        )));
+    }
+
+    let old_prefix = as_str(&old);
+    let new_prefix = as_str(&new_path);
+
+    // The Rust-side rename. Atomic on the same filesystem.
+    std::fs::rename(&old, &new_path)?;
+
+    // 1) Update the renamed folder's own sidecar `name` field. Best-effort —
+    //    if the sidecar is missing or unreadable we still want the rename to
+    //    succeed; the user can fix it later.
+    if is_sequence {
+        let sidecar_path = new_path.join(SEQUENCE_SIDECAR);
+        if let Ok(mut sidecar) = read_sidecar::<SequenceSidecar>(&sidecar_path) {
+            sidecar.name = trimmed.to_string();
+            let _ = write_sidecar_atomic(&sidecar_path, &sidecar);
+        }
+    } else {
+        let sidecar_path = new_path.join(SHOT_SIDECAR);
+        if let Ok(mut sidecar) = read_sidecar::<ShotSidecar>(&sidecar_path) {
+            sidecar.name = trimmed.to_string();
+            let _ = write_sidecar_atomic(&sidecar_path, &sidecar);
+        }
+    }
+
+    // 2) Cascade-rewrite every absolute path inside JSON sidecars under the
+    //    renamed subtree (shot.json clip_media_path, timeline.json clip
+    //    shotPaths, image metadata sidecars).
+    rewrite_path_strings_in_subtree(&new_path, &old_prefix, &new_prefix)?;
+
+    // 3) Rewrite the project.json visible[] prefix entries.
+    if let Ok(project_root) = project_root_for(&new_path) {
+        if let (Some(old_rel), Some(new_rel)) = (
+            old.strip_prefix(&project_root).ok().map(as_str),
+            new_path.strip_prefix(&project_root).ok().map(as_str),
+        ) {
+            let _ = visible_set_rename_prefix(&project_root, &old_rel, &new_rel);
+        }
+    }
+
+    Ok(new_prefix)
 }
 
 fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
@@ -285,6 +565,7 @@ fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
                 version: "GLOBAL SRC".to_string(),
                 is_src: true,
                 images,
+                src_images: Vec::new(),
                 timestamp: None,
                 model_name: None,
             });
@@ -306,11 +587,18 @@ fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
             continue;
         }
         let images = scan_directory_images(&p, project_root.as_deref(), &visible)?;
+        let src_sub = p.join("SRC");
+        let src_images = if src_sub.is_dir() {
+            scan_directory_images(&src_sub, project_root.as_deref(), &visible)?
+        } else {
+            Vec::new()
+        };
         cols.push(GalleryColumn {
             id: name.clone(),
             version: name,
             is_src: false,
             images,
+            src_images,
             timestamp: None,
             model_name: None,
         });
@@ -344,24 +632,14 @@ fn scan_directory_images(
         if filename.ends_with(".thumb.png") {
             continue;
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|s| s.to_ascii_lowercase())
-            .unwrap_or_default();
-        let is_image = IMAGE_EXTS.iter().any(|e| *e == ext);
-        let is_video = VIDEO_EXTS.iter().any(|e| *e == ext);
+        let is_image = is_image_ext(&path);
+        let is_video = is_video_ext(&path);
         if !is_image && !is_video {
             continue;
         }
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let meta_path = path.with_file_name(format!("{stem}.json"));
+        let meta_path = sidecar_path(&path);
         let thumb_path = if is_video {
-            let t = path.with_file_name(format!("{stem}.thumb.png"));
+            let t = thumb_path(&path);
             if t.exists() {
                 Some(as_str(&t))
             } else {
@@ -393,19 +671,270 @@ pub fn version_create_next(shot_path: String) -> AppResult<String> {
     if let Ok(it) = std::fs::read_dir(&root) {
         for e in it.flatten() {
             if let Some(name) = e.file_name().to_str() {
-                if is_version_name(name) {
-                    if let Ok(n) = name[1..].parse::<u32>() {
-                        if n > max_n {
-                            max_n = n;
-                        }
+                if let Some(n) = version_number(name) {
+                    if n > max_n {
+                        max_n = n;
                     }
                 }
             }
         }
     }
-    let next = format!("v{:03}", max_n + 1);
+    let next = format!("{}{:03}", version_prefix_for(&root), max_n + 1);
     ensure_dir(&root.join(&next))?;
     Ok(next)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionStack {
+    pub version: String,
+    pub images: Vec<GalleryImage>,
+    pub selected_filename: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShotStack {
+    pub shot_path: String,
+    pub shot_name: String,
+    pub versions: Vec<VersionStack>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub clip_media_path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SequenceStacks {
+    pub global_src_images: Vec<GalleryImage>,
+    pub shots: Vec<ShotStack>,
+}
+
+#[tauri::command]
+pub fn sequence_stacks_scan(sequence_path: String) -> AppResult<SequenceStacks> {
+    let seq_root = PathBuf::from(&sequence_path);
+    if !seq_root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {sequence_path}")));
+    }
+
+    let project_root = project_root_for(&seq_root).ok();
+    let visible = project_root
+        .as_ref()
+        .map(|r| load_visible_set(r))
+        .transpose()?
+        .unwrap_or_default();
+
+    // Project-level GLOBAL SRC.
+    let global_src_images = match project_root.as_ref() {
+        Some(root) => {
+            let global_src = root.join(SRC_DIR);
+            if global_src.is_dir() {
+                scan_directory_images(&global_src, project_root.as_deref(), &visible)?
+            } else {
+                vec![]
+            }
+        }
+        None => vec![],
+    };
+
+    // Walk shots in this sequence.
+    let mut shots: Vec<ShotStack> = Vec::new();
+    let shot_dirs = list_dirs(&seq_root)?;
+    for shot_dir in shot_dirs {
+        let shot_name = match shot_dir.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if shot_name == SRC_DIR {
+            continue;
+        }
+
+        let sidecar: ShotSidecar = read_sidecar(&shot_dir.join(SHOT_SIDECAR))?;
+
+        let mut versions: Vec<VersionStack> = Vec::new();
+        for v_dir in list_dirs(&shot_dir)? {
+            let vname = match v_dir.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if vname == SRC_DIR {
+                continue;
+            }
+            let images = scan_directory_images(&v_dir, project_root.as_deref(), &visible)?;
+            // Resolve the select:
+            //   pinned + file still exists → use it
+            //   else → last image in the sorted array (the "latest")
+            let pinned = sidecar.version_selects.get(&vname).cloned();
+            let resolved = pinned
+                .filter(|p| images.iter().any(|i| &i.filename == p))
+                .or_else(|| images.last().map(|i| i.filename.clone()))
+                .unwrap_or_default();
+            versions.push(VersionStack {
+                version: vname,
+                images,
+                selected_filename: resolved,
+            });
+        }
+        versions.sort_by(|a, b| a.version.cmp(&b.version));
+
+        shots.push(ShotStack {
+            shot_path: as_str(&shot_dir),
+            shot_name,
+            versions,
+            clip_media_path: sidecar.clip_media_path.clone(),
+        });
+    }
+    shots.sort_by(|a, b| a.shot_name.cmp(&b.shot_name));
+
+    Ok(SequenceStacks {
+        global_src_images,
+        shots,
+    })
+}
+
+#[tauri::command]
+pub fn shot_version_select_set(
+    shot_path: String,
+    version: String,
+    filename: Option<String>,
+) -> AppResult<ShotSidecar> {
+    let root = PathBuf::from(&shot_path);
+    let sidecar_path = root.join(SHOT_SIDECAR);
+    let mut sidecar: ShotSidecar = read_sidecar(&sidecar_path)?;
+    match filename {
+        Some(f) if !f.is_empty() => {
+            sidecar.version_selects.insert(version, f);
+        }
+        _ => {
+            sidecar.version_selects.remove(&version);
+        }
+    }
+    write_sidecar_atomic(&sidecar_path, &sidecar)?;
+    Ok(sidecar)
+}
+
+/// Move every image file (plus its sidecar/thumb) from `src_shot/src_version/`
+/// into `dst_shot/dst_version/`. When `dst_version` is None or empty, the
+/// next version on `dst_shot` is allocated.
+/// Returns the destination version's absolute path.
+#[tauri::command]
+pub fn version_stack_move(
+    src_shot: String,
+    src_version: String,
+    dst_shot: String,
+    dst_version: Option<String>,
+) -> AppResult<String> {
+    let src_dir = PathBuf::from(&src_shot).join(&src_version);
+    if !src_dir.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {}", as_str(&src_dir))));
+    }
+
+    let dst_root = PathBuf::from(&dst_shot);
+    let dst_version_name = match dst_version {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            let mut max_n = 0u32;
+            if let Ok(it) = std::fs::read_dir(&dst_root) {
+                for e in it.flatten() {
+                    if let Some(name) = e.file_name().to_str() {
+                        if let Some(n) = version_number(name) {
+                            if n > max_n {
+                                max_n = n;
+                            }
+                        }
+                    }
+                }
+            }
+            format!("{}{:03}", version_prefix_for(&dst_root), max_n + 1)
+        }
+    };
+    let dst_dir = dst_root.join(&dst_version_name);
+    ensure_dir(&dst_dir)?;
+
+    let same = match (src_dir.canonicalize(), dst_dir.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if same {
+        return Ok(as_str(&dst_dir));
+    }
+
+    // Collect the media files (skip thumbs/json — they move as siblings).
+    let mut moves: Vec<PathBuf> = Vec::new();
+    for e in std::fs::read_dir(&src_dir)? {
+        let entry = e?;
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let filename = match p.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if filename.ends_with(".thumb.png") {
+            continue;
+        }
+        if !is_media_ext(&p) {
+            continue;
+        }
+        moves.push(p);
+    }
+
+    // Capture rel paths before the source files disappear, so we can update the
+    // visible set after the moves succeed.
+    let project_root = project_root_for(&dst_dir).ok();
+    let mut rel_pairs: Vec<(String, String)> = Vec::new();
+    if let Some(root) = project_root.as_ref() {
+        for src in &moves {
+            let filename = match src.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            let src_rel = src
+                .strip_prefix(root)
+                .ok()
+                .map(as_str)
+                .or_else(|| relativize(src, root));
+            let dst_abs = dst_dir.join(&filename);
+            let dst_rel = dst_abs
+                .strip_prefix(root)
+                .ok()
+                .map(as_str)
+                .or_else(|| relativize(&dst_abs, root));
+            if let (Some(s), Some(d)) = (src_rel, dst_rel) {
+                rel_pairs.push((s, d));
+            }
+        }
+    }
+
+    for src in &moves {
+        move_triple_to_dir(src, &dst_dir)?;
+    }
+
+    // Update visible set, re-keying any moved files that were marked visible.
+    if let Some(root) = project_root.as_ref() {
+        let mut set = load_visible_set(root)?;
+        let mut changed = false;
+        for (s, d) in &rel_pairs {
+            if set.remove(s) {
+                set.insert(d.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            save_visible_set(root, &set)?;
+        }
+    }
+
+    // Clear the source shot's pinned select for this version.
+    let src_sidecar_path = PathBuf::from(&src_shot).join(SHOT_SIDECAR);
+    if src_sidecar_path.exists() {
+        let mut sidecar: ShotSidecar = read_sidecar(&src_sidecar_path)?;
+        if sidecar.version_selects.remove(&src_version).is_some() {
+            write_sidecar_atomic(&src_sidecar_path, &sidecar)?;
+        }
+    }
+
+    Ok(as_str(&dst_dir))
 }
 
 #[derive(Serialize)]
@@ -429,24 +958,14 @@ fn make_gallery_image(abs_path: &Path) -> Option<GalleryImage> {
     if filename.ends_with(".thumb.png") {
         return None;
     }
-    let ext = abs_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
-    let is_image = IMAGE_EXTS.iter().any(|e| *e == ext);
-    let is_video = VIDEO_EXTS.iter().any(|e| *e == ext);
+    let is_image = is_image_ext(abs_path);
+    let is_video = is_video_ext(abs_path);
     if !is_image && !is_video {
         return None;
     }
-    let stem = abs_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
-    let meta_path = abs_path.with_file_name(format!("{stem}.json"));
+    let meta_path = sidecar_path(abs_path);
     let thumb_path = if is_video {
-        let t = abs_path.with_file_name(format!("{stem}.thumb.png"));
+        let t = thumb_path(abs_path);
         if t.exists() { Some(as_str(&t)) } else { None }
     } else {
         None
@@ -562,12 +1081,10 @@ fn sibling_paths(p: &Path) -> AppResult<(String, String, PathBuf, PathBuf)> {
         .and_then(|s| s.to_str())
         .ok_or_else(|| AppError::Msg("no filename".into()))?
         .to_string();
-    let dir = p
-        .parent()
+    // Bail if there's no parent — keeps the returned sidecar/thumb paths valid.
+    p.parent()
         .ok_or_else(|| AppError::Msg("no parent dir".into()))?;
-    let sidecar = dir.join(format!("{stem}.json"));
-    let thumb = dir.join(format!("{stem}.thumb.png"));
-    Ok((stem, filename, sidecar, thumb))
+    Ok((stem, filename, sidecar_path(p), thumb_path(p)))
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -601,14 +1118,15 @@ fn copy_triple_to_dir(src: &Path, dest_dir: &Path, policy: CollisionPolicy) -> A
             return Err(AppError::Msg(format!("FILENAME_EXISTS: {filename}")));
         }
     std::fs::copy(src, &dest_primary)?;
-    if src_sidecar.exists() {
-        let dest_sidecar = dest_dir.join(src_sidecar.file_name().unwrap());
+    // Sidecar/thumb are best-effort companions; skip silently if unnamed.
+    if let (true, Some(name)) = (src_sidecar.exists(), src_sidecar.file_name()) {
+        let dest_sidecar = dest_dir.join(name);
         if let Err(e) = std::fs::copy(&src_sidecar, &dest_sidecar) {
             eprintln!("sidecar copy failed: {e}");
         }
     }
-    if src_thumb.exists() {
-        let dest_thumb = dest_dir.join(src_thumb.file_name().unwrap());
+    if let (true, Some(name)) = (src_thumb.exists(), src_thumb.file_name()) {
+        let dest_thumb = dest_dir.join(name);
         if let Err(e) = std::fs::copy(&src_thumb, &dest_thumb) {
             eprintln!("thumb copy failed: {e}");
         }
@@ -649,14 +1167,15 @@ fn move_triple_to_dir(src: &Path, dest_dir: &Path) -> AppResult<PathBuf> {
         return Err(AppError::Msg(format!("FILENAME_EXISTS: {filename}")));
     }
     move_one(src, &dest_primary)?;
-    if src_sidecar.exists() {
-        let dest_sidecar = dest_dir.join(src_sidecar.file_name().unwrap());
+    // Sidecar/thumb are best-effort companions; skip silently if unnamed.
+    if let (true, Some(name)) = (src_sidecar.exists(), src_sidecar.file_name()) {
+        let dest_sidecar = dest_dir.join(name);
         if let Err(e) = move_one(&src_sidecar, &dest_sidecar) {
             eprintln!("sidecar move failed: {e}");
         }
     }
-    if src_thumb.exists() {
-        let dest_thumb = dest_dir.join(src_thumb.file_name().unwrap());
+    if let (true, Some(name)) = (src_thumb.exists(), src_thumb.file_name()) {
+        let dest_thumb = dest_dir.join(name);
         if let Err(e) = move_one(&src_thumb, &dest_thumb) {
             eprintln!("thumb move failed: {e}");
         }
@@ -895,6 +1414,43 @@ pub fn shot_prompts_append(shot_path: String, prompts: Vec<String>) -> AppResult
     Ok(sidecar)
 }
 
+const SCRIPT_FILE: &str = "script.md";
+const DEFAULT_SCRIPT: &str = "# Sequence 1\n\n## Shot 1\n\n## Shot 2\n\n## Shot 3\n";
+
+#[tauri::command]
+pub fn script_read(project_path: String) -> AppResult<String> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let p = root.join(SCRIPT_FILE);
+    if !p.exists() {
+        std::fs::write(&p, DEFAULT_SCRIPT)?;
+        return Ok(DEFAULT_SCRIPT.to_string());
+    }
+    Ok(std::fs::read_to_string(&p)?)
+}
+
+#[tauri::command]
+pub fn script_write(project_path: String, content: String) -> AppResult<()> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    std::fs::write(root.join(SCRIPT_FILE), content)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn dir_ensure(path: String) -> AppResult<()> {
+    ensure_dir(&PathBuf::from(path))
+}
+
+#[tauri::command]
+pub fn dirs_exist(paths: Vec<String>) -> Vec<bool> {
+    paths.iter().map(|p| PathBuf::from(p).is_dir()).collect()
+}
+
 fn sanitize(name: &str) -> String {
     name.chars()
         .map(|c| match c {
@@ -903,4 +1459,193 @@ fn sanitize(name: &str) -> String {
             c => c,
         })
         .collect()
+}
+
+// ---------- Timeline (NLE) ----------
+
+/// Pick the "latest media" for a shot: the last image (alphabetic by filename)
+/// in the latest non-SRC version directory. Returns None if the shot has no
+/// generation outputs.
+fn shot_latest_media(shot_path: &Path) -> Option<(PathBuf, bool)> {
+    if !shot_path.is_dir() {
+        return None;
+    }
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(shot_path)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| !n.starts_with('.') && !n.starts_with('$') && n != SRC_DIR)
+                .unwrap_or(false)
+        })
+        .collect();
+    versions.sort();
+    let latest = versions.into_iter().last()?;
+
+    let mut media: Vec<PathBuf> = std::fs::read_dir(&latest)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with(".thumb.png") {
+                return false;
+            }
+            is_media_ext(p)
+        })
+        .collect();
+    media.sort();
+    let last = media.into_iter().last()?;
+    let is_video = is_video_ext(&last);
+    Some((last, is_video))
+}
+
+fn shots_latest_media_scan(seq_path: &Path) -> AppResult<Vec<ShotLatestMedia>> {
+    if !seq_path.is_dir() {
+        return Err(AppError::Msg(format!(
+            "not a directory: {}",
+            as_str(seq_path)
+        )));
+    }
+    let mut out: Vec<ShotLatestMedia> = Vec::new();
+    let mut shot_dirs: Vec<PathBuf> = std::fs::read_dir(seq_path)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| !n.starts_with('.') && !n.starts_with('$') && n != SRC_DIR)
+                .unwrap_or(false)
+        })
+        .collect();
+    shot_dirs.sort();
+
+    for shot in shot_dirs {
+        let sidecar: ShotSidecar = read_sidecar(&shot.join(SHOT_SIDECAR))?;
+        let latest = shot_latest_media(&shot);
+        out.push(ShotLatestMedia {
+            shot_path: as_str(&shot),
+            media_path: latest.as_ref().map(|(p, _)| as_str(p)),
+            is_video: latest.as_ref().map(|(_, v)| *v).unwrap_or(false),
+            clip_media_path: sidecar.clip_media_path,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineInitResult {
+    pub timeline: SequenceTimeline,
+    pub shots_latest_media: Vec<ShotLatestMedia>,
+}
+
+#[tauri::command]
+pub fn timeline_init(seq_path: String) -> AppResult<TimelineInitResult> {
+    let root = PathBuf::from(&seq_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {seq_path}")));
+    }
+    let timeline: SequenceTimeline = read_sidecar(&root.join(TIMELINE_SIDECAR))?;
+    let shots_latest_media = shots_latest_media_scan(&root)?;
+    Ok(TimelineInitResult {
+        timeline,
+        shots_latest_media,
+    })
+}
+
+#[tauri::command]
+pub fn sequence_timeline_save(seq_path: String, timeline: SequenceTimeline) -> AppResult<()> {
+    let root = PathBuf::from(&seq_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {seq_path}")));
+    }
+    write_sidecar_atomic(&root.join(TIMELINE_SIDECAR), &timeline)
+}
+
+/// Read the project's configured version-folder prefix (defaults to "gen"
+/// for projects without the field set).
+#[tauri::command]
+pub fn project_version_prefix_get(project_path: String) -> AppResult<String> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let sidecar: ProjectSidecar =
+        read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    Ok(if sidecar.version_prefix.is_empty() {
+        "gen".into()
+    } else {
+        sidecar.version_prefix
+    })
+}
+
+/// Set the project's version-folder prefix. Accepts ASCII letters plus `_`/`-`
+/// only (must start with a letter). Existing folders are not renamed; only
+/// newly-minted version folders use the new prefix.
+#[tauri::command]
+pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppResult<()> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let trimmed = prefix.trim().to_string();
+    let valid = !trimmed.is_empty()
+        && trimmed
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-');
+    if !valid {
+        return Err(AppError::Msg(
+            "Prefix must start with a letter and contain only letters, `_`, or `-`."
+                .into(),
+        ));
+    }
+    let path = root.join(PROJECT_SIDECAR);
+    let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
+    sidecar.version_prefix = trimmed;
+    write_sidecar_atomic(&path, &sidecar)
+}
+
+#[tauri::command]
+pub fn shot_clip_media_set(shot_path: String, media_path: Option<String>) -> AppResult<()> {
+    let root = PathBuf::from(&shot_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
+    }
+    let path = root.join(SHOT_SIDECAR);
+    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
+    sidecar.clip_media_path = media_path;
+    write_sidecar_atomic(&path, &sidecar)
+}
+
+/// Set or clear the short comment associated with a version folder. Trimmed
+/// empty input removes the entry; the version folder itself is never renamed.
+#[tauri::command]
+pub fn shot_version_comment_set(
+    shot_path: String,
+    version: String,
+    comment: Option<String>,
+) -> AppResult<()> {
+    let root = PathBuf::from(&shot_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
+    }
+    let path = root.join(SHOT_SIDECAR);
+    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
+    let trimmed = comment.unwrap_or_default().trim().to_string();
+    if trimmed.is_empty() {
+        sidecar.version_comments.remove(&version);
+    } else {
+        sidecar.version_comments.insert(version, trimmed);
+    }
+    write_sidecar_atomic(&path, &sidecar)
 }

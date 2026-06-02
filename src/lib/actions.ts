@@ -3,10 +3,12 @@
 import { cmd } from "./tauri";
 import { basename } from "./paths";
 import { confirmAction, showMessage } from "./dialog";
-import { useGenerationStore } from "../stores/generationStore";
+import { makeChainLink, useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { useTimelineStore } from "../stores/timelineStore";
 import type {
+  ChainLink,
   ImageMetadata,
   RefImage,
   RefSnapshot,
@@ -35,6 +37,7 @@ function normalizeRefs(raw: (RefSnapshot | string)[] | undefined): RefImage[] {
 
 /** Apply a sidecar metadata record to the current editor state. */
 export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
+  restoredRefs: number;
   skippedRefs: number;
 }> {
   const models = useModelsStore.getState();
@@ -65,13 +68,57 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
     if (await pathExists(r.path)) valid.push(r);
     else skipped++;
   }
-  useGenerationStore.setState({ refImages: valid });
+  gen.setRefImages(valid);
+  console.debug("[reuse] refs", {
+    total: refs.length,
+    restored: valid.length,
+    skipped,
+  });
 
   if (typeof meta.iterationTotal === "number" && meta.iterationTotal > 0) {
     gen.setIterations(meta.iterationTotal);
   }
 
-  return { skippedRefs: skipped };
+  return { restoredRefs: valid.length, skippedRefs: skipped };
+}
+
+/** Restore a full prompt chain into the work surface from a sidecar's
+ *  chain block. Missing models in the registry are kept as null on the link
+ *  (the preflight will flag them; the user can pick a replacement). */
+export async function restoreChainFromMetadata(
+  meta: ImageMetadata,
+): Promise<{ missingModels: number; skippedRefs: number }> {
+  if (!meta.chain) return { missingModels: 0, skippedRefs: 0 };
+  const models = useModelsStore.getState();
+  let missingModels = 0;
+  let skippedRefs = 0;
+  const restored: ChainLink[] = [];
+  for (const p of meta.chain.links) {
+    const model = p.modelId ? (models.findById(p.modelId) ?? null) : null;
+    if (p.modelId && !model) missingModels++;
+    const refs: RefImage[] = [];
+    for (const r of p.refImages ?? []) {
+      if (await pathExists(r.path)) refs.push(r);
+      else skippedRefs++;
+    }
+    restored.push(
+      makeChainLink({
+        id: p.id,
+        active: !!p.active,
+        model,
+        settings: p.settings ?? {},
+        sequencePrompt: p.sequencePrompt ?? "",
+        shotPrompts:
+          Array.isArray(p.shotPrompts) && p.shotPrompts.length > 0
+            ? p.shotPrompts
+            : [""],
+        refImages: refs,
+        consumesPrev: !!p.consumesPrev,
+      }),
+    );
+  }
+  useGenerationStore.getState().setChain(restored, null);
+  return { missingModels, skippedRefs };
 }
 
 /** Apply only the prompt fields from a sidecar (shot prompt gets the value). */
@@ -84,28 +131,48 @@ export function copyPromptFromMetadata(meta: ImageMetadata): void {
   }
 }
 
-/** Compute ancestor set for a trace: {image} ∪ {all ancestors via sidecar.refs}. */
-export async function computeTraceSet(imagePath: string): Promise<Set<string>> {
-  const visited = new Set<string>();
+/** Result of a trace traversal: the set of visited paths plus the parent
+ *  refs for each node, captured during the same BFS so the consumer can draw
+ *  the dependency graph without re-reading metadata. */
+export type TraceResult = {
+  nodes: Set<string>;
+  /** child path → ordered list of refs that produced it (parent path + role). */
+  parents: Map<string, RefImage[]>;
+};
+
+/** Compute ancestor set for a trace: {image} ∪ {all ancestors via sidecar.refs},
+ *  retaining the parent→child edges discovered along the way. */
+export async function computeTraceSet(imagePath: string): Promise<TraceResult> {
+  const nodes = new Set<string>();
+  const parents = new Map<string, RefImage[]>();
   const queue: string[] = [imagePath];
   while (queue.length) {
     const p = queue.shift()!;
-    if (visited.has(p)) continue;
-    visited.add(p);
+    if (nodes.has(p)) continue;
+    nodes.add(p);
     const meta = (await cmd
       .image_metadata_read(p)
       .catch(() => null)) as ImageMetadata | null;
     if (!meta) continue;
-    for (const r of normalizeRefs(meta.refs)) {
-      if (!visited.has(r.path)) queue.push(r.path);
+    const refs = normalizeRefs(meta.refs);
+    if (refs.length > 0) parents.set(p, refs);
+    for (const r of refs) {
+      if (!nodes.has(r.path)) queue.push(r.path);
     }
   }
-  return visited;
+  return { nodes, parents };
 }
 
 /** Add a gallery image to the current refs. Images already inside the current
  *  project tree are referenced by path. External imports are copied into
  *  GLOBAL SRC at the project root. */
+export async function replaceImageRef(imagePath: string): Promise<void> {
+  const gen = useGenerationStore.getState();
+  gen.removeAllRefs();
+  gen.setShotPrompts([""]);
+  await addImageToRefs(imagePath);
+}
+
 export async function addImageToRefs(imagePath: string): Promise<string> {
   const { shotPath, projectPath } = useSessionStore.getState();
   if (!shotPath) throw new Error("no shot open");
@@ -132,10 +199,13 @@ export type ImageAction =
   | "zoom"
   | "select"
   | "add_to_refs"
+  | "replace_ref"
   | "copy_path"
   | "copy_image"
   | "copy_settings"
   | "copy_prompt"
+  | "copy_to_global_src"
+  | "set_clip_media"
   | "trace"
   | "refresh"
   | "open_location"
@@ -143,7 +213,8 @@ export type ImageAction =
   | "rename"
   | "edit"
   | "crop"
-  | "toggle_star";
+  | "toggle_star"
+  | "restore_chain";
 
 const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
 
@@ -224,6 +295,42 @@ export async function performImageAction(
         await showMessage(String(e), { kind: "error" });
       }
       return;
+    case "replace_ref":
+      try {
+        await replaceImageRef(path);
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+      }
+      return;
+    case "copy_to_global_src": {
+      const { shotPath } = session;
+      if (!shotPath) {
+        await showMessage("No shot open", { kind: "warning" });
+        return;
+      }
+      try {
+        await cmd.ref_copy_to_global_src(shotPath, path);
+        await session.rescanShot();
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+      }
+      return;
+    }
+    case "set_clip_media": {
+      const { shotPath } = session;
+      if (!shotPath) {
+        await showMessage("No shot open", { kind: "warning" });
+        return;
+      }
+      try {
+        const tl = useTimelineStore.getState();
+        const current = tl.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null;
+        await tl.setShotClipMedia(shotPath, current === path ? null : path);
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+      }
+      return;
+    }
     case "copy_settings": {
       const meta = (await cmd
         .image_metadata_read(path)
@@ -232,14 +339,43 @@ export async function performImageAction(
         await showMessage("No metadata for this image", { kind: "warning" });
         return;
       }
-      const { skippedRefs } = await copySettingsFromMetadata(meta);
-      if (skippedRefs) {
-        await showMessage(
-          `Loaded. ${skippedRefs} ref(s) skipped (files missing).`,
-          {
-            kind: "info",
-          },
-        );
+      const ok = await confirmAction(
+        `Reuse prompt and settings from ${basename(path)}? This overwrites the current model, prompts, settings, and refs.`,
+        { title: "Reuse prompt", kind: "warning" },
+      );
+      if (!ok) return;
+      const { restoredRefs, skippedRefs } = await copySettingsFromMetadata(meta);
+      if (restoredRefs > 0 || skippedRefs > 0) {
+        const skip = skippedRefs ? `, ${skippedRefs} skipped (files missing)` : "";
+        await showMessage(`Reused. Restored ${restoredRefs} ref(s)${skip}.`, {
+          kind: "info",
+        });
+      }
+      return;
+    }
+    case "restore_chain": {
+      const meta = (await cmd
+        .image_metadata_read(path)
+        .catch(() => null)) as ImageMetadata | null;
+      if (!meta?.chain) {
+        await showMessage("No chain metadata for this image", { kind: "warning" });
+        return;
+      }
+      const ok = await confirmAction(
+        `Restore the ${meta.chain.linkCount}-link chain that produced ${basename(path)}? This overwrites the current chain.`,
+        { title: "Restore chain", kind: "warning" },
+      );
+      if (!ok) return;
+      const { missingModels, skippedRefs } =
+        await restoreChainFromMetadata(meta);
+      const parts: string[] = [];
+      if (missingModels)
+        parts.push(`${missingModels} model(s) no longer in registry`);
+      if (skippedRefs) parts.push(`${skippedRefs} ref(s) skipped (missing files)`);
+      if (parts.length > 0) {
+        await showMessage(`Chain restored. ${parts.join(" · ")}.`, {
+          kind: "info",
+        });
       }
       return;
     }
@@ -293,8 +429,8 @@ export async function performImageAction(
         session.setTrace(null);
         return;
       }
-      const set = await computeTraceSet(path);
-      session.setTrace({ imagePath: path, traceSet: set });
+      const { nodes, parents } = await computeTraceSet(path);
+      session.setTrace({ imagePath: path, traceSet: nodes, parents });
       return;
     }
     case "toggle_star": {

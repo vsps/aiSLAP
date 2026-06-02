@@ -1,13 +1,31 @@
 import { create } from "zustand";
-import type { Job, ModelNode, Parameter, RefImage, RoleAssignment } from "../lib/types";
+import type {
+  ChainLink,
+  Job,
+  ModelNode,
+  Parameter,
+  RefImage,
+  RoleAssignment,
+} from "../lib/types";
+import { classifyMedia } from "../lib/media";
 
 type State = {
+  // Source of truth: prompt-chain links. Always >= 1 entry. expandedIdx
+  // points at the link the UI panels read/write. null = all-collapsed
+  // "submit-ready" view; panels aren't rendered, so mirrors are stale.
+  links: ChainLink[];
+  expandedIdx: number | null;
+
+  // Mirrors of links[expandedIdx] (or links[0] when expandedIdx is null).
+  // Kept in sync by every mutator so existing consumers
+  // (`useGenerationStore((s) => s.currentModel)` etc.) keep working without
+  // any selector changes.
   currentModel: ModelNode | null;
   sequencePrompt: string;
-  /** Always >= 1 entry. Multiple boxes are concatenated with `\n\n` at submit. */
   shotPrompts: string[];
   settings: Record<string, unknown>;
   refImages: RefImage[];
+
   iterations: number;
 
   /** All in-flight, queued, and recently-finished submissions. Finished
@@ -27,13 +45,36 @@ type Actions = {
   setSetting: (key: string, value: unknown) => void;
   setIterations: (n: number) => void;
 
+  setSequencePromptIncluded: (v: boolean) => void;
+  setSequenceScriptIncluded: (v: boolean) => void;
+  setShotScriptIncluded: (v: boolean) => void;
+  setShotPromptIncludedAt: (idx: number, v: boolean) => void;
+
   addRefs: (paths: string[]) => void;
   removeRef: (path: string) => void;
   removeAllRefs: () => void;
   assignRole: (path: string, role: RoleAssignment | null) => void;
+  swapRoleAssignments: (pathA: string, pathB: string) => void;
   reorderRefs: (fromIdx: number, toIdx: number) => void;
+  setRefImages: (refs: RefImage[]) => void;
+  /**
+   * Rewrite refImage paths across every chain link after a sequence/shot
+   * rename. Paths starting with `oldPrefix` (or equal to it) are rewritten
+   * to use `newPrefix`. No-op when prefixes are equal.
+   */
+  rewriteRefImagePaths: (oldPrefix: string, newPrefix: string) => void;
 
   resetGenerationForm: () => void;
+
+  // Chain operations
+  addLink: () => void;
+  removeLink: (id: string) => void;
+  setLinkActive: (id: string, active: boolean) => void;
+  setLinkConsumesPrev: (id: string, consumesPrev: boolean) => void;
+  moveLink: (fromIdx: number, toIdx: number) => void;
+  expandLink: (idx: number | null) => void;
+  /** Replace the entire chain (used on bootstrap restore). */
+  setChain: (links: ChainLink[], expandedIdx: number | null) => void;
 
   addJob: (job: Job) => void;
   updateJob: (id: string, patch: Partial<Job>) => void;
@@ -49,9 +90,7 @@ function defaultsFor(params: Parameter[]): Record<string, unknown> {
 }
 
 // Ensure every element group has exactly one frontal. If none is set, the first
-// ref in the group (by panel order) is auto-promoted. User-assigned group
-// numbers are left as-is — no auto-renumbering, so higher numbers survive even
-// when earlier positions are empty or bear lower numbers.
+// ref in the group (by panel order) is auto-promoted.
 function ensureFrontals(refs: RefImage[]): RefImage[] {
   const hasFrontal = new Map<string, boolean>();
   for (const r of refs) {
@@ -72,158 +111,463 @@ function ensureFrontals(refs: RefImage[]): RefImage[] {
   });
 }
 
-export const useGenerationStore = create<State & Actions>((set) => ({
-  currentModel: null,
-  sequencePrompt: "",
-  shotPrompts: [""],
-  settings: {},
-  refImages: [],
-  iterations: 1,
+export function makeChainLink(overrides: Partial<ChainLink> = {}): ChainLink {
+  return {
+    id: crypto.randomUUID(),
+    active: true,
+    model: null,
+    settings: {},
+    sequencePrompt: "",
+    shotPrompts: [""],
+    refImages: [],
+    consumesPrev: false,
+    ...overrides,
+  };
+}
 
-  jobs: [],
-  errorPopup: null,
+type ActiveMirror = Pick<
+  State,
+  "currentModel" | "sequencePrompt" | "shotPrompts" | "settings" | "refImages"
+>;
 
-  selectModel(model) {
-    set({ currentModel: model, settings: model ? defaultsFor(model.parameters) : {} });
-  },
-  setSequencePrompt(value) {
-    set({ sequencePrompt: value });
-  },
-  setShotPrompts(values) {
-    // Always keep at least one box so the UI never collapses to nothing.
-    set({ shotPrompts: values.length > 0 ? values : [""] });
-  },
-  setShotPromptAt(idx, value) {
-    set((s) => {
-      if (idx < 0 || idx >= s.shotPrompts.length) return {} as Partial<State>;
-      const next = s.shotPrompts.slice();
-      next[idx] = value;
-      return { shotPrompts: next };
-    });
-  },
-  addShotPromptAfter(idx) {
-    set((s) => {
-      const insertAt = Math.max(0, Math.min(s.shotPrompts.length, idx + 1));
-      const next = s.shotPrompts.slice();
-      next.splice(insertAt, 0, "");
-      return { shotPrompts: next };
-    });
-  },
-  removeShotPromptAt(idx) {
-    set((s) => {
-      // Refuse to remove the only remaining box — the column always shows one.
-      if (s.shotPrompts.length <= 1 || idx < 0 || idx >= s.shotPrompts.length) {
-        return {} as Partial<State>;
-      }
-      const next = s.shotPrompts.slice();
-      next.splice(idx, 1);
-      return { shotPrompts: next };
-    });
-  },
-  setSetting(key, value) {
-    set((s) => ({ settings: { ...s.settings, [key]: value } }));
-  },
-  setIterations(n) {
-    set({ iterations: Math.max(1, Math.floor(n || 1)) });
-  },
+function mirrorOf(link: ChainLink): ActiveMirror {
+  return {
+    currentModel: link.model,
+    sequencePrompt: link.sequencePrompt,
+    shotPrompts: link.shotPrompts.length > 0 ? link.shotPrompts : [""],
+    settings: link.settings,
+    refImages: link.refImages,
+  };
+}
 
-  addRefs(paths) {
-    set((s) => {
-      const existing = new Set(s.refImages.map((r) => r.path));
-      const newPaths = paths.filter((p) => !existing.has(p));
-      if (newPaths.length === 0) return {} as Partial<State>;
-      // Auto-assign the first ref to "start" when the model supports it
-      // and no existing ref holds that role.
-      const modelHasStart = !!s.currentModel?.ref_roles?.some((r) => r.role === "start");
-      const startTaken = s.refImages.some((r) => r.roleAssignment?.kind === "start");
-      const shouldAutoStart = modelHasStart && !startTaken;
-      const added = newPaths.map<RefImage>((p, i) => ({
-        path: p,
-        roleAssignment: shouldAutoStart && i === 0 ? { kind: "start" } : null,
-      }));
-      return { refImages: [...s.refImages, ...added] };
-    });
-  },
-  removeRef(path) {
-    set((s) => ({
-      refImages: ensureFrontals(s.refImages.filter((r) => r.path !== path)),
-    }));
-  },
-  removeAllRefs() {
-    set({ refImages: [] });
-  },
-  reorderRefs(fromIdx, toIdx) {
-    set((s) => {
-      if (
-        fromIdx === toIdx ||
-        fromIdx < 0 ||
-        toIdx < 0 ||
-        fromIdx >= s.refImages.length ||
-        toIdx >= s.refImages.length
-      ) {
-        return {} as Partial<State>;
-      }
-      const next = s.refImages.slice();
-      const [item] = next.splice(fromIdx, 1);
-      next.splice(toIdx, 0, item);
-      return { refImages: ensureFrontals(next) };
-    });
-  },
-  assignRole(path, role) {
-    set((s) => {
-      // Enforce exclusivity for start/end: clear from any other ref.
-      const exclusive = role && (role.kind === "start" || role.kind === "end") ? role.kind : null;
-      const next = s.refImages.map((r) => {
-        if (r.path === path) return { ...r, roleAssignment: role };
-        if (exclusive && r.roleAssignment?.kind === exclusive) {
-          return { ...r, roleAssignment: null };
-        }
-        // Frontal uniqueness per element group.
-        if (
-          role &&
-          role.kind === "element" &&
-          role.frontal &&
-          r.roleAssignment?.kind === "element" &&
-          r.roleAssignment.groupName === role.groupName &&
-          r.path !== path
-        ) {
-          return { ...r, roleAssignment: { ...r.roleAssignment, frontal: false } };
-        }
-        return r;
+// Apply a patch to the active link and return the partial state update
+// (new links array + refreshed mirrors). No-op when no link is expanded —
+// panels can't render in that state, so this guards stray late writes.
+function patchActive(
+  s: State,
+  patch: Partial<ChainLink>,
+): Partial<State> {
+  if (s.expandedIdx == null) return {};
+  const links = s.links.slice();
+  const next = { ...links[s.expandedIdx], ...patch };
+  links[s.expandedIdx] = next;
+  return { links, ...mirrorOf(next) };
+}
+
+function mirrorFor(links: ChainLink[], idx: number | null): ActiveMirror {
+  if (idx == null) return mirrorOf(links[0] ?? makeChainLink());
+  return mirrorOf(links[idx] ?? links[0] ?? makeChainLink());
+}
+
+/** Returns the active link or null when nothing is expanded. */
+function activeOf(s: State): ChainLink | null {
+  if (s.expandedIdx == null) return null;
+  return s.links[s.expandedIdx] ?? null;
+}
+
+/** Copy of a link's per-shot inclusion flags, defaulting to all-true and
+ *  padded to match the current shotPrompts length (older links may lack the
+ *  field or have a stale, shorter array). */
+function shotPromptIncludes(link: ChainLink): boolean[] {
+  const inc = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
+  while (inc.length < link.shotPrompts.length) inc.push(true);
+  return inc;
+}
+
+export const useGenerationStore = create<State & Actions>((set) => {
+  const initialLink = makeChainLink();
+  return {
+    links: [initialLink],
+    expandedIdx: 0,
+    ...mirrorOf(initialLink),
+    iterations: 1,
+
+    jobs: [],
+    errorPopup: null,
+
+    selectModel(model) {
+      set((s) =>
+        patchActive(s, {
+          model,
+          settings: model ? defaultsFor(model.parameters) : {},
+        }),
+      );
+    },
+    setSequencePrompt(value) {
+      set((s) => patchActive(s, { sequencePrompt: value }));
+    },
+    setShotPrompts(values) {
+      const next = values.length > 0 ? values : [""];
+      set((s) => patchActive(s, { shotPrompts: next, shotPromptsIncluded: next.map(() => true) }));
+    },
+    setShotPromptAt(idx, value) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        if (idx < 0 || idx >= link.shotPrompts.length)
+          return {} as Partial<State>;
+        const next = link.shotPrompts.slice();
+        next[idx] = value;
+        return patchActive(s, { shotPrompts: next });
       });
-      return { refImages: ensureFrontals(next) };
-    });
-  },
+    },
+    addShotPromptAfter(idx) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        const insertAt = Math.max(0, Math.min(link.shotPrompts.length, idx + 1));
+        const next = link.shotPrompts.slice();
+        next.splice(insertAt, 0, "");
+        const inc = shotPromptIncludes(link);
+        inc.splice(insertAt, 0, true);
+        return patchActive(s, { shotPrompts: next, shotPromptsIncluded: inc });
+      });
+    },
+    removeShotPromptAt(idx) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        if (link.shotPrompts.length <= 1 || idx < 0 || idx >= link.shotPrompts.length) {
+          return {} as Partial<State>;
+        }
+        const next = link.shotPrompts.slice();
+        next.splice(idx, 1);
+        const inc = shotPromptIncludes(link);
+        inc.splice(idx, 1);
+        return patchActive(s, { shotPrompts: next, shotPromptsIncluded: inc });
+      });
+    },
+    setSetting(key, value) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        return patchActive(s, { settings: { ...link.settings, [key]: value } });
+      });
+    },
+    setIterations(n) {
+      set({ iterations: Math.max(1, Math.floor(n || 1)) });
+    },
 
-  resetGenerationForm() {
-    set((s) => ({
-      sequencePrompt: "",
-      shotPrompts: [""],
-      settings: s.currentModel ? defaultsFor(s.currentModel.parameters) : {},
-      refImages: [],
-      iterations: 1,
-    }));
-  },
+    setSequencePromptIncluded(v) {
+      set((s) => patchActive(s, { sequencePromptIncluded: v }));
+    },
+    setSequenceScriptIncluded(v) {
+      set((s) => patchActive(s, { sequenceScriptIncluded: v }));
+    },
+    setShotScriptIncluded(v) {
+      set((s) => patchActive(s, { shotScriptIncluded: v }));
+    },
+    setShotPromptIncludedAt(idx, v) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        if (idx < 0 || idx >= link.shotPrompts.length)
+          return {} as Partial<State>;
+        const next = shotPromptIncludes(link);
+        next[idx] = v;
+        return patchActive(s, { shotPromptsIncluded: next });
+      });
+    },
 
-  addJob(job) {
-    set((s) => ({ jobs: [...s.jobs, job] }));
-  },
-  updateJob(id, patch) {
-    set((s) => ({
-      jobs: s.jobs.map((j) => (j.id === id ? { ...j, ...patch } : j)),
-    }));
-  },
-  removeJob(id) {
-    set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id) }));
-  },
-  clearFinishedJobs() {
-    set((s) => ({
-      jobs: s.jobs.filter(
-        (j) => j.status !== "done" && j.status !== "failed" && j.status !== "cancelled",
-      ),
-    }));
-  },
-  setError(msg) {
-    set({ errorPopup: msg });
-  },
-}));
+    addRefs(paths) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        const existing = new Set(link.refImages.map((r) => r.path));
+        const newPaths = paths.filter((p) => !existing.has(p));
+        if (newPaths.length === 0) return {} as Partial<State>;
+        const roles = link.model?.ref_roles ?? [];
+        const modelHasStart = roles.some((r) => r.role === "start");
+        const modelHasEnd = roles.some((r) => r.role === "end");
+        let startTaken = link.refImages.some(
+          (r) => r.roleAssignment?.kind === "start",
+        );
+        let endTaken = link.refImages.some(
+          (r) => r.roleAssignment?.kind === "end",
+        );
+        const added = newPaths.map<RefImage>((p) => {
+          const isImg = classifyMedia(p) === "image";
+          if (isImg && modelHasStart && !startTaken) {
+            startTaken = true;
+            return { path: p, roleAssignment: { kind: "start" } };
+          }
+          if (isImg && modelHasEnd && !endTaken) {
+            endTaken = true;
+            return { path: p, roleAssignment: { kind: "end" } };
+          }
+          return { path: p, roleAssignment: null };
+        });
+        return patchActive(s, {
+          refImages: [...link.refImages, ...added],
+        });
+      });
+    },
+    removeRef(path) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        return patchActive(s, {
+          refImages: ensureFrontals(link.refImages.filter((r) => r.path !== path)),
+        });
+      });
+    },
+    removeAllRefs() {
+      set((s) => patchActive(s, { refImages: [] }));
+    },
+    reorderRefs(fromIdx, toIdx) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        if (
+          fromIdx === toIdx ||
+          fromIdx < 0 ||
+          toIdx < 0 ||
+          fromIdx >= link.refImages.length ||
+          toIdx >= link.refImages.length
+        ) {
+          return {} as Partial<State>;
+        }
+        const next = link.refImages.slice();
+        const [item] = next.splice(fromIdx, 1);
+        next.splice(toIdx, 0, item);
+        return patchActive(s, { refImages: ensureFrontals(next) });
+      });
+    },
+    assignRole(path, role) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        const exclusive =
+          role && (role.kind === "start" || role.kind === "end")
+            ? role.kind
+            : null;
+        const next = link.refImages.map((r) => {
+          if (r.path === path) return { ...r, roleAssignment: role };
+          if (exclusive && r.roleAssignment?.kind === exclusive) {
+            return { ...r, roleAssignment: null };
+          }
+          if (
+            role &&
+            role.kind === "element" &&
+            role.frontal &&
+            r.roleAssignment?.kind === "element" &&
+            r.roleAssignment.groupName === role.groupName &&
+            r.path !== path
+          ) {
+            return { ...r, roleAssignment: { ...r.roleAssignment, frontal: false } };
+          }
+          return r;
+        });
+        return patchActive(s, { refImages: ensureFrontals(next) });
+      });
+    },
+    swapRoleAssignments(pathA, pathB) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link || pathA === pathB) return {} as Partial<State>;
+        const a = link.refImages.find((r) => r.path === pathA);
+        const b = link.refImages.find((r) => r.path === pathB);
+        if (!a || !b) return {} as Partial<State>;
+        const next = link.refImages.map((r) =>
+          r.path === pathA
+            ? { ...r, roleAssignment: b.roleAssignment }
+            : r.path === pathB
+              ? { ...r, roleAssignment: a.roleAssignment }
+              : r,
+        );
+        return patchActive(s, { refImages: ensureFrontals(next) });
+      });
+    },
+    setRefImages(refs) {
+      set((s) => patchActive(s, { refImages: ensureFrontals(refs) }));
+    },
+    rewriteRefImagePaths(oldPrefix, newPrefix) {
+      if (!oldPrefix || oldPrefix === newPrefix) return;
+      const matches = (p: string) =>
+        p === oldPrefix || p.startsWith(oldPrefix + "/");
+      const rewrite = (p: string) =>
+        p === oldPrefix ? newPrefix : newPrefix + p.slice(oldPrefix.length);
+      set((s) => {
+        let anyChange = false;
+        const links = s.links.map((link) => {
+          let linkChanged = false;
+          const next = link.refImages.map((r) => {
+            if (matches(r.path)) {
+              linkChanged = true;
+              return { ...r, path: rewrite(r.path) };
+            }
+            return r;
+          });
+          if (!linkChanged) return link;
+          anyChange = true;
+          return { ...link, refImages: next };
+        });
+        if (!anyChange) return {} as Partial<State>;
+        return {
+          links,
+          ...mirrorFor(links, s.expandedIdx),
+        };
+      });
+    },
+
+    resetGenerationForm() {
+      set((s) => {
+        if (s.expandedIdx == null) return { iterations: 1 };
+        const link = s.links[s.expandedIdx];
+        return {
+          ...patchActive(s, {
+            sequencePrompt: "",
+            shotPrompts: [""],
+            settings: link.model ? defaultsFor(link.model.parameters) : {},
+            refImages: [],
+          }),
+          iterations: 1,
+        };
+      });
+    },
+
+    addLink() {
+      set((s) => {
+        // Append a new active link. Default consumesPrev=true so its ref
+        // panel shows the upstream-output placeholder. Auto-expand the new
+        // link so the user can start editing immediately.
+        const link = makeChainLink({ consumesPrev: true });
+        const links = [...s.links, link];
+        const expandedIdx = links.length - 1;
+        return { links, expandedIdx, ...mirrorFor(links, expandedIdx) };
+      });
+    },
+    removeLink(id) {
+      set((s) => {
+        if (s.links.length <= 1) return {} as Partial<State>;
+        const idx = s.links.findIndex((l) => l.id === id);
+        if (idx < 0) return {} as Partial<State>;
+        const links = s.links.slice();
+        links.splice(idx, 1);
+        let expandedIdx = s.expandedIdx;
+        if (expandedIdx != null) {
+          if (expandedIdx === idx) {
+            // Deleted the expanded link — drop back to all-collapsed.
+            expandedIdx = null;
+          } else if (expandedIdx > idx) {
+            expandedIdx -= 1;
+          }
+        }
+        // First link's consumesPrev should be false (no upstream possible).
+        if (links[0].consumesPrev) {
+          links[0] = { ...links[0], consumesPrev: false };
+        }
+        return { links, expandedIdx, ...mirrorFor(links, expandedIdx) };
+      });
+    },
+    setLinkActive(id, active) {
+      set((s) => {
+        const idx = s.links.findIndex((l) => l.id === id);
+        if (idx < 0) return {} as Partial<State>;
+        const links = s.links.slice();
+        links[idx] = { ...links[idx], active };
+        return { links, ...mirrorFor(links, s.expandedIdx) };
+      });
+    },
+    setLinkConsumesPrev(id, consumesPrev) {
+      set((s) => {
+        const idx = s.links.findIndex((l) => l.id === id);
+        if (idx < 0 || idx === 0) return {} as Partial<State>;
+        const links = s.links.slice();
+        links[idx] = { ...links[idx], consumesPrev };
+        return { links, ...mirrorFor(links, s.expandedIdx) };
+      });
+    },
+    moveLink(fromIdx, toIdx) {
+      set((s) => {
+        if (
+          fromIdx === toIdx ||
+          fromIdx < 0 ||
+          toIdx < 0 ||
+          fromIdx >= s.links.length ||
+          toIdx >= s.links.length
+        ) {
+          return {} as Partial<State>;
+        }
+        const links = s.links.slice();
+        const [item] = links.splice(fromIdx, 1);
+        links.splice(toIdx, 0, item);
+        // First link must never consume prev.
+        if (links[0].consumesPrev) {
+          links[0] = { ...links[0], consumesPrev: false };
+        }
+        let expandedIdx = s.expandedIdx;
+        if (expandedIdx != null) {
+          if (expandedIdx === fromIdx) expandedIdx = toIdx;
+          else if (fromIdx < expandedIdx && toIdx >= expandedIdx) expandedIdx -= 1;
+          else if (fromIdx > expandedIdx && toIdx <= expandedIdx) expandedIdx += 1;
+        }
+        return { links, expandedIdx, ...mirrorFor(links, expandedIdx) };
+      });
+    },
+    expandLink(idx) {
+      set((s) => {
+        if (idx != null && (idx < 0 || idx >= s.links.length)) {
+          return {} as Partial<State>;
+        }
+        return { expandedIdx: idx, ...mirrorFor(s.links, idx) };
+      });
+    },
+    setChain(links, expandedIdx) {
+      // Sanitize: ensure non-empty array, valid expandedIdx, and that the
+      // head link never consumes prev.
+      const safeLinks = links.length > 0 ? links.slice() : [makeChainLink()];
+      if (safeLinks[0].consumesPrev) {
+        safeLinks[0] = { ...safeLinks[0], consumesPrev: false };
+      }
+      let safeIdx: number | null = expandedIdx;
+      if (safeIdx != null && (safeIdx < 0 || safeIdx >= safeLinks.length)) {
+        safeIdx = safeLinks.length === 1 ? 0 : null;
+      }
+      set({
+        links: safeLinks,
+        expandedIdx: safeIdx,
+        ...mirrorFor(safeLinks, safeIdx),
+      });
+    },
+
+    addJob(job) {
+      set((s) => {
+        const next = [...s.jobs, job];
+        const MAX = 50;
+        if (next.length <= MAX) return { jobs: next };
+        // Drop oldest *completed* jobs first so active work is never evicted.
+        const completed = (j: Job) =>
+          j.status === "done" || j.status === "failed" || j.status === "cancelled";
+        const trimmed = next.slice();
+        for (let i = 0; trimmed.length > MAX && i < trimmed.length; ) {
+          if (completed(trimmed[i])) trimmed.splice(i, 1);
+          else i++;
+        }
+        // If still over (>50 active jobs at once — pathological), keep newest.
+        return { jobs: trimmed.length > MAX ? trimmed.slice(-MAX) : trimmed };
+      });
+    },
+    updateJob(id, patch) {
+      set((s) => ({
+        jobs: s.jobs.map((j) => (j.id === id ? { ...j, ...patch } : j)),
+      }));
+    },
+    removeJob(id) {
+      set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id) }));
+    },
+    clearFinishedJobs() {
+      set((s) => ({
+        jobs: s.jobs.filter(
+          (j) =>
+            j.status !== "done" &&
+            j.status !== "failed" &&
+            j.status !== "cancelled",
+        ),
+      }));
+    },
+    setError(msg) {
+      set({ errorPopup: msg });
+    },
+  };
+});

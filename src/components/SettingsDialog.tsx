@@ -2,7 +2,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
-import type { ColorOverrides, Config } from "../lib/types";
+import { recoverOrphans } from "../lib/recovery";
+import { pushLog } from "../stores/logStore";
+import type { ColorOverrides, Config, FalLifecycle } from "../lib/types";
+
+const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
+  { value: "", label: "fal default (keep forever)" },
+  { value: "immediate", label: "delete immediately after fetch" },
+  { value: "1h", label: "1 hour" },
+  { value: "1d", label: "1 day" },
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+  { value: "1y", label: "1 year" },
+  { value: "never", label: "never (explicit)" },
+];
 
 const COLOR_LABELS: Record<keyof ColorOverrides, string> = {
   bg: "bg",
@@ -17,9 +30,6 @@ type Props = {
   onClose: () => void;
 };
 
-const FILENAME_TEMPLATE_DEFAULT =
-  "<date>_<time>_<sequence>_<shot>_<model>_<version>";
-
 const DEFAULT: Config = {
   windowBounds: { width: 1600, height: 1000 },
   projectPath: "",
@@ -30,6 +40,7 @@ const DEFAULT: Config = {
   maxConcurrentJobs: 3,
   filenameTemplate: undefined,
   colors: undefined,
+  falLifecycle: undefined,
 };
 
 export function SettingsDialog({ onClose }: Props) {
@@ -39,6 +50,9 @@ export function SettingsDialog({ onClose }: Props) {
   const [revealReplicate, setRevealReplicate] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT);
   const [originalColors, setOriginalColors] = useState<ColorOverrides | undefined>(undefined);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [orphanBusy, setOrphanBusy] = useState(false);
+  const [orphanStatus, setOrphanStatus] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -63,7 +77,33 @@ export function SettingsDialog({ onClose }: Props) {
       }
       setLoaded(true);
     })();
+    void (async () => {
+      const records = await cmd.pending_load().catch(() => []);
+      setPendingCount(records.length);
+    })();
   }, []);
+
+  async function checkOrphans() {
+    if (orphanBusy) return;
+    setOrphanBusy(true);
+    setOrphanStatus("Checking…");
+    try {
+      const r = await recoverOrphans();
+      const parts = [
+        `recovered ${r.recovered}`,
+        `still running ${r.stillRunning}`,
+        `failed ${r.failed}`,
+      ];
+      setOrphanStatus(`${parts.join(", ")} (of ${r.total}).`);
+      for (const n of r.notes) pushLog("INFO", `Orphan: ${n}`);
+      const remaining = await cmd.pending_load().catch(() => []);
+      setPendingCount(remaining.length);
+    } catch (e) {
+      setOrphanStatus(`Error: ${String(e)}`);
+    } finally {
+      setOrphanBusy(false);
+    }
+  }
 
   const handleCloseRef = useRef(handleClose);
   handleCloseRef.current = handleClose;
@@ -136,7 +176,7 @@ export function SettingsDialog({ onClose }: Props) {
                 type={revealKey ? "text" : "password"}
                 value={falKey}
                 onChange={(e) => setFalKey(e.currentTarget.value)}
-                className="flex-1 bg-bg px-2 py-1 font-mono text-xs"
+                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                 placeholder="fal-…"
               />
               <button
@@ -147,7 +187,30 @@ export function SettingsDialog({ onClose }: Props) {
               </button>
             </div>
             <div className="text-xs text-dim mt-1">
-              Stored in <code>%APPDATA%/falPipe/.env</code>.
+              Stored in <code>%APPDATA%/aiSLAP/.env</code>.
+            </div>
+          </Field>
+
+          <Field label="fal.ai object lifecycle">
+            <select
+              value={config.falLifecycle ?? ""}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setConfig((c) => ({
+                  ...c,
+                  falLifecycle: v ? (v as FalLifecycle) : undefined,
+                }));
+              }}
+              className="bg-inset px-2 py-1 text-xs font-mono"
+            >
+              {FAL_LIFECYCLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-dim mt-1">
+              Sent as <code>x-fal-object-lifecycle-preference</code>. Controls how long fal retains generated objects.
             </div>
           </Field>
 
@@ -157,7 +220,7 @@ export function SettingsDialog({ onClose }: Props) {
                 type={revealReplicate ? "text" : "password"}
                 value={replicateKey}
                 onChange={(e) => setReplicateKey(e.currentTarget.value)}
-                className="flex-1 bg-bg px-2 py-1 font-mono text-xs"
+                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                 placeholder="r8_…"
               />
               <button
@@ -178,7 +241,7 @@ export function SettingsDialog({ onClose }: Props) {
                   const value = e.currentTarget.value;
                   setConfig((c) => ({ ...c, ffmpegPath: value }));
                 }}
-                className="flex-1 bg-bg px-2 py-1 text-xs font-mono"
+                className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
                 placeholder="ffmpeg.exe (optional)"
               />
               <button className="px-2 bg-bg text-xs" onClick={browseFfmpeg}>
@@ -202,7 +265,7 @@ export function SettingsDialog({ onClose }: Props) {
                     : 3,
                 }));
               }}
-              className="bg-bg px-2 py-1 text-xs font-mono w-20"
+              className="bg-inset px-2 py-1 text-xs font-mono w-20"
               title="Caps how many submissions hit fal.ai in parallel. Extra submits sit in a local queue."
             />
             <div className="text-xs text-dim mt-1">
@@ -210,37 +273,25 @@ export function SettingsDialog({ onClose }: Props) {
             </div>
           </Field>
 
-          <Field label="Filename template">
-            <div className="flex gap-1">
-              <input
-                type="text"
-                value={config.filenameTemplate ?? ""}
-                onChange={(e) => {
-                  const value = e.currentTarget.value;
-                  setConfig((c) => ({
-                    ...c,
-                    filenameTemplate: value || undefined,
-                  }));
-                }}
-                className="flex-1 bg-bg px-2 py-1 text-xs font-mono"
-                placeholder={FILENAME_TEMPLATE_DEFAULT}
-              />
+          <Field label="Pending submissions">
+            <div className="flex gap-1 items-center">
               <button
                 type="button"
-                className="px-2 bg-bg text-xs"
-                onClick={() =>
-                  setConfig((c) => ({ ...c, filenameTemplate: undefined }))
-                }
+                className="px-2 bg-bg text-xs disabled:opacity-50"
+                onClick={() => void checkOrphans()}
+                disabled={orphanBusy}
               >
-                reset
+                {orphanBusy ? "Checking…" : "Check for orphans"}
               </button>
+              <span className="text-xs text-dim">
+                {pendingCount === null
+                  ? "—"
+                  : `${pendingCount} record${pendingCount === 1 ? "" : "s"} on file`}
+              </span>
             </div>
             <div className="text-xs text-dim mt-1">
-              Tokens: <code>&lt;date&gt;</code> <code>&lt;time&gt;</code>{" "}
-              <code>&lt;sequence&gt;</code> <code>&lt;shot&gt;</code>{" "}
-              <code>&lt;model&gt;</code> <code>&lt;version&gt;</code>{" "}
-              <code>&lt;prompt&gt;</code> <code>&lt;iter&gt;</code>{" "}
-              <code>&lt;seed&gt;</code> <code>&lt;provider&gt;</code>
+              {orphanStatus ??
+                "If the app was killed mid-submit, the result may still be on fal.ai. Click Check to pull it down."}
             </div>
           </Field>
 
@@ -321,7 +372,7 @@ function ColorRow({
         type="text"
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
-        className="flex-1 bg-bg px-2 py-1 font-mono text-xs"
+        className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
         spellCheck={false}
       />
     </div>

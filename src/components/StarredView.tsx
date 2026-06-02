@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useSessionStore } from "../stores/sessionStore";
+import { useTimelineStore } from "../stores/timelineStore";
 import { performImageAction, type ImageAction } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 
@@ -14,6 +15,8 @@ type Props = {
 export function StarredView({ onDragStart }: Props) {
   const { starredGroups, starredLoading, projectPath, rescanStarred, selectedImagePath } =
     useSessionStore();
+  const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
+  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   useEffect(() => {
     if (projectPath) void rescanStarred();
@@ -24,7 +27,7 @@ export function StarredView({ onDragStart }: Props) {
   if (!projectPath) {
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-dim">
-        Open a project to see visible images.
+        Open a project to see favorites.
       </div>
     );
   }
@@ -40,7 +43,7 @@ export function StarredView({ onDragStart }: Props) {
   if (starredGroups.length === 0) {
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-dim">
-        No visible images in this project yet.
+        No favorites in this project yet.
       </div>
     );
   }
@@ -53,36 +56,51 @@ export function StarredView({ onDragStart }: Props) {
             <div className="w-full bg-src-bg border border-border px-2 py-1 text-sm font-semibold truncate" title={seq.seqPath}>
               {seq.seqName}
             </div>
-            {seq.shots.map((g) => (
-              <div key={g.shotPath} className="flex items-stretch gap-gallery-column-gap pl-4">
+            {seq.shots.map((g) => {
+              const slm = shotsLatestMedia.get(g.shotPath);
+              const knownShot = !!slm;
+              return (
                 <div
-                  className="shrink-0 w-[140px] bg-surface border border-border px-2 py-1 text-sm truncate"
-                  title={g.shotPath}
+                  key={g.shotPath}
+                  data-shot-row={g.shotPath}
+                  className="flex items-stretch gap-gallery-column-gap pl-4"
                 >
-                  {g.shotName}
+                  <div
+                    className="shrink-0 w-[140px] bg-surface border border-border px-2 py-1 text-sm truncate"
+                    title={g.shotPath}
+                  >
+                    {g.shotName}
+                  </div>
+                  <div className="flex-1 min-w-0 flex flex-wrap gap-gallery-column-gap">
+                    {g.images.map((img) => {
+                      const clipSelected = knownShot && slm?.clipMediaPath === img.path;
+                      return (
+                        <div key={img.path} className="w-[120px] shrink-0">
+                          <Thumbnail
+                            image={img}
+                            selected={selectedImagePath === img.path}
+                            columnVersion={g.shotName}
+                            onSelect={() => onAction("select", img.path)}
+                            onToggleStar={() => onAction("toggle_star", img.path)}
+                            onDragStart={onDragStart}
+                            clipMediaSelected={clipSelected}
+                            onToggleClipMedia={
+                              knownShot
+                                ? () =>
+                                    void setShotClipMedia(
+                                      g.shotPath,
+                                      clipSelected ? null : img.path,
+                                    )
+                                : undefined
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0 flex flex-wrap gap-gallery-column-gap">
-                  {g.images.map((img) => (
-                    <div key={img.path} className="w-[120px] shrink-0">
-                      <Thumbnail
-                        image={img}
-                        selected={selectedImagePath === img.path}
-                        columnVersion={g.shotName}
-                        onSelect={() => onAction("select", img.path)}
-                        onZoom={() => onAction("zoom", img.path)}
-                        onAddToRefs={() => onAction("add_to_refs", img.path)}
-                        onCopySettings={() => onAction("copy_settings", img.path)}
-                        onEdit={() => onAction("edit", img.path)}
-                        onCrop={() => onAction("crop", img.path)}
-                        onToggleStar={() => onAction("toggle_star", img.path)}
-                        onDragStart={onDragStart}
-                        dragDisabled
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ))}
       </div>

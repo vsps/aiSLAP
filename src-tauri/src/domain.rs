@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+
+fn map_is_empty<K, V>(m: &HashMap<K, V>) -> bool { m.is_empty() }
 
 // All types here must match src/lib/types.ts exactly.
 
@@ -110,6 +113,8 @@ pub struct Config {
     pub filename_template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub colors: Option<ColorOverrides>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fal_lifecycle: Option<String>,
 }
 
 fn default_max_concurrent_jobs() -> u32 {
@@ -133,6 +138,7 @@ impl Default for Config {
             max_concurrent_jobs: default_max_concurrent_jobs(),
             filename_template: None,
             colors: None,
+            fal_lifecycle: None,
         }
     }
 }
@@ -249,6 +255,60 @@ pub struct ShotSidecar {
     pub name: String,
     #[serde(default)]
     pub prompt_history: Vec<PromptEntry>,
+    /// Single exclusive "clip media" pick — absolute path or None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip_media_path: Option<String>,
+    /// Per-version pinned "select" picks. Key = version name (e.g., "v003"),
+    /// value = filename within that version dir. When unset, the latest image is used.
+    #[serde(default, skip_serializing_if = "map_is_empty")]
+    pub version_selects: HashMap<String, String>,
+    /// Per-version short free-text comments. Key = version name (e.g., "v003"),
+    /// value = comment shown next to the version label. Folders are not renamed.
+    #[serde(default, skip_serializing_if = "map_is_empty")]
+    pub version_comments: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineClip {
+    pub id: String,
+    /// Absolute path to the source shot. None = blank/padding clip.
+    #[serde(default)]
+    pub shot_path: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub duration_sec: f64,
+    #[serde(default)]
+    pub media_path: Option<String>,
+    /// Slip offset into the source media (seconds). 0 = play from the start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_offset_sec: Option<f64>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SequenceTimeline {
+    #[serde(default)]
+    pub total_duration_sec: f64,
+    #[serde(default)]
+    pub clips: Vec<TimelineClip>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShotLatestMedia {
+    pub shot_path: String,
+    pub media_path: Option<String>,
+    pub is_video: bool,
+    pub clip_media_path: Option<String>,
+}
+
+fn default_version_prefix() -> String {
+    "gen".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -261,6 +321,10 @@ pub struct ProjectSidecar {
     /// Forward-slash paths relative to project root for images marked visible.
     #[serde(default)]
     pub visible: Vec<String>,
+    /// Letter (+ `_`/`-`) prefix used when minting new version folders. The
+    /// 3-digit suffix is appended at creation time. Defaults to "gen".
+    #[serde(default = "default_version_prefix")]
+    pub version_prefix: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,6 +347,7 @@ pub struct GalleryColumn {
     pub version: String,
     pub is_src: bool,
     pub images: Vec<GalleryImage>,
+    pub src_images: Vec<GalleryImage>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

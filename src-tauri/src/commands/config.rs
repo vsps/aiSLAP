@@ -48,6 +48,26 @@ pub fn app_state_save(state: AppState) -> AppResult<()> {
     write_json_atomic(&paths::app_state_path()?, &state)
 }
 
+// ----- presets.json -----
+
+#[tauri::command]
+pub fn presets_load() -> AppResult<serde_json::Value> {
+    let path = paths::presets_path()?;
+    if !path.exists() {
+        return Ok(serde_json::json!({ "presets": [] }));
+    }
+    let text = std::fs::read_to_string(&path)?;
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) => Ok(v),
+        Err(_) => Ok(serde_json::json!({ "presets": [] })),
+    }
+}
+
+#[tauri::command]
+pub fn presets_save(data: serde_json::Value) -> AppResult<()> {
+    write_json_atomic(&paths::presets_path()?, &data)
+}
+
 // ----- .env (provider keys) -----
 
 /// Map a provider name to its env-var key. Unknown providers fall back to

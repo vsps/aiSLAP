@@ -2,14 +2,21 @@ import { create } from "zustand";
 import type {
   GalleryColumn,
   PromptHistoryChannel,
+  RefImage,
   SequenceSidecar,
+  SequenceStacks,
   ShotSidecar,
   SeqStarredGroup,
 } from "../lib/types";
 import { cmd } from "../lib/tauri";
+import { useTimelineStore } from "./timelineStore";
+import { useScriptStore } from "./scriptStore";
+import { useGenerationStore } from "./generationStore";
+import { basename } from "../lib/paths";
+import { rewriteScriptHeading } from "../lib/script";
 
 type PromptScope = "sequence" | "shot";
-type ViewMode = "columns" | "starred";
+type ViewMode = "columns" | "starred" | "stacked";
 
 type State = {
   projectPath: string | null;
@@ -29,16 +36,27 @@ type State = {
 
   sequenceHistory: PromptHistoryChannel;
   shotHistory: PromptHistoryChannel;
+  /** Per-version short comments for the current shot, keyed by version dir name. */
+  versionComments: Record<string, string>;
 
-  traceActive: { imagePath: string; traceSet: Set<string> } | null;
+  /** Active trace: the seed image, the full ancestor set, and the parent
+   *  refs captured during traversal (used to draw the dependency edges). */
+  traceActive: {
+    imagePath: string;
+    traceSet: Set<string>;
+    parents: Map<string, RefImage[]>;
+  } | null;
 
   viewMode: ViewMode;
   starredGroups: SeqStarredGroup[];
   starredLoading: boolean;
+  sequenceStacks: SequenceStacks | null;
+  sequenceStacksLoading: boolean;
 
   galleryHeight: number;
   thumbColWidth: number;
   logHeight: number;
+  timelineHeight: number;
 };
 
 type Actions = {
@@ -49,6 +67,8 @@ type Actions = {
   setTargetVersion: (version: string | null) => void;
   createSequence: (name: string) => Promise<void>;
   createShot: (name: string) => Promise<void>;
+  renameSequence: (newName: string) => Promise<void>;
+  renameShot: (newName: string) => Promise<void>;
   createNextVersion: () => Promise<string>;
 
   setSelectedImage: (path: string | null) => void;
@@ -60,24 +80,30 @@ type Actions = {
 
   setViewMode: (mode: ViewMode) => void;
   rescanStarred: () => Promise<void>;
+  rescanSequenceStacks: () => Promise<void>;
 
   navigatePromptHistory: (scope: PromptScope, delta: number) => void;
   snapToLive: (scope: PromptScope) => void;
 
   hydrateSequenceSidecar: (sidecar: SequenceSidecar | null) => void;
   hydrateShotSidecar: (sidecar: ShotSidecar | null) => void;
+  /** Set or clear a per-version comment on the current shot; persists to shot.json. */
+  setVersionComment: (version: string, comment: string) => Promise<void>;
 
   setGalleryHeight: (n: number) => void;
   setThumbColWidth: (n: number) => void;
   setLogHeight: (n: number) => void;
+  setTimelineHeight: (n: number) => void;
 };
 
 const GALLERY_H_MIN = 120;
 const GALLERY_H_MAX = 1200;
 const THUMB_W_MIN = 154;
-const THUMB_W_MAX = 400;
+const THUMB_W_MAX = 500;
 const LOG_H_MIN = 24;
 const LOG_H_MAX = 600;
+const TIMELINE_H_MIN = 45;
+const TIMELINE_H_MAX = 400;
 const clamp = (n: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, Math.round(n)));
 
@@ -106,16 +132,20 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
 
   sequenceHistory: emptyChannel(),
   shotHistory: emptyChannel(),
+  versionComments: {},
 
   traceActive: null,
 
   viewMode: "columns",
   starredGroups: [],
   starredLoading: false,
+  sequenceStacks: null,
+  sequenceStacksLoading: false,
 
   galleryHeight: 400,
   thumbColWidth: THUMB_W_MIN,
   logHeight: 78,
+  timelineHeight: TIMELINE_H_MIN,
 
   async setProject(projectPath) {
     // Rust's list_dirs returns forward-slash paths. Normalize the incoming path
@@ -133,7 +163,10 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       selectedImagePath: null,
       sequenceHistory: emptyChannel(),
       shotHistory: emptyChannel(),
+      versionComments: {},
     });
+    useTimelineStore.getState().reset();
+    void useScriptStore.getState().loadFor(normalized);
   },
 
   async setSequence(sequencePath) {
@@ -150,14 +183,25 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
         cursor: sidecar.promptHistory.length,
       },
       shotHistory: emptyChannel(),
+      versionComments: {},
       starredGroups: [],
     });
     if (get().viewMode === "starred") {
       void get().rescanStarred();
+    } else if (get().viewMode === "stacked") {
+      void get().rescanSequenceStacks();
     }
+    // Kick the timeline load in parallel with the shot load — they're independent.
+    const timelineLoad = useTimelineStore
+      .getState()
+      .loadForSequence(sequencePath)
+      .catch(() => {
+        /* non-fatal — leave the timeline empty if init fails */
+      });
     if (shots.length > 0) {
       await get().setShot(shots[shots.length - 1]);
     }
+    await timelineLoad;
   },
 
   async setShot(shotPath) {
@@ -167,6 +211,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       columns,
       targetVersion: latestVersion(columns),
       selectedImagePath: null,
+      versionComments: sidecar.versionComments ?? {},
       shotHistory: {
         entries: sidecar.promptHistory,
         cursor: sidecar.promptHistory.length,
@@ -187,6 +232,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     }));
     if (get().viewMode === "starred") {
       void get().rescanStarred();
+    } else if (get().viewMode === "stacked") {
+      void get().rescanSequenceStacks();
     }
   },
 
@@ -209,7 +256,127 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     const shotPath = await cmd.shot_create(sequencePath, name);
     const { shots } = await cmd.sequence_open(sequencePath);
     set({ shotsInSequence: shots });
+    const tl = useTimelineStore.getState();
+    if (tl.seqPath === sequencePath) tl.appendShotClip(shotPath);
     await get().setShot(shotPath);
+  },
+
+  async renameSequence(newName) {
+    const { projectPath, sequencePath, shotPath } = get();
+    if (!projectPath) throw new Error("no project");
+    if (!sequencePath) throw new Error("no sequence to rename");
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error("name cannot be empty");
+
+    const oldSeqPath = sequencePath;
+    const oldShotPath = shotPath;
+    const oldSeqBase = basename(oldSeqPath);
+
+    // Job-safety guard. Refuse if any non-terminal job targets this sequence.
+    const jobs = useGenerationStore.getState().jobs;
+    const inFlight = jobs.filter(
+      (j) =>
+        j.shotPath.startsWith(oldSeqPath + "/") &&
+        j.status !== "done" &&
+        j.status !== "failed" &&
+        j.status !== "cancelled",
+    );
+    if (inFlight.length > 0) {
+      throw new Error(
+        `Cannot rename — ${inFlight.length} job${
+          inFlight.length > 1 ? "s are" : " is"
+        } running in this sequence.`,
+      );
+    }
+
+    const newSeqPath = await cmd.sequence_rename(oldSeqPath, trimmed);
+    if (newSeqPath === oldSeqPath) return;
+
+    // Keep in-memory mirrors coherent before re-rendering.
+    useTimelineStore.getState().renameShotPathPrefix(oldSeqPath, newSeqPath);
+    useGenerationStore.getState().rewriteRefImagePaths(oldSeqPath, newSeqPath);
+
+    const sequences = await cmd.project_open(projectPath);
+    set({ sequencesInProject: sequences });
+    await get().setSequence(newSeqPath);
+
+    // setSequence auto-opens the last shot. Navigate back to the user's shot
+    // if it survived the rename (same basename, new parent).
+    if (oldShotPath) {
+      const targetShotPath = `${newSeqPath}/${basename(oldShotPath)}`;
+      if (
+        get().shotsInSequence.includes(targetShotPath) &&
+        get().shotPath !== targetShotPath
+      ) {
+        await get().setShot(targetShotPath);
+      }
+    }
+
+    // script.md heading rewrite (silent no-op when no matching # heading).
+    const scriptState = useScriptStore.getState();
+    const nextRaw = rewriteScriptHeading(
+      scriptState.raw,
+      1,
+      oldSeqBase,
+      trimmed,
+    );
+    if (nextRaw !== scriptState.raw) {
+      await scriptState.save(projectPath, nextRaw).catch(() => {
+        /* swallow */
+      });
+    }
+  },
+
+  async renameShot(newName) {
+    const { projectPath, sequencePath, shotPath } = get();
+    if (!projectPath) throw new Error("no project");
+    if (!sequencePath) throw new Error("no sequence");
+    if (!shotPath) throw new Error("no shot to rename");
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error("name cannot be empty");
+
+    const oldShotPath = shotPath;
+    const oldShotBase = basename(oldShotPath);
+
+    const jobs = useGenerationStore.getState().jobs;
+    const inFlight = jobs.filter(
+      (j) =>
+        (j.shotPath === oldShotPath ||
+          j.shotPath.startsWith(oldShotPath + "/")) &&
+        j.status !== "done" &&
+        j.status !== "failed" &&
+        j.status !== "cancelled",
+    );
+    if (inFlight.length > 0) {
+      throw new Error(
+        `Cannot rename — ${inFlight.length} job${
+          inFlight.length > 1 ? "s are" : " is"
+        } running in this shot.`,
+      );
+    }
+
+    const newShotPath = await cmd.shot_rename(oldShotPath, trimmed);
+    if (newShotPath === oldShotPath) return;
+
+    useTimelineStore.getState().renameShotPathPrefix(oldShotPath, newShotPath);
+    useGenerationStore.getState().rewriteRefImagePaths(oldShotPath, newShotPath);
+
+    const { shots } = await cmd.sequence_open(sequencePath);
+    set({ shotsInSequence: shots });
+    await get().setShot(newShotPath);
+
+    const scriptState = useScriptStore.getState();
+    const nextRaw = rewriteScriptHeading(
+      scriptState.raw,
+      2,
+      oldShotBase,
+      trimmed,
+    );
+    if (nextRaw !== scriptState.raw) {
+      await scriptState.save(projectPath, nextRaw).catch(() => {
+        /* swallow */
+      });
+    }
   },
 
   async createNextVersion() {
@@ -222,6 +389,13 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   },
 
   setSelectedImage(path) {
+    if (path !== null) {
+      const tl = useTimelineStore.getState();
+      if (tl.playing || tl.playheadSec > 0) {
+        tl.pause();
+        tl.restart();
+      }
+    }
     set({ selectedImagePath: path });
   },
 
@@ -249,6 +423,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     set({ viewMode: mode });
     if (mode === "starred") {
       void get().rescanStarred();
+    } else if (mode === "stacked") {
+      void get().rescanSequenceStacks();
     }
   },
 
@@ -264,6 +440,22 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       set({ starredGroups: groups, starredLoading: false });
     } catch (e) {
       set({ starredLoading: false });
+      throw e;
+    }
+  },
+
+  async rescanSequenceStacks() {
+    const { sequencePath } = get();
+    if (!sequencePath) {
+      set({ sequenceStacks: null, sequenceStacksLoading: false });
+      return;
+    }
+    set({ sequenceStacksLoading: true });
+    try {
+      const stacks = await cmd.sequence_stacks_scan(sequencePath);
+      set({ sequenceStacks: stacks, sequenceStacksLoading: false });
+    } catch (e) {
+      set({ sequenceStacksLoading: false });
       throw e;
     }
   },
@@ -296,7 +488,28 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   },
   hydrateShotSidecar(sidecar) {
     const entries = sidecar?.promptHistory ?? [];
-    set({ shotHistory: { entries, cursor: entries.length } });
+    set({
+      shotHistory: { entries, cursor: entries.length },
+      versionComments: sidecar?.versionComments ?? {},
+    });
+  },
+
+  async setVersionComment(version, comment) {
+    const shotPath = get().shotPath;
+    if (!shotPath) return;
+    const trimmed = comment.trim();
+    try {
+      await cmd.shot_version_comment_set(shotPath, version, trimmed || null);
+    } catch (e) {
+      console.error("[versionComment] save failed", e);
+      throw e;
+    }
+    set((s) => {
+      const next = { ...s.versionComments };
+      if (trimmed) next[version] = trimmed;
+      else delete next[version];
+      return { versionComments: next };
+    });
   },
 
   setGalleryHeight(n) {
@@ -307,5 +520,8 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   },
   setLogHeight(n) {
     set({ logHeight: clamp(n, LOG_H_MIN, LOG_H_MAX) });
+  },
+  setTimelineHeight(n) {
+    set({ timelineHeight: clamp(n, TIMELINE_H_MIN, TIMELINE_H_MAX) });
   },
 }));

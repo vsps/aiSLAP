@@ -219,13 +219,23 @@ export function ImageZoomModal({
           onClose={() => setMenuPos(null)}
           items={[
             "add_to_refs",
+            "copy_settings",
+            "---",
+            "zoom",
+            "edit",
+            "crop",
+            "trace",
+            "---",
+            "toggle_star",
+            "set_clip_media",
+            "---",
+            "copy_prompt",
             "copy_path",
             "copy_image",
-            "copy_prompt",
-            "copy_settings",
-            "trace",
-            "refresh",
+            "copy_to_global_src",
             "open_location",
+            "rename",
+            "---",
             "delete",
           ]}
         />

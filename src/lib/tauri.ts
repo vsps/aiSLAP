@@ -1,5 +1,6 @@
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import type {
+  ChainPreset,
   Config,
   AppState,
   ModelEntry,
@@ -7,7 +8,12 @@ import type {
   SequenceSidecar,
   ShotSidecar,
   ImageMetadata,
+  PendingSubmission,
   SeqStarredGroup,
+  SequenceStacks,
+  SequenceTimeline,
+  TimelineInit,
+  TimelineExportParams,
 } from "./types";
 
 // Thin typed wrapper over Tauri commands. Keep names 1:1 with Rust #[tauri::command] fns.
@@ -21,6 +27,11 @@ export const cmd = {
   app_state_load: (): Promise<AppState | null> => rawInvoke("app_state_load"),
   app_state_save: (state: AppState): Promise<void> =>
     rawInvoke("app_state_save", { state }),
+
+  presets_load: (): Promise<{ presets: ChainPreset[] }> =>
+    rawInvoke("presets_load"),
+  presets_save: (data: { presets: ChainPreset[] }): Promise<void> =>
+    rawInvoke("presets_save", { data }),
 
   fal_key_get: (): Promise<string> => rawInvoke("fal_key_get"),
   fal_key_set: (key: string): Promise<void> =>
@@ -42,14 +53,39 @@ export const cmd = {
     rawInvoke("sequence_open", { sequencePath }),
   sequence_create: (projectPath: string, name: string): Promise<string> =>
     rawInvoke("sequence_create", { projectPath, name }),
+  sequence_rename: (sequencePath: string, newName: string): Promise<string> =>
+    rawInvoke("sequence_rename", { sequencePath, newName }),
   shot_open: (
     shotPath: string,
   ): Promise<{ columns: GalleryColumn[]; sidecar: ShotSidecar }> =>
     rawInvoke("shot_open", { shotPath }),
   shot_create: (sequencePath: string, name: string): Promise<string> =>
     rawInvoke("shot_create", { sequencePath, name }),
+  shot_rename: (shotPath: string, newName: string): Promise<string> =>
+    rawInvoke("shot_rename", { shotPath, newName }),
   shot_rescan: (shotPath: string): Promise<GalleryColumn[]> =>
     rawInvoke("shot_rescan", { shotPath }),
+  dirs_exist: (paths: string[]): Promise<boolean[]> =>
+    rawInvoke("dirs_exist", { paths }),
+  dir_ensure: (path: string): Promise<void> =>
+    rawInvoke("dir_ensure", { path }),
+
+  // Stacked view
+  sequence_stacks_scan: (sequencePath: string): Promise<SequenceStacks> =>
+    rawInvoke("sequence_stacks_scan", { sequencePath }),
+  shot_version_select_set: (
+    shotPath: string,
+    version: string,
+    filename: string | null,
+  ): Promise<ShotSidecar> =>
+    rawInvoke("shot_version_select_set", { shotPath, version, filename }),
+  version_stack_move: (
+    srcShot: string,
+    srcVersion: string,
+    dstShot: string,
+    dstVersion: string | null,
+  ): Promise<string> =>
+    rawInvoke("version_stack_move", { srcShot, srcVersion, dstShot, dstVersion }),
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),
@@ -72,6 +108,11 @@ export const cmd = {
     prompts: string[],
   ): Promise<ShotSidecar> =>
     rawInvoke("shot_prompts_append", { shotPath, prompts }),
+
+  script_read: (projectPath: string): Promise<string> =>
+    rawInvoke("script_read", { projectPath }),
+  script_write: (projectPath: string, content: string): Promise<void> =>
+    rawInvoke("script_write", { projectPath, content }),
 
   version_create_next: (shotPath: string): Promise<string> =>
     rawInvoke("version_create_next", { shotPath }),
@@ -115,4 +156,41 @@ export const cmd = {
     ffmpegPath: string,
   ): Promise<boolean> =>
     rawInvoke("video_thumbnail_extract", { videoPath, thumbPath, ffmpegPath }),
+
+  // Timeline
+  timeline_init: (seqPath: string): Promise<TimelineInit> =>
+    rawInvoke("timeline_init", { seqPath }),
+  sequence_timeline_save: (
+    seqPath: string,
+    timeline: SequenceTimeline,
+  ): Promise<void> =>
+    rawInvoke("sequence_timeline_save", { seqPath, timeline }),
+  shot_clip_media_set: (
+    shotPath: string,
+    mediaPath: string | null,
+  ): Promise<void> =>
+    rawInvoke("shot_clip_media_set", { shotPath, mediaPath }),
+  shot_version_comment_set: (
+    shotPath: string,
+    version: string,
+    comment: string | null,
+  ): Promise<void> =>
+    rawInvoke("shot_version_comment_set", { shotPath, version, comment }),
+  project_version_prefix_get: (projectPath: string): Promise<string> =>
+    rawInvoke("project_version_prefix_get", { projectPath }),
+  project_version_prefix_set: (
+    projectPath: string,
+    prefix: string,
+  ): Promise<void> =>
+    rawInvoke("project_version_prefix_set", { projectPath, prefix }),
+
+  // Orphan recovery
+  pending_load: (): Promise<PendingSubmission[]> => rawInvoke("pending_load"),
+  pending_add: (record: PendingSubmission): Promise<void> =>
+    rawInvoke("pending_add", { record }),
+  pending_remove: (id: string): Promise<void> =>
+    rawInvoke("pending_remove", { id }),
+
+  timeline_export: (params: TimelineExportParams): Promise<void> =>
+    rawInvoke("timeline_export", { params }),
 };

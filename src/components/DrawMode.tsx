@@ -121,7 +121,10 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
     }
   }, [imgBounds, color, size, erase]);
 
-  // Lazy brush animation loop while drawing
+  // Lazy-brush loop: the brush trails the cursor on a leash of length
+  // `smoothing`. Each frame the brush only moves the slack beyond that radius
+  // toward the cursor, so jittery input is damped into smooth strokes. Runs on
+  // rAF while drawing; with smoothing 0 the brush snaps to the cursor exactly.
   const animateBrush = useCallback(() => {
     const cursor = cursorPosRef.current;
     const brush = brushPosRef.current;
@@ -134,6 +137,7 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
     if (smoothing === 0 || dist <= 1) {
       brushPosRef.current = cursor;
     } else if (dist > smoothing) {
+      // Pull the brush forward by exactly the overshoot past the leash radius.
       const t = 1 - smoothing / dist;
       brushPosRef.current = [brush[0] + dx * t, brush[1] + dy * t];
     }

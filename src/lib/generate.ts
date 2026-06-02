@@ -4,11 +4,16 @@ import { fileSrc } from "./assets";
 import { confirmAction } from "./dialog";
 import { pushLog } from "../stores/logStore";
 import type {
+  ChainLink,
+  ChainLinkPersisted,
+  ChainMetadataBlock,
   Config,
   ImageMetadata,
   Job,
   ModelNode,
+  PendingSubmission,
   RefImage,
+  RefSnapshot,
   RoleAssignment,
   UploadedRef,
 } from "./types";
@@ -17,8 +22,11 @@ import { useSessionStore } from "../stores/sessionStore";
 import { getProvider } from "./providers";
 import type { ProviderOutput, ProviderProgress } from "./providers";
 import { extractErrorMessage } from "./errors";
-import { buildArgs, guessContentType } from "./args";
+import { buildArgs, combinePromptParts, guessContentType } from "./args";
+import { findSequenceBody, findShotBody } from "./script";
+import { useScriptStore } from "../stores/scriptStore";
 import { playSound } from "./audio";
+import { preflightChain } from "./chainValidation";
 // Per-job AbortController. Keyed by job id so cancellation can target one or all.
 const abortControllers = new Map<string, AbortController>();
 
@@ -32,8 +40,52 @@ const jobSpecs = new Map<string, JobSpec>();
 let cachedMaxConcurrent = 3;
 
 // Reentrancy guard for pumpQueue. The pump itself is async because it calls
-// runJob; without this flag, two enqueues could race and over-dispatch.
+// runJob; without this flag, two concurrent enqueues could both enter the
+// dispatch loop and run more than `cachedMaxConcurrent` jobs at once.
 let pumping = false;
+
+// Length of the short id prefix shown in log lines (e.g. "a1b2c3").
+const SHORT_ID_LEN = 6;
+const shortId = (id: string) => id.slice(0, SHORT_ID_LEN);
+
+/** Load Config over IPC, swallowing errors (returns null if unavailable). */
+async function loadConfigSafely(): Promise<Config | null> {
+  return (await cmd.config_load().catch(() => null)) as Config | null;
+}
+
+/** Trim each prompt and drop the empties. */
+function nonEmptyTrimmed(prompts: string[]): string[] {
+  return prompts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/** Append sequence + shot prompt history to their sidecars and hydrate the
+ *  session store so the navigation UI reflects them immediately. Best-effort:
+ *  failures are non-fatal and swallowed so a history hiccup never blocks a
+ *  generation. */
+async function appendPromptHistories(
+  sequencePath: string | null | undefined,
+  sequenceText: string,
+  shotPath: string,
+  shotPrompts: string[],
+): Promise<void> {
+  if (sequencePath && sequenceText.length > 0) {
+    try {
+      const sidecar = await cmd.sequence_prompt_append(sequencePath, sequenceText);
+      useSessionStore.getState().hydrateSequenceSidecar(sidecar);
+    } catch {
+      /* swallow — history append failures are non-fatal */
+    }
+  }
+  const panels = nonEmptyTrimmed(shotPrompts);
+  if (panels.length > 0) {
+    try {
+      const sidecar = await cmd.shot_prompts_append(shotPath, panels);
+      useSessionStore.getState().hydrateShotSidecar(sidecar);
+    } catch {
+      /* swallow — history append failures are non-fatal */
+    }
+  }
+}
 
 
 type JobSpec = {
@@ -42,7 +94,10 @@ type JobSpec = {
   node: ModelNode;
   sequencePrompt: string;
   shotPrompts: string[];
-  shotPrompt: string; // combined; used for API + metadata
+  shotPrompt: string; // pre-join of shotPrompts; metadata only
+  /** Final combined prompt actually sent to the API. Computed at enqueue time
+   *  from script segments + sequence/shot prompts respecting inclusion flags. */
+  combinedPrompt: string;
   settings: Record<string, unknown>;
   refs: RefImage[];
   iterations: number;
@@ -50,9 +105,142 @@ type JobSpec = {
   targetVersion: string;
   ffmpegPath: string;
   filenameTemplate: string;
+  /** Chain provenance — set on every link of a multi-link chain submission.
+   *  When present, every output's metadata sidecar inherits this block (the
+   *  runner copies the value into `ChainMetadataBlock` in buildMetadataRecord). */
+  chain?: Omit<ChainMetadataBlock, "nextMediaPaths">;
+  /** Chain-runner hooks. Invoked once each at terminal job status.
+   *  outputs[] is the absolute on-disk paths written by this job. */
+  onComplete?: (outputs: string[]) => void;
+  onFailed?: (err: unknown) => void;
+  onCancelled?: () => void;
 };
 
+/** Build the final combined prompt for a link respecting inclusion flags and
+ *  the loaded script segments matched against current sequence/shot folders. */
+function buildCombinedForLink(
+  link: ChainLink,
+  sequencePath: string | null,
+  shotPath: string | null,
+): string {
+  const parsed = useScriptStore.getState().parsed;
+  const seqName = sequencePath ? basename(sequencePath) : "";
+  const shotName = shotPath ? basename(shotPath) : "";
+  const sequenceScript = seqName ? findSequenceBody(parsed, seqName) : "";
+  const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
+  const shotIncludes = link.shotPromptsIncluded ?? link.shotPrompts.map(() => true);
+  return combinePromptParts({
+    sequenceScript,
+    sequencePrompt: link.sequencePrompt,
+    shotScript,
+    shotPrompts: link.shotPrompts,
+    includes: {
+      sequenceScript: link.sequenceScriptIncluded !== false,
+      sequencePrompt: link.sequencePromptIncluded !== false,
+      shotScript: link.shotScriptIncluded !== false,
+      shotPrompts: link.shotPrompts.map((_, i) => shotIncludes[i] !== false),
+    },
+  });
+}
+
+/** Fan a link's shot prompts out into one combined prompt per included,
+ *  non-empty shot prompt. Shared parts (sequence script + sequence prompt +
+ *  shot script) are prepended to each — respecting their inclusion flags —
+ *  exactly like buildCombinedForLink, but only one shot prompt per entry.
+ *  When no shot prompt qualifies but a shared header exists, returns a single
+ *  header-only entry. Returns [] only when everything is empty. */
+function buildPromptsForLink(
+  link: ChainLink,
+  sequencePath: string | null,
+  shotPath: string | null,
+): { combined: string; shotPrompt: string }[] {
+  const parsed = useScriptStore.getState().parsed;
+  const seqName = sequencePath ? basename(sequencePath) : "";
+  const shotName = shotPath ? basename(shotPath) : "";
+  const sequenceScript = seqName ? findSequenceBody(parsed, seqName) : "";
+  const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
+  const shotIncludes = link.shotPromptsIncluded ?? link.shotPrompts.map(() => true);
+  const headerIncludes = {
+    sequenceScript: link.sequenceScriptIncluded !== false,
+    sequencePrompt: link.sequencePromptIncluded !== false,
+    shotScript: link.shotScriptIncluded !== false,
+  };
+
+  const runs: { combined: string; shotPrompt: string }[] = [];
+  link.shotPrompts.forEach((sp, i) => {
+    if (shotIncludes[i] === false) return;
+    if (sp.trim().length === 0) return;
+    const combined = combinePromptParts({
+      sequenceScript,
+      sequencePrompt: link.sequencePrompt,
+      shotScript,
+      shotPrompts: [sp],
+      includes: { ...headerIncludes, shotPrompts: [true] },
+    });
+    if (combined.length > 0) runs.push({ combined, shotPrompt: sp.trim() });
+  });
+
+  if (runs.length === 0) {
+    const headerOnly = combinePromptParts({
+      sequenceScript,
+      sequencePrompt: link.sequencePrompt,
+      shotScript,
+      shotPrompts: [],
+      includes: { ...headerIncludes, shotPrompts: [] },
+    });
+    if (headerOnly.length > 0) runs.push({ combined: headerOnly, shotPrompt: "" });
+  }
+  return runs;
+}
+
 /** Preflight ref-role check. Returns false when the user cancels. */
+/** Single-line, 120-char-max snapshot of a shot prompt for the queue checklist. */
+function previewShotPrompt(s: string): string {
+  return s.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+/** Build a PendingSubmission record from the JobSpec for the iteration that
+ *  just got a requestId back from the provider. Used by the orphan-recovery
+ *  layer; written before we wait for the result and removed once the file
+ *  is on disk (or the iteration aborts non-resumably). */
+function buildPendingRecord(
+  pendingId: string,
+  spec: JobSpec,
+  iterationIndex: number,
+  requestId: string,
+): PendingSubmission {
+  const provider: "fal" | "replicate" =
+    spec.node.provider === "replicate" ? "replicate" : "fal";
+  return {
+    id: pendingId,
+    provider,
+    endpoint: spec.node.endpoint,
+    requestId,
+    shotPath: spec.shotPath,
+    targetVersion: spec.targetVersion,
+    ffmpegPath: spec.ffmpegPath,
+    filenameTemplate: spec.filenameTemplate,
+    modelId: spec.node.id,
+    modelName: spec.node.name,
+    modelEndpoint: spec.node.endpoint,
+    modelProvider: provider,
+    batchField: spec.node.batch_field,
+    sequencePrompt: spec.sequencePrompt,
+    shotPrompt: spec.shotPrompt,
+    shotPrompts: spec.shotPrompts,
+    combinedPrompt: spec.combinedPrompt,
+    settings: { ...spec.settings },
+    refs: spec.refs.map((r) => ({
+      path: r.path,
+      roleAssignment: r.roleAssignment ?? null,
+    })),
+    iterations: spec.iterations,
+    iterationIndex,
+    chain: spec.chain ?? null,
+    enqueuedAt: new Date().toISOString(),
+  };
+}
+
 async function preflightRefs(
   node: ModelNode,
   refs: RefImage[],
@@ -100,21 +288,16 @@ export async function enqueueGeneration(): Promise<void> {
     return;
   }
 
-  const shotCombined = gen.shotPrompts
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
-  const combined = [gen.sequencePrompt, shotCombined]
-    .filter((s) => s.trim().length > 0)
-    .join("\n\n");
-  if (combined.length === 0) {
+  const activeLink = gen.expandedIdx != null ? gen.links[gen.expandedIdx] : gen.links[0];
+  const runs = buildPromptsForLink(activeLink, session.sequencePath, session.shotPath);
+  if (runs.length === 0) {
     gen.setError("Both prompts are empty.");
     return;
   }
 
   if (!(await preflightRefs(node, gen.refImages))) return;
 
-  const config = (await cmd.config_load().catch(() => null)) as Config | null;
+  const config = await loadConfigSafely();
   const ffmpegPath = config?.ffmpegPath ?? "";
   const filenameTemplate = config?.filenameTemplate ?? "";
   cachedMaxConcurrent = Math.max(1, config?.maxConcurrentJobs ?? 3);
@@ -134,72 +317,292 @@ export async function enqueueGeneration(): Promise<void> {
     useSessionStore.setState({ targetVersion });
   }
 
-  const id = crypto.randomUUID();
-  const tag = id.slice(0, 6);
-  const shotPrompts = gen.shotPrompts.slice();
-  const shotPrompt = shotPrompts
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
   const iterations = Math.max(1, gen.iterations | 0);
+  const sequencePromptText = gen.sequencePrompt;
+  const allShotPrompts = gen.shotPrompts.slice();
+  const baseSettings = { ...gen.settings };
+  const baseRefs = gen.refImages.slice();
 
-  const spec: JobSpec = {
-    id,
-    tag,
-    node,
-    sequencePrompt: gen.sequencePrompt,
-    shotPrompts,
-    shotPrompt,
-    settings: { ...gen.settings },
-    refs: gen.refImages.slice(),
-    iterations,
-    shotPath: session.shotPath,
-    targetVersion,
-    ffmpegPath,
-    filenameTemplate,
-  };
-  jobSpecs.set(id, spec);
+  // Fan out: one queued job per shot prompt. They run in parallel up to the
+  // concurrency cap once pumpQueue dispatches below.
+  for (const run of runs) {
+    const id = crypto.randomUUID();
+    const tag = shortId(id);
 
-  const job: Job = {
-    id,
-    status: "queued",
-    progressMessage: "Queued",
-    currentIteration: 0,
-    iterations,
-    modelName: node.name,
-    shotPath: session.shotPath,
-    targetVersion,
-    startedAt: performance.now(),
-  };
-  gen.addJob(job);
+    const spec: JobSpec = {
+      id,
+      tag,
+      node,
+      sequencePrompt: sequencePromptText,
+      shotPrompts: run.shotPrompt ? [run.shotPrompt] : [],
+      shotPrompt: run.shotPrompt,
+      combinedPrompt: run.combined,
+      settings: { ...baseSettings },
+      refs: baseRefs.slice(),
+      iterations,
+      shotPath: session.shotPath,
+      targetVersion,
+      ffmpegPath,
+      filenameTemplate,
+    };
+    jobSpecs.set(id, spec);
+
+    const job: Job = {
+      id,
+      status: "queued",
+      progressMessage: "Queued",
+      currentIteration: 0,
+      iterations,
+      completedIterations: 0,
+      modelName: node.name,
+      shotPath: session.shotPath,
+      targetVersion,
+      startedAt: performance.now(),
+      enqueuedAt: new Date().toISOString(),
+      shotPromptPreview: previewShotPrompt(spec.shotPrompt),
+    };
+    gen.addJob(job);
+    pushLog("INFO", `Queued: ${node.name}`, tag);
+  }
   gen.setError(null);
 
-  pushLog("INFO", `Queued: ${node.name}`, tag);
-
   // Append prompt histories synchronously at submit time so the navigation UI
-  // reflects the latest prompts even before the job is dispatched.
-  if (session.sequencePath && spec.sequencePrompt.length > 0) {
-    try {
-      const sidecar = await cmd.sequence_prompt_append(
-        session.sequencePath,
-        spec.sequencePrompt,
-      );
-      useSessionStore.getState().hydrateSequenceSidecar(sidecar);
-    } catch {
-      /* swallow — history append failures are non-fatal */
-    }
-  }
-  const nonEmptyPanels = spec.shotPrompts.map((p) => p.trim()).filter((p) => p.length > 0);
-  if (nonEmptyPanels.length > 0) {
-    try {
-      const sidecar = await cmd.shot_prompts_append(spec.shotPath, nonEmptyPanels);
-      useSessionStore.getState().hydrateShotSidecar(sidecar);
-    } catch {
-      /* swallow */
-    }
-  }
+  // reflects the latest prompts even before the jobs are dispatched.
+  await appendPromptHistories(
+    session.sequencePath,
+    sequencePromptText,
+    session.shotPath,
+    allShotPrompts,
+  );
 
   void pumpQueue();
+}
+
+// ---------- Chain submission ----------
+
+function persistLink(l: ChainLink): ChainLinkPersisted {
+  return {
+    id: l.id,
+    active: l.active,
+    modelId: l.model?.id ?? null,
+    settings: l.settings,
+    sequencePrompt: l.sequencePrompt,
+    shotPrompts: l.shotPrompts,
+    refImages: l.refImages,
+    consumesPrev: l.consumesPrev,
+    sequencePromptIncluded: l.sequencePromptIncluded,
+    sequenceScriptIncluded: l.sequenceScriptIncluded,
+    shotScriptIncluded: l.shotScriptIncluded,
+    shotPromptsIncluded: l.shotPromptsIncluded,
+  };
+}
+
+/** Pick a role for the synthetic chain_prev ref so it lands in the right
+ *  API slot. Defaults to null when the model has neither a "start" nor a
+ *  "source" role (args.ts's fallback then routes it as an element/source). */
+function chainPrevRole(model: ModelNode, prevPath: string): RoleAssignment | null {
+  const roles = model.ref_roles ?? [];
+  const isVideo = /\.(mp4|webm|mov|mkv|m4v|avi)$/i.test(prevPath);
+  // Video → prefer source (img2img / vid2vid).
+  // Image → prefer start (img → video), else source.
+  if (isVideo && roles.some((r) => r.role === "source")) return { kind: "source" };
+  if (!isVideo && roles.some((r) => r.role === "start")) return { kind: "start" };
+  if (roles.some((r) => r.role === "source")) return { kind: "source" };
+  return null;
+}
+
+/** Enqueue a multi-link chain. Each active link runs sequentially; the
+ *  previous link's first output is fed as a synthetic ref to the next.
+ *  The final link runs `iterations` times. Cancellation of any step
+ *  aborts the rest of the chain. */
+export async function enqueueChain(): Promise<void> {
+  const gen = useGenerationStore.getState();
+  const session = useSessionStore.getState();
+
+  const links = gen.links;
+  const activeLinks = links.filter((l) => l.active);
+  if (activeLinks.length === 0) {
+    gen.setError("Chain has no active links.");
+    return;
+  }
+  // When the whole chain reduces to one link and that link is the lone
+  // member, use the existing single-shot path so today's metadata stays
+  // identical. With multiple defined-but-skipped links present, fall
+  // through to the chain runner so its sole active link is still selected
+  // correctly (mirrors may not point at it).
+  if (activeLinks.length === 1 && links.length === 1) {
+    return enqueueGeneration();
+  }
+  const errors = preflightChain(links).filter((p) => p.severity === "error");
+  if (errors.length > 0) {
+    gen.setError(`Chain preflight failed: ${errors[0].message}`);
+    return;
+  }
+  if (!session.shotPath) {
+    gen.setError("Open a shot first.");
+    return;
+  }
+  const headLink = activeLinks[0];
+  if (!headLink.model) {
+    gen.setError("Head link has no model.");
+    return;
+  }
+
+  // Use today's preflight on the head link only — downstream links receive
+  // a synthetic prev-ref so their role expectations are met automatically.
+  if (!(await preflightRefs(headLink.model, headLink.refImages))) return;
+
+  const config = await loadConfigSafely();
+  const ffmpegPath = config?.ffmpegPath ?? "";
+  const filenameTemplate = config?.filenameTemplate ?? "";
+  cachedMaxConcurrent = Math.max(1, config?.maxConcurrentJobs ?? 3);
+
+  try {
+    await getProvider(headLink.model.provider).prepare();
+  } catch (e) {
+    gen.setError(e instanceof Error ? e.message : String(e));
+    return;
+  }
+
+  let targetVersion = session.targetVersion;
+  if (!targetVersion || targetVersion === "SRC") {
+    targetVersion = await cmd.version_create_next(session.shotPath);
+    useSessionStore.setState({ targetVersion });
+  }
+
+  // Append history once from the head link (per design decision: chain
+  // submissions log only the entrance into the chain).
+  await appendPromptHistories(
+    session.sequencePath,
+    headLink.sequencePrompt,
+    session.shotPath,
+    headLink.shotPrompts,
+  );
+
+  const chainId = crypto.randomUUID();
+  const linksSnapshot = links.map(persistLink);
+  const iterations = Math.max(1, gen.iterations | 0);
+  const shotPath = session.shotPath;
+  const tFfmpeg = ffmpegPath;
+  const tTemplate = filenameTemplate;
+
+  pushLog("INFO", `Chain started · ${activeLinks.length} links`, shortId(chainId));
+
+  // Fire-and-forget driver — runs each link, awaits, feeds the next.
+  void (async () => {
+    let prevMediaPath: string | null = null;
+    for (let i = 0; i < activeLinks.length; i++) {
+      const link = activeLinks[i];
+      if (!link.model) break;
+      const isLast = i === activeLinks.length - 1;
+
+      const linkRefs: RefImage[] = link.refImages.filter(
+        (r) => r.roleAssignment?.kind !== "chain_prev",
+      );
+      if (link.consumesPrev && prevMediaPath) {
+        linkRefs.unshift({
+          path: prevMediaPath,
+          roleAssignment: chainPrevRole(link.model, prevMediaPath),
+        });
+      }
+
+      const id = crypto.randomUUID();
+      const tag = shortId(id);
+      const combinedShot = nonEmptyTrimmed(link.shotPrompts).join("\n\n");
+
+      const linkCombined = buildCombinedForLink(link, session.sequencePath, shotPath);
+      const spec: JobSpec = {
+        id,
+        tag,
+        node: link.model,
+        sequencePrompt: link.sequencePrompt,
+        shotPrompts: link.shotPrompts.slice(),
+        shotPrompt: combinedShot,
+        combinedPrompt: linkCombined,
+        settings: { ...link.settings },
+        refs: linkRefs,
+        // Only the final link honors the iterations field; intermediates run once.
+        iterations: isLast ? iterations : 1,
+        shotPath,
+        targetVersion: targetVersion!,
+        ffmpegPath: tFfmpeg,
+        filenameTemplate: tTemplate,
+        chain: {
+          chainId,
+          linkIndex: i,
+          linkCount: activeLinks.length,
+          prevMediaPath: prevMediaPath ?? undefined,
+          links: linksSnapshot,
+        },
+      };
+
+      const outputs = await queueAndAwait(spec);
+      if (outputs == null || outputs.length === 0) {
+        pushLog("INFO", `Chain aborted at link ${i + 1}`, shortId(chainId));
+        return;
+      }
+
+      // Backfill predecessor sidecar with downstream paths so a future
+      // restore-chain knows the full graph.
+      if (prevMediaPath) {
+        await appendChainNextMediaPaths(prevMediaPath, outputs).catch(() => {
+          /* swallow — backfill is best-effort */
+        });
+      }
+
+      prevMediaPath = outputs[0];
+    }
+    pushLog("SUCCESS", "Chain finished", shortId(chainId));
+  })();
+}
+
+function queueAndAwait(spec: JobSpec): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    spec.onComplete = (outs) => resolve(outs);
+    spec.onFailed = () => resolve(null);
+    spec.onCancelled = () => resolve(null);
+
+    const job: Job = {
+      id: spec.id,
+      status: "queued",
+      progressMessage: spec.chain
+        ? `Queued (link ${spec.chain.linkIndex + 1}/${spec.chain.linkCount})`
+        : "Queued",
+      currentIteration: 0,
+      iterations: spec.iterations,
+      completedIterations: 0,
+      modelName: spec.node.name,
+      shotPath: spec.shotPath,
+      targetVersion: spec.targetVersion,
+      startedAt: performance.now(),
+      enqueuedAt: new Date().toISOString(),
+      shotPromptPreview: previewShotPrompt(spec.shotPrompt),
+    };
+    jobSpecs.set(spec.id, spec);
+    useGenerationStore.getState().addJob(job);
+    void pumpQueue();
+  });
+}
+
+/** Backfill the chain.nextMediaPaths array on a predecessor's sidecar. */
+async function appendChainNextMediaPaths(
+  prevMediaPath: string,
+  newOutputs: string[],
+): Promise<void> {
+  const meta = (await cmd
+    .image_metadata_read(prevMediaPath)
+    .catch(() => null)) as ImageMetadata | null;
+  if (!meta || !meta.chain) return;
+  const existing = meta.chain.nextMediaPaths ?? [];
+  const merged = [...existing];
+  for (const o of newOutputs) {
+    if (!merged.includes(o)) merged.push(o);
+  }
+  const next: ImageMetadata = {
+    ...meta,
+    chain: { ...meta.chain, nextMediaPaths: merged },
+  };
+  await cmd.image_metadata_write(prevMediaPath, next);
 }
 
 function activeJobCount(): number {
@@ -254,13 +657,14 @@ export function cancelAllGenerations(): void {
     )
       continue;
     if (j.status === "queued") {
+      const spec = jobSpecs.get(j.id);
       jobSpecs.delete(j.id);
       state.updateJob(j.id, {
         status: "cancelled",
         progressMessage: "Cancelled",
       });
-      schedulePrune(j.id);
-      pushLog("INFO", "Cancelled (was queued)", j.id.slice(0, 6));
+      pushLog("INFO", "Cancelled (was queued)", shortId(j.id));
+      spec?.onCancelled?.();
       continue;
     }
     state.updateJob(j.id, {
@@ -269,13 +673,6 @@ export function cancelAllGenerations(): void {
     });
     abortControllers.get(j.id)?.abort();
   }
-}
-
-function schedulePrune(jobId: string, delayMs = 5000): void {
-  setTimeout(() => {
-    useGenerationStore.getState().removeJob(jobId);
-    jobSpecs.delete(jobId);
-  }, delayMs);
 }
 
 /** Runs one job to completion / cancellation / failure. */
@@ -302,8 +699,7 @@ async function runJob(spec: JobSpec): Promise<void> {
 
     const baseArgs = buildArgs(
       spec.node,
-      spec.sequencePrompt,
-      spec.shotPrompt,
+      spec.combinedPrompt,
       spec.settings,
       uploaded,
     );
@@ -323,38 +719,58 @@ async function runJob(spec: JobSpec): Promise<void> {
         currentIteration: k,
         progressMessage: `Generating (${k}/${spec.iterations})…`,
       });
-      const out = await provider.run(
-        spec.node.endpoint,
-        baseArgs,
-        controller.signal,
-        (e) => reportProgress(spec.id, k, spec.iterations, e),
-      );
-      gen.updateJob(spec.id, {
-        status: "downloading",
-        progressMessage: `Downloading (${k}/${spec.iterations})…`,
-      });
-      const outs = await downloadAndWrite({
-        out,
-        node: spec.node,
-        sequencePrompt: spec.sequencePrompt,
-        shotPrompt: spec.shotPrompt,
-        shotPrompts: spec.shotPrompts,
-        settings: spec.settings,
-        refs: uploaded,
-        shotPath: spec.shotPath,
-        versionDir,
-        targetVersion: spec.targetVersion,
-        iterationBase: k,
-        iterationTotal: spec.iterations,
-        expandToIterations: false,
-        ffmpegPath: spec.ffmpegPath,
-        filenameTemplate: spec.filenameTemplate,
-      });
-      totalOutputs.push(...outs);
-      // Rescan only when the freshly-written shot is what the user is viewing;
-      // otherwise the gallery would briefly flicker to the job's shot.
-      if (useSessionStore.getState().shotPath === spec.shotPath) {
-        await useSessionStore.getState().rescanShot();
+      const pendingId = crypto.randomUUID();
+      try {
+        const out = await provider.run(
+          spec.node.endpoint,
+          baseArgs,
+          controller.signal,
+          (e) => reportProgress(spec.id, k, spec.iterations, e),
+          {
+            onSubmitted: async (requestId) => {
+              await cmd
+                .pending_add(buildPendingRecord(pendingId, spec, k, requestId))
+                .catch(() => {
+                  /* persistence is best-effort — never fail the job over it */
+                });
+            },
+          },
+        );
+        gen.updateJob(spec.id, {
+          status: "downloading",
+          progressMessage: `Downloading (${k}/${spec.iterations})…`,
+        });
+        const outs = await downloadAndWrite({
+          out,
+          node: spec.node,
+          sequencePrompt: spec.sequencePrompt,
+          shotPrompt: spec.shotPrompt,
+          shotPrompts: spec.shotPrompts,
+          settings: spec.settings,
+          refs: uploaded,
+          refSnapshots: undefined,
+          shotPath: spec.shotPath,
+          versionDir,
+          targetVersion: spec.targetVersion,
+          iterationBase: k,
+          iterationTotal: spec.iterations,
+          expandToIterations: false,
+          ffmpegPath: spec.ffmpegPath,
+          filenameTemplate: spec.filenameTemplate,
+          chain: spec.chain,
+        });
+        totalOutputs.push(...outs);
+        gen.updateJob(spec.id, { completedIterations: k });
+        // Rescan only when the freshly-written shot is what the user is viewing;
+        // otherwise the gallery would briefly flicker to the job's shot.
+        if (useSessionStore.getState().shotPath === spec.shotPath) {
+          await useSessionStore.getState().rescanShot();
+        }
+      } finally {
+        // Whether the iter succeeded, failed, or was aborted, the pending
+        // record's job is done. Crash-path is the one case `finally` doesn't
+        // fire — that's exactly when the recovery flow picks it up later.
+        await cmd.pending_remove(pendingId).catch(() => {});
       }
     }
 
@@ -368,6 +784,10 @@ async function runJob(spec: JobSpec): Promise<void> {
       if (useSessionStore.getState().shotPath === spec.shotPath) {
         await useSessionStore.getState().rescanShot();
       }
+      spec.onComplete?.(totalOutputs);
+    } else {
+      // Loop exited via abort partway through — surface as cancellation.
+      spec.onCancelled?.();
     }
   } catch (e: unknown) {
     const err = e as { name?: string };
@@ -377,6 +797,7 @@ async function runJob(spec: JobSpec): Promise<void> {
         progressMessage: "Cancelled",
       });
       pushLog("INFO", "Cancelled by user", tag);
+      spec.onCancelled?.();
     } else {
       // Always dump the raw error so dev tools shows every field — wrappers
       // around fetch/SDK errors otherwise lose status/body when stringified.
@@ -390,11 +811,11 @@ async function runJob(spec: JobSpec): Promise<void> {
       });
       gen.setError(msg);
       pushLog("ERROR", msg, tag);
+      spec.onFailed?.(e);
     }
   } finally {
     abortControllers.delete(spec.id);
     jobSpecs.delete(spec.id);
-    schedulePrune(spec.id);
     void pumpQueue();
   }
 }
@@ -451,14 +872,18 @@ async function uploadRefs(
 const DEFAULT_FILENAME_TEMPLATE =
   "<date>_<time>_<sequence>_<shot>_<model>_<version>";
 
-type DownloadCtx = {
+export type DownloadCtx = {
   out: ProviderOutput;
   node: ModelNode;
   sequencePrompt: string;
   shotPrompt: string;
   shotPrompts: string[];
   settings: Record<string, unknown>;
+  /** Uploaded refs (live path). Empty in recovery — see `refSnapshots`. */
   refs: UploadedRef[];
+  /** Alternative source for sidecar refs when `refs` (uploaded) is empty.
+   *  Used by the orphan-recovery driver, which doesn't have upload URLs. */
+  refSnapshots?: RefSnapshot[];
   shotPath: string;
   versionDir: string;
   targetVersion: string;
@@ -467,9 +892,10 @@ type DownloadCtx = {
   expandToIterations: boolean;
   ffmpegPath: string;
   filenameTemplate: string;
+  chain?: Omit<ChainMetadataBlock, "nextMediaPaths">;
 };
 
-async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
+export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   const written: string[] = [];
   const files = ctx.out.files;
   const multipleFiles = files.length > 1;
@@ -519,10 +945,7 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
   }
-  const combined = [ctx.sequencePrompt, ctx.shotPrompt]
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .join("\n\n");
+  const combined = nonEmptyTrimmed([ctx.sequencePrompt, ctx.shotPrompt]).join("\n\n");
   return {
     model: ctx.node.name,
     modelId: ctx.node.id,
@@ -532,14 +955,17 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
     shotPrompts: ctx.shotPrompts,
     combinedPrompt: combined,
     settings: cleaned,
-    refs: ctx.refs.map((r) => ({
-      path: r.ref.path,
-      roleAssignment: r.ref.roleAssignment as RoleAssignment | null,
-    })),
+    refs:
+      ctx.refSnapshots ??
+      ctx.refs.map((r) => ({
+        path: r.ref.path,
+        roleAssignment: r.ref.roleAssignment as RoleAssignment | null,
+      })),
     iterationIndex,
     iterationTotal: ctx.iterationTotal > 1 ? ctx.iterationTotal : undefined,
     timestamp: new Date().toISOString(),
     providerResponse: ctx.out.raw,
+    chain: ctx.chain,
   };
 }
 

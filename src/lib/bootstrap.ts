@@ -1,9 +1,16 @@
 import { cmd } from "./tauri";
 import { basename, joinPath } from "./paths";
 import { applyColors } from "./colors";
-import type { AppState, Config } from "./types";
-import { useGenerationStore } from "../stores/generationStore";
+import type {
+  AppState,
+  ChainLink,
+  ChainLinkPersisted,
+  Config,
+  ModelEntry,
+} from "./types";
+import { makeChainLink, useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
+import { usePresetsStore } from "../stores/presetsStore";
 import { useSessionStore } from "../stores/sessionStore";
 
 function emptyAppState(): AppState {
@@ -24,6 +31,46 @@ function emptyAppState(): AppState {
   };
 }
 
+function toPersisted(l: ChainLink): ChainLinkPersisted {
+  return {
+    id: l.id,
+    active: l.active,
+    modelId: l.model?.id ?? null,
+    settings: l.settings,
+    sequencePrompt: l.sequencePrompt,
+    shotPrompts: l.shotPrompts,
+    refImages: l.refImages,
+    consumesPrev: l.consumesPrev,
+    sequencePromptIncluded: l.sequencePromptIncluded,
+    sequenceScriptIncluded: l.sequenceScriptIncluded,
+    shotScriptIncluded: l.shotScriptIncluded,
+    shotPromptsIncluded: l.shotPromptsIncluded,
+  };
+}
+
+function fromPersisted(p: ChainLinkPersisted, entries: ModelEntry[]): ChainLink {
+  const model = p.modelId
+    ? (entries.find((e) => e.node.id === p.modelId)?.node ?? null)
+    : null;
+  return makeChainLink({
+    id: p.id,
+    active: p.active,
+    model,
+    settings: p.settings ?? {},
+    sequencePrompt: p.sequencePrompt ?? "",
+    shotPrompts:
+      Array.isArray(p.shotPrompts) && p.shotPrompts.length > 0
+        ? p.shotPrompts
+        : [""],
+    refImages: Array.isArray(p.refImages) ? p.refImages : [],
+    consumesPrev: !!p.consumesPrev,
+    sequencePromptIncluded: p.sequencePromptIncluded,
+    sequenceScriptIncluded: p.sequenceScriptIncluded,
+    shotScriptIncluded: p.shotScriptIncluded,
+    shotPromptsIncluded: p.shotPromptsIncluded,
+  });
+}
+
 function currentAppState(): AppState {
   const g = useGenerationStore.getState();
   const s = useSessionStore.getState();
@@ -42,6 +89,8 @@ function currentAppState(): AppState {
     galleryHeight: s.galleryHeight,
     thumbColWidth: s.thumbColWidth,
     logHeight: s.logHeight,
+    chainLinks: g.links.map(toPersisted),
+    chainExpandedIdx: g.expandedIdx,
   };
 }
 
@@ -50,13 +99,15 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 export async function bootstrap(): Promise<() => void> {
-  // Kick off models load early (independent).
+  // Kick off models + presets load early (independent).
   const modelsPromise = useModelsStore.getState().loadAll();
+  const presetsPromise = usePresetsStore.getState().loadAll();
 
   const [appStateRaw, configRaw] = await Promise.all([
     cmd.app_state_load().catch(() => null),
     cmd.config_load().catch(() => null),
     modelsPromise,
+    presetsPromise,
   ]);
   const appState: AppState = isRecord(appStateRaw)
     ? (appStateRaw as unknown as AppState)
@@ -68,39 +119,40 @@ export async function bootstrap(): Promise<() => void> {
   // Always apply colors at startup so CSS variables are explicit inline values.
   applyColors(config?.colors);
 
-  // Apply model selection (before settings so defaults don't overwrite persisted).
   const entries = useModelsStore.getState().entries;
-  const persistedModel = appState.lastModel
-    ? (entries.find((e) => e.node.id === appState.lastModel)?.node ?? null)
-    : null;
   const gen = useGenerationStore.getState();
-  if (persistedModel) gen.selectModel(persistedModel);
 
-  // Apply remaining generation state.
-  const persistedSettings = (appState.settings ?? {}) as Record<
-    string,
-    unknown
-  >;
-  if (
-    persistedModel &&
-    persistedSettings &&
-    typeof persistedSettings === "object"
-  ) {
-    for (const [k, v] of Object.entries(persistedSettings)) {
-      gen.setSetting(k, v);
+  if (Array.isArray(appState.chainLinks) && appState.chainLinks.length > 0) {
+    // New-format chain: restore the full link array.
+    const links = appState.chainLinks.map((p) => fromPersisted(p, entries));
+    gen.setChain(links, appState.chainExpandedIdx ?? 0);
+  } else {
+    // Legacy single-link state: rebuild a one-link chain from flat fields.
+    const persistedModel = appState.lastModel
+      ? (entries.find((e) => e.node.id === appState.lastModel)?.node ?? null)
+      : null;
+    if (persistedModel) gen.selectModel(persistedModel);
+    const persistedSettings = (appState.settings ?? {}) as Record<string, unknown>;
+    if (
+      persistedModel &&
+      persistedSettings &&
+      typeof persistedSettings === "object"
+    ) {
+      for (const [k, v] of Object.entries(persistedSettings)) {
+        gen.setSetting(k, v);
+      }
     }
+    gen.setSequencePrompt(appState.sequencePrompt ?? "");
+    const persistedShotPrompts =
+      Array.isArray(appState.shotPrompts) && appState.shotPrompts.length > 0
+        ? appState.shotPrompts
+        : appState.shotPrompt
+          ? [appState.shotPrompt]
+          : [""];
+    gen.setShotPrompts(persistedShotPrompts);
+    gen.setRefImages(appState.refImages ?? []);
   }
-  gen.setSequencePrompt(appState.sequencePrompt ?? "");
-  // Migration: prefer the new array; fall back to the legacy single string.
-  const persistedShotPrompts =
-    Array.isArray(appState.shotPrompts) && appState.shotPrompts.length > 0
-      ? appState.shotPrompts
-      : appState.shotPrompt
-        ? [appState.shotPrompt]
-        : [""];
-  gen.setShotPrompts(persistedShotPrompts);
   gen.setIterations(appState.iterations ?? 1);
-  useGenerationStore.setState({ refImages: appState.refImages ?? [] });
 
   // Restore UI layout prefs (clamped by store setters).
   if (typeof appState.galleryHeight === "number") {
