@@ -61,49 +61,28 @@ jobs:
           VERSION="${{ steps.pkg.outputs.version }}"
           TAG="aiSLAP-v${VERSION}"
           BASE="https://github.com/vsps/aiSLAP/releases/download/${TAG}"
-
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges | head -80)
           else
             CHANGELOG=$(git log --pretty=format:"- %s" --no-merges | head -80)
           fi
-
-          BODY=$(cat <<RELEASE_BODY
-## What's changed
-
-${CHANGELOG}
-
----
-
-## Downloads
-
-> **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.
-> **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.
-
-### Windows
-| | |
-|---|---|
-| MSI installer | [aiSLAP_${VERSION}_x64_en-US.msi](${BASE}/aiSLAP_${VERSION}_x64_en-US.msi) |
-| EXE installer | [aiSLAP_${VERSION}_x64-setup.exe](${BASE}/aiSLAP_${VERSION}_x64-setup.exe) |
-
-### macOS
-| | |
-|---|---|
-| Apple Silicon (M-series) | [aiSLAP_${VERSION}_aarch64.dmg](${BASE}/aiSLAP_${VERSION}_aarch64.dmg) |
-| Intel | [aiSLAP_${VERSION}_x64.dmg](${BASE}/aiSLAP_${VERSION}_x64.dmg) |
-
-### Linux
-| | |
-|---|---|
-| AppImage | [aiSLAP_${VERSION}_amd64.AppImage](${BASE}/aiSLAP_${VERSION}_amd64.AppImage) |
-| .deb | [aiSLAP_${VERSION}_amd64.deb](${BASE}/aiSLAP_${VERSION}_amd64.deb) |
-RELEASE_BODY
-)
-
+          BODY_FILE=$(mktemp)
+          printf "## What's changed\n\n%s\n\n---\n\n" "$CHANGELOG" >> "$BODY_FILE"
+          printf "> **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.\n" >> "$BODY_FILE"
+          printf "> **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.\n\n" >> "$BODY_FILE"
+          printf "### Windows\n| | |\n|---|---|\n" >> "$BODY_FILE"
+          printf "| MSI installer | [aiSLAP_%s_x64_en-US.msi](%s/aiSLAP_%s_x64_en-US.msi) |\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
+          printf "| EXE installer | [aiSLAP_%s_x64-setup.exe](%s/aiSLAP_%s_x64-setup.exe) |\n\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
+          printf "### macOS\n| | |\n|---|---|\n" >> "$BODY_FILE"
+          printf "| Apple Silicon (M-series) | [aiSLAP_%s_aarch64.dmg](%s/aiSLAP_%s_aarch64.dmg) |\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
+          printf "| Intel | [aiSLAP_%s_x64.dmg](%s/aiSLAP_%s_x64.dmg) |\n\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
+          printf "### Linux\n| | |\n|---|---|\n" >> "$BODY_FILE"
+          printf "| AppImage | [aiSLAP_%s_amd64.AppImage](%s/aiSLAP_%s_amd64.AppImage) |\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
+          printf "| .deb | [aiSLAP_%s_amd64.deb](%s/aiSLAP_%s_amd64.deb) |\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
           {
             printf '%s\n' 'body<<RELEASE_EOF'
-            printf '%s\n' "$BODY"
+            cat "$BODY_FILE"
             printf '%s\n' 'RELEASE_EOF'
           } >> "$GITHUB_OUTPUT"
 
