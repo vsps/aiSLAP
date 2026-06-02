@@ -60,7 +60,6 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 - LLM prompt enhancement
 - prompt history
 - full metadata sidecar saved with media.
-
  
 ![aiSLAP](https://github.com/user-attachments/assets/dd66d818-f5a0-4ad3-b5e3-4c6ad7b881c9)
 
