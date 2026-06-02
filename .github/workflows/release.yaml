@@ -6,6 +6,7 @@ permissions:
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   check-version:
@@ -20,7 +21,9 @@ jobs:
       - name: Check if version files changed
         id: check-changes
         run: |
-          if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -qE '^(package\.json|src-tauri/Cargo\.toml|src-tauri/tauri\.conf\.json)$'; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -qE '^(package\.json|src-tauri/Cargo\.toml|src-tauri/tauri\.conf\.json)$'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
