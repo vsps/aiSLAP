@@ -121,9 +121,10 @@ export const Thumbnail = memo(function Thumbnail({
   }
 
   const tooltipPrompt = tooltipMeta
-    ? [tooltipMeta.sequencePrompt, ...(tooltipMeta.shotPrompts ?? (tooltipMeta.shotPrompt ? [tooltipMeta.shotPrompt] : [tooltipMeta.prompt]))]
-        .filter(Boolean)
-        .join(" / ")
+    ? (tooltipMeta.combinedPrompt ||
+       [tooltipMeta.sequencePrompt, ...(tooltipMeta.shotPrompts ?? (tooltipMeta.shotPrompt ? [tooltipMeta.shotPrompt] : [tooltipMeta.prompt ?? ""]))]
+         .filter(Boolean)
+         .join(" "))
     : null;
 
   if (hidden) return null;

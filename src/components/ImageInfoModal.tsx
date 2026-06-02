@@ -24,9 +24,10 @@ export function ImageInfoModal({ path, onClose }: Props) {
   }, []);
 
   const prompt = meta && meta !== "loading"
-    ? [meta.sequencePrompt, ...(meta.shotPrompts ?? (meta.shotPrompt ? [meta.shotPrompt] : []) ?? [meta.prompt])]
-        .filter(Boolean)
-        .join(" / ")
+    ? (meta.combinedPrompt ||
+       [meta.sequencePrompt, ...(meta.shotPrompts ?? (meta.shotPrompt ? [meta.shotPrompt] : [meta.prompt ?? ""]))]
+         .filter(Boolean)
+         .join(" "))
     : null;
 
   return (
