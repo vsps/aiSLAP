@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
 import { usePresetsStore } from "../stores/presetsStore";
 import { IconBtn } from "./IconBtn";
+import { ModalDialog } from "./ModalDialog";
 
 type Props = {
   onClose: () => void;
@@ -8,15 +8,6 @@ type Props = {
 
 export function ChainPresetLoadModal({ onClose }: Props) {
   const { presets, delete: deletePreset, applyPreset } = usePresetsStore();
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   function fmtDate(iso: string): string {
     try {
@@ -31,16 +22,11 @@ export function ChainPresetLoadModal({ onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
-      onClick={onClose}
+    <ModalDialog
+      title="Load chain preset"
+      onClose={onClose}
+      panelClassName="w-[420px] max-h-[70vh] gap-2"
     >
-      <div
-        ref={panelRef}
-        className="bg-panel text-text border border-dim p-4 w-[420px] max-h-[70vh] flex flex-col gap-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="text-sm font-semibold">Load chain preset</div>
         {presets.length === 0 ? (
           <div className="text-xs opacity-50 py-4 text-center">No presets saved yet</div>
         ) : (
@@ -86,7 +72,6 @@ export function ChainPresetLoadModal({ onClose }: Props) {
             Close
           </button>
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }
