@@ -12,19 +12,9 @@ import { classifyMedia } from "../lib/media";
 type State = {
   // Source of truth: prompt-chain links. Always >= 1 entry. expandedIdx
   // points at the link the UI panels read/write. null = all-collapsed
-  // "submit-ready" view; panels aren't rendered, so mirrors are stale.
+  // "submit-ready" view; active-link selectors then fall back to links[0].
   links: ChainLink[];
   expandedIdx: number | null;
-
-  // Mirrors of links[expandedIdx] (or links[0] when expandedIdx is null).
-  // Kept in sync by every mutator so existing consumers
-  // (`useGenerationStore((s) => s.currentModel)` etc.) keep working without
-  // any selector changes.
-  currentModel: ModelNode | null;
-  sequencePrompt: string;
-  shotPrompts: string[];
-  settings: Record<string, unknown>;
-  refImages: RefImage[];
 
   iterations: number;
 
@@ -125,38 +115,17 @@ export function makeChainLink(overrides: Partial<ChainLink> = {}): ChainLink {
   };
 }
 
-type ActiveMirror = Pick<
-  State,
-  "currentModel" | "sequencePrompt" | "shotPrompts" | "settings" | "refImages"
->;
-
-function mirrorOf(link: ChainLink): ActiveMirror {
-  return {
-    currentModel: link.model,
-    sequencePrompt: link.sequencePrompt,
-    shotPrompts: link.shotPrompts.length > 0 ? link.shotPrompts : [""],
-    settings: link.settings,
-    refImages: link.refImages,
-  };
-}
-
-// Apply a patch to the active link and return the partial state update
-// (new links array + refreshed mirrors). No-op when no link is expanded —
-// panels can't render in that state, so this guards stray late writes.
+// Apply a patch to the active link and return the partial state update.
+// No-op when no link is expanded — panels can't render in that state, so
+// this guards stray late writes.
 function patchActive(
   s: State,
   patch: Partial<ChainLink>,
 ): Partial<State> {
   if (s.expandedIdx == null) return {};
   const links = s.links.slice();
-  const next = { ...links[s.expandedIdx], ...patch };
-  links[s.expandedIdx] = next;
-  return { links, ...mirrorOf(next) };
-}
-
-function mirrorFor(links: ChainLink[], idx: number | null): ActiveMirror {
-  if (idx == null) return mirrorOf(links[0] ?? makeChainLink());
-  return mirrorOf(links[idx] ?? links[0] ?? makeChainLink());
+  links[s.expandedIdx] = { ...links[s.expandedIdx], ...patch };
+  return { links };
 }
 
 /** Returns the active link or null when nothing is expanded. */
@@ -179,7 +148,6 @@ export const useGenerationStore = create<State & Actions>((set) => {
   return {
     links: [initialLink],
     expandedIdx: 0,
-    ...mirrorOf(initialLink),
     iterations: 1,
 
     jobs: [],
@@ -403,10 +371,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
           return { ...link, refImages: next };
         });
         if (!anyChange) return {} as Partial<State>;
-        return {
-          links,
-          ...mirrorFor(links, s.expandedIdx),
-        };
+        return { links };
       });
     },
 
@@ -434,7 +399,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         const link = makeChainLink({ consumesPrev: true });
         const links = [...s.links, link];
         const expandedIdx = links.length - 1;
-        return { links, expandedIdx, ...mirrorFor(links, expandedIdx) };
+        return { links, expandedIdx };
       });
     },
     removeLink(id) {
@@ -457,7 +422,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         if (links[0].consumesPrev) {
           links[0] = { ...links[0], consumesPrev: false };
         }
-        return { links, expandedIdx, ...mirrorFor(links, expandedIdx) };
+        return { links, expandedIdx };
       });
     },
     setLinkActive(id, active) {
@@ -466,7 +431,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         if (idx < 0) return {} as Partial<State>;
         const links = s.links.slice();
         links[idx] = { ...links[idx], active };
-        return { links, ...mirrorFor(links, s.expandedIdx) };
+        return { links };
       });
     },
     setLinkConsumesPrev(id, consumesPrev) {
@@ -475,7 +440,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         if (idx < 0 || idx === 0) return {} as Partial<State>;
         const links = s.links.slice();
         links[idx] = { ...links[idx], consumesPrev };
-        return { links, ...mirrorFor(links, s.expandedIdx) };
+        return { links };
       });
     },
     moveLink(fromIdx, toIdx) {
@@ -502,7 +467,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
           else if (fromIdx < expandedIdx && toIdx >= expandedIdx) expandedIdx -= 1;
           else if (fromIdx > expandedIdx && toIdx <= expandedIdx) expandedIdx += 1;
         }
-        return { links, expandedIdx, ...mirrorFor(links, expandedIdx) };
+        return { links, expandedIdx };
       });
     },
     expandLink(idx) {
@@ -510,7 +475,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         if (idx != null && (idx < 0 || idx >= s.links.length)) {
           return {} as Partial<State>;
         }
-        return { expandedIdx: idx, ...mirrorFor(s.links, idx) };
+        return { expandedIdx: idx };
       });
     },
     setChain(links, expandedIdx) {
@@ -524,11 +489,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
       if (safeIdx != null && (safeIdx < 0 || safeIdx >= safeLinks.length)) {
         safeIdx = safeLinks.length === 1 ? 0 : null;
       }
-      set({
-        links: safeLinks,
-        expandedIdx: safeIdx,
-        ...mirrorFor(safeLinks, safeIdx),
-      });
+      set({ links: safeLinks, expandedIdx: safeIdx });
     },
 
     addJob(job) {
@@ -571,3 +532,29 @@ export const useGenerationStore = create<State & Actions>((set) => {
     },
   };
 });
+
+// ---- Active-link selectors -------------------------------------------------
+// The "active" link is what the editor panels read/write: links[expandedIdx],
+// falling back to links[0] in the all-collapsed view. Use these instead of
+// duplicating the fallback logic at call sites.
+
+export type GenerationState = State & Actions;
+
+// Stable reference: selectors must not fabricate a new array per call or
+// useSyncExternalStore's snapshot check loops forever.
+const EMPTY_PROMPTS: string[] = [""];
+
+export const selectActiveLink = (s: GenerationState): ChainLink =>
+  s.links[s.expandedIdx ?? 0] ?? s.links[0];
+export const selectCurrentModel = (s: GenerationState): ModelNode | null =>
+  selectActiveLink(s).model;
+export const selectSequencePrompt = (s: GenerationState): string =>
+  selectActiveLink(s).sequencePrompt;
+export const selectShotPrompts = (s: GenerationState): string[] => {
+  const sp = selectActiveLink(s).shotPrompts;
+  return sp.length > 0 ? sp : EMPTY_PROMPTS;
+};
+export const selectSettings = (s: GenerationState): Record<string, unknown> =>
+  selectActiveLink(s).settings;
+export const selectRefImages = (s: GenerationState): RefImage[] =>
+  selectActiveLink(s).refImages;

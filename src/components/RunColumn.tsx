@@ -1,5 +1,10 @@
 import { useMemo } from "react";
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectCurrentModel,
+  selectSequencePrompt,
+  selectShotPrompts,
+  useGenerationStore,
+} from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import {
   cancelAllGenerations,
@@ -14,9 +19,9 @@ import { basename } from "../lib/paths";
 export function RunColumn() {
   const iterations = useGenerationStore((s) => s.iterations);
   const setIterations = useGenerationStore((s) => s.setIterations);
-  const currentModel = useGenerationStore((s) => s.currentModel);
-  const sequencePrompt = useGenerationStore((s) => s.sequencePrompt);
-  const shotPrompts = useGenerationStore((s) => s.shotPrompts);
+  const currentModel = useGenerationStore(selectCurrentModel);
+  const sequencePrompt = useGenerationStore(selectSequencePrompt);
+  const shotPrompts = useGenerationStore(selectShotPrompts);
   const jobs = useGenerationStore((s) => s.jobs);
   const resetGenerationForm = useGenerationStore((s) => s.resetGenerationForm);
   const shotPath = useSessionStore((s) => s.shotPath);

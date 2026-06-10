@@ -17,7 +17,7 @@ import type {
   RoleAssignment,
   UploadedRef,
 } from "./types";
-import { useGenerationStore } from "../stores/generationStore";
+import { selectActiveLink, useGenerationStore } from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { getProvider } from "./providers";
 import type { ProviderOutput, ProviderProgress } from "./providers";
@@ -273,8 +273,9 @@ async function preflightRefs(
 export async function enqueueGeneration(): Promise<void> {
   const gen = useGenerationStore.getState();
   const session = useSessionStore.getState();
+  const activeLink = selectActiveLink(gen);
 
-  const node = gen.currentModel;
+  const node = activeLink.model;
   if (!node) {
     gen.setError("Select a model first.");
     return;
@@ -288,14 +289,13 @@ export async function enqueueGeneration(): Promise<void> {
     return;
   }
 
-  const activeLink = gen.expandedIdx != null ? gen.links[gen.expandedIdx] : gen.links[0];
   const runs = buildPromptsForLink(activeLink, session.sequencePath, session.shotPath);
   if (runs.length === 0) {
     gen.setError("Both prompts are empty.");
     return;
   }
 
-  if (!(await preflightRefs(node, gen.refImages))) return;
+  if (!(await preflightRefs(node, activeLink.refImages))) return;
 
   const config = await loadConfigSafely();
   const ffmpegPath = config?.ffmpegPath ?? "";
@@ -318,10 +318,10 @@ export async function enqueueGeneration(): Promise<void> {
   }
 
   const iterations = Math.max(1, gen.iterations | 0);
-  const sequencePromptText = gen.sequencePrompt;
-  const allShotPrompts = gen.shotPrompts.slice();
-  const baseSettings = { ...gen.settings };
-  const baseRefs = gen.refImages.slice();
+  const sequencePromptText = activeLink.sequencePrompt;
+  const allShotPrompts = activeLink.shotPrompts.slice();
+  const baseSettings = { ...activeLink.settings };
+  const baseRefs = activeLink.refImages.slice();
 
   // Fan out: one queued job per shot prompt. They run in parallel up to the
   // concurrency cap once pumpQueue dispatches below.

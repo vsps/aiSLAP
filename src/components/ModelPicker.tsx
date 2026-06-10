@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useModelsStore } from "../stores/modelsStore";
-import { useGenerationStore } from "../stores/generationStore";
+import { selectCurrentModel, useGenerationStore } from "../stores/generationStore";
 
 type Provider = "fal" | "replicate";
 
 export function ModelPicker() {
   const { entries, loaded } = useModelsStore();
-  const currentModel = useGenerationStore((s) => s.currentModel);
+  const currentModel = useGenerationStore(selectCurrentModel);
   const selectModel = useGenerationStore((s) => s.selectModel);
 
   const [provider, setProvider] = useState<Provider>(

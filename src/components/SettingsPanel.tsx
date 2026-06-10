@@ -1,10 +1,14 @@
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectCurrentModel,
+  selectSettings,
+  useGenerationStore,
+} from "../stores/generationStore";
 import type { Parameter, EnumParam, IntParam, FloatParam, BoolParam } from "../lib/types";
 import { ToggleGroup } from "./ToggleGroup";
 
 export function SettingsPanel() {
-  const currentModel = useGenerationStore((s) => s.currentModel);
-  const settings = useGenerationStore((s) => s.settings);
+  const currentModel = useGenerationStore(selectCurrentModel);
+  const settings = useGenerationStore(selectSettings);
   const setSetting = useGenerationStore((s) => s.setSetting);
 
   if (!currentModel) {

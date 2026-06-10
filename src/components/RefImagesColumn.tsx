@@ -4,7 +4,11 @@ import { IconBtn } from "./IconBtn";
 import { RoleMenu } from "./RoleMenu";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
 import { useLayoutStore } from "../stores/layoutStore";
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectCurrentModel,
+  selectRefImages,
+  useGenerationStore,
+} from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { fileSrc } from "../lib/assets";
 import { basename } from "../lib/paths";
@@ -62,8 +66,8 @@ type DropTarget =
   | null;
 
 export function RefImagesColumn() {
-  const currentModel = useGenerationStore((s) => s.currentModel);
-  const refImages = useGenerationStore((s) => s.refImages);
+  const currentModel = useGenerationStore(selectCurrentModel);
+  const refImages = useGenerationStore(selectRefImages);
   const addRefs = useGenerationStore((s) => s.addRefs);
   const removeRef = useGenerationStore((s) => s.removeRef);
   const removeAllRefs = useGenerationStore((s) => s.removeAllRefs);

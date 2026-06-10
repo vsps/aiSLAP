@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectActiveLink,
+  selectSequencePrompt,
+  selectShotPrompts,
+  useGenerationStore,
+} from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
 import { findSequenceBody, findShotBody } from "../lib/script";
@@ -50,13 +55,11 @@ function ScriptSegment({
 // ---------- Sequence: single textarea, store-managed cursor ----------
 
 function SequencePromptColumn({ title }: { title: string }) {
-  const live = useGenerationStore((s) => s.sequencePrompt);
+  const live = useGenerationStore(selectSequencePrompt);
   const setLive = useGenerationStore((s) => s.setSequencePrompt);
   const setSequenceScriptIncluded = useGenerationStore((s) => s.setSequenceScriptIncluded);
   const setSequencePromptIncluded = useGenerationStore((s) => s.setSequencePromptIncluded);
-  const activeLink = useGenerationStore((s) =>
-    s.expandedIdx != null ? s.links[s.expandedIdx] : s.links[0],
-  );
+  const activeLink = useGenerationStore(selectActiveLink);
   const history = useSessionStore((s) => s.sequenceHistory);
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const navigatePromptHistory = useSessionStore((s) => s.navigatePromptHistory);
@@ -180,16 +183,14 @@ function SequencePromptColumn({ title }: { title: string }) {
 // ---------- Shot: N textareas, column-level cursor over grouped history ----------
 
 function ShotPromptColumn({ title }: { title: string }) {
-  const shotPrompts = useGenerationStore((s) => s.shotPrompts);
+  const shotPrompts = useGenerationStore(selectShotPrompts);
   const setShotPrompts = useGenerationStore((s) => s.setShotPrompts);
   const setShotScriptIncluded = useGenerationStore((s) => s.setShotScriptIncluded);
   const setShotPromptIncludedAt = useGenerationStore((s) => s.setShotPromptIncludedAt);
   const setShotPromptAt = useGenerationStore((s) => s.setShotPromptAt);
   const addShotPromptAfter = useGenerationStore((s) => s.addShotPromptAfter);
   const removeShotPromptAt = useGenerationStore((s) => s.removeShotPromptAt);
-  const activeLink = useGenerationStore((s) =>
-    s.expandedIdx != null ? s.links[s.expandedIdx] : s.links[0],
-  );
+  const activeLink = useGenerationStore(selectActiveLink);
   const entries = useSessionStore((s) => s.shotHistory.entries);
   const shotPath = useSessionStore((s) => s.shotPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);

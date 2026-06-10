@@ -8,7 +8,11 @@ import type {
   Config,
   ModelEntry,
 } from "./types";
-import { makeChainLink, useGenerationStore } from "../stores/generationStore";
+import {
+  makeChainLink,
+  selectActiveLink,
+  useGenerationStore,
+} from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePresetsStore } from "../stores/presetsStore";
 import { useSessionStore } from "../stores/sessionStore";
@@ -74,17 +78,18 @@ function fromPersisted(p: ChainLinkPersisted, entries: ModelEntry[]): ChainLink 
 function currentAppState(): AppState {
   const g = useGenerationStore.getState();
   const s = useSessionStore.getState();
+  const active = selectActiveLink(g);
   return {
     projectPath: s.projectPath ?? "",
     lastSequence: basename(s.sequencePath),
     lastShot: basename(s.shotPath),
-    lastModel: g.currentModel?.id ?? "",
-    sequencePrompt: g.sequencePrompt,
+    lastModel: active.model?.id ?? "",
+    sequencePrompt: active.sequencePrompt,
     // Keep legacy `shotPrompt` empty — the canonical store is `shotPrompts`.
     shotPrompt: "",
-    shotPrompts: g.shotPrompts,
-    settings: g.settings,
-    refImages: g.refImages,
+    shotPrompts: active.shotPrompts,
+    settings: active.settings,
+    refImages: active.refImages,
     iterations: g.iterations,
     galleryHeight: s.galleryHeight,
     thumbColWidth: s.thumbColWidth,
