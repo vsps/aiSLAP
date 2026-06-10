@@ -1,8 +1,9 @@
 import { memo, useEffect, useRef, useState } from "react";
-import type { GalleryImage } from "../lib/types";
+import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
+import { cmd } from "../lib/tauri";
 
 type Props = {
   image: GalleryImage;
@@ -10,8 +11,8 @@ type Props = {
   hidden?: boolean;
   columnVersion: string;
   isDragSource?: boolean;
-  onSelect: () => void;
-  onToggleStar: () => void;
+  onSelect: (path: string) => void;
+  onToggleStar: (path: string) => void;
   onDragStart: (payload: {
     fromPath: string;
     fromColumnVersion: string;
@@ -22,7 +23,7 @@ type Props = {
   /** Whether this image is currently the shot's exclusive "clip media" pick. */
   clipMediaSelected?: boolean;
   /** When defined, renders the clip-media toggle button. */
-  onToggleClipMedia?: () => void;
+  onToggleClipMedia?: (path: string) => void;
 };
 
 const DRAG_THRESHOLD_PX = 5;
@@ -44,10 +45,14 @@ export const Thumbnail = memo(function Thumbnail({
   onToggleClipMedia,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
-  // Aspect = height/width. Initial 1 (square) while we probe the natural size,
-  // then we update once the Image loads. Falls back to 1 for missing thumbs.
   const [aspect, setAspect] = useState<number>(1);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Hover tooltip state
+  const [tooltipMeta, setTooltipMeta] = useState<ImageMetadata | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metaCache = useRef<ImageMetadata | null | "loading">(null);
 
   // When selection arrives via keyboard nav the thumb may be offscreen; scroll
   // it back into view. "nearest" avoids jumpy scrolls for already-visible rows.
@@ -92,6 +97,36 @@ export const Thumbnail = memo(function Thumbnail({
     window.addEventListener("pointercancel", onUp);
   }
 
+  function onMouseEnter(e: React.MouseEvent) {
+    setTooltipPos({ x: e.clientX, y: e.clientY });
+    hoverTimerRef.current = setTimeout(async () => {
+      let m = metaCache.current;
+      if (m === null || m === "loading") {
+        metaCache.current = "loading";
+        m = await cmd.image_metadata_read(image.path).catch(() => null) as ImageMetadata | null;
+        metaCache.current = m;
+      }
+      setTooltipMeta(m);
+    }, 600);
+  }
+
+  function onMouseMove(e: React.MouseEvent) {
+    setTooltipPos({ x: e.clientX, y: e.clientY });
+  }
+
+  function onMouseLeave() {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    setTooltipMeta(null);
+    setTooltipPos(null);
+  }
+
+  const tooltipPrompt = tooltipMeta
+    ? (tooltipMeta.combinedPrompt ||
+       [tooltipMeta.sequencePrompt, ...(tooltipMeta.shotPrompts ?? (tooltipMeta.shotPrompt ? [tooltipMeta.shotPrompt] : [tooltipMeta.prompt ?? ""]))]
+         .filter(Boolean)
+         .join(" "))
+    : null;
+
   if (hidden) return null;
 
   return (
@@ -104,7 +139,7 @@ export const Thumbnail = memo(function Thumbnail({
       onPointerDown={onPointerDown}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect();
+        onSelect(image.path);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -112,7 +147,9 @@ export const Thumbnail = memo(function Thumbnail({
         setMenuPos({ x: e.clientX, y: e.clientY });
       }}
       onMouseDown={(e) => e.stopPropagation()}
-      title={image.filename}
+      onMouseEnter={onMouseEnter}
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
     >
       {srcUrl ? (
         <img
@@ -161,7 +198,7 @@ export const Thumbnail = memo(function Thumbnail({
         title={image.starred ? "Remove from favorites" : "Add to favorites"}
         onClick={(e) => {
           e.stopPropagation();
-          onToggleStar();
+          onToggleStar(image.path);
         }}
         className={`absolute bottom-1 left-1 drop-shadow transition-opacity ${
           image.starred
@@ -177,7 +214,7 @@ export const Thumbnail = memo(function Thumbnail({
           title={clipMediaSelected ? "Clear clip media" : "Set as clip media"}
           onClick={(e) => {
             e.stopPropagation();
-            onToggleClipMedia();
+            onToggleClipMedia(image.path);
           }}
           className={`absolute bottom-1 right-1 drop-shadow transition-opacity ${
             clipMediaSelected
@@ -185,6 +222,22 @@ export const Thumbnail = memo(function Thumbnail({
               : "opacity-0 group-hover:opacity-100"
           }`}
         />
+      )}
+
+      {tooltipPos && tooltipMeta !== null && (
+        <div
+          className="fixed z-50 pointer-events-none max-w-xs bg-panel/95 border border-dim shadow-xl px-2 py-1.5 text-xs"
+          style={{
+            left: Math.min(tooltipPos.x + 12, window.innerWidth - 260),
+            top: tooltipPos.y - 8,
+            transform: "translateY(-100%)",
+          }}
+        >
+          <div className="font-mono text-text truncate">{image.filename}</div>
+          {tooltipPrompt && (
+            <div className="text-dim mt-0.5 line-clamp-4 whitespace-pre-wrap">{tooltipPrompt}</div>
+          )}
+        </div>
       )}
 
       {menuPos && (

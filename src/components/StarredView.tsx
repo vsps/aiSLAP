@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
-import { performImageAction, type ImageAction } from "../lib/actions";
+import { selectImagePath, toggleStarPath } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 
 type Props = {
@@ -13,16 +13,17 @@ type Props = {
 };
 
 export function StarredView({ onDragStart }: Props) {
-  const { starredGroups, starredLoading, projectPath, rescanStarred, selectedImagePath } =
-    useSessionStore();
+  const starredGroups = useSessionStore((s) => s.starredGroups);
+  const starredLoading = useSessionStore((s) => s.starredLoading);
+  const projectPath = useSessionStore((s) => s.projectPath);
+  const rescanStarred = useSessionStore((s) => s.rescanStarred);
+  const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   useEffect(() => {
     if (projectPath) void rescanStarred();
   }, [projectPath, rescanStarred]);
-
-  const onAction = (action: ImageAction, path: string) => performImageAction(action, path);
 
   if (!projectPath) {
     return (
@@ -80,8 +81,8 @@ export function StarredView({ onDragStart }: Props) {
                             image={img}
                             selected={selectedImagePath === img.path}
                             columnVersion={g.shotName}
-                            onSelect={() => onAction("select", img.path)}
-                            onToggleStar={() => onAction("toggle_star", img.path)}
+                            onSelect={selectImagePath}
+                            onToggleStar={toggleStarPath}
                             onDragStart={onDragStart}
                             clipMediaSelected={clipSelected}
                             onToggleClipMedia={

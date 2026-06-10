@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { GalleryImage } from "../lib/types";
 import { GalleryColumn, type DragState } from "./GalleryColumn";
+import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
 import { RenameImageModal } from "./RenameImageModal";
 import { StackedView } from "./StackedView";
@@ -9,7 +10,7 @@ import { TraceView } from "./TraceView";
 import { Icon } from "../lib/icon";
 import { ResizeBar } from "./ResizeBar";
 import { useSessionStore } from "../stores/sessionStore";
-import { addImageToRefs, performImageAction, type ImageAction } from "../lib/actions";
+import { addImageToRefs, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
 import { confirmAction, showMessage } from "../lib/dialog";
@@ -31,23 +32,28 @@ function syntheticImage(path: string): GalleryImage {
 }
 
 export function Gallery() {
-  const session = useSessionStore();
-  const {
-    columns,
-    traceActive,
-    selectedImagePath,
-    thumbColWidth,
-    setThumbColWidth,
-    zoomImagePath,
-    setZoomImage,
-    renameImagePath,
-    setRenameImage,
-    shotPath,
-    sequencePath,
-    targetVersion,
-    viewMode,
-    setViewMode,
-  } = session;
+  const columns = useSessionStore((s) => s.columns);
+  const traceActive = useSessionStore((s) => s.traceActive);
+  const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
+  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
+  const setThumbColWidth = useSessionStore((s) => s.setThumbColWidth);
+  const zoomImagePath = useSessionStore((s) => s.zoomImagePath);
+  const setZoomImage = useSessionStore((s) => s.setZoomImage);
+  const renameImagePath = useSessionStore((s) => s.renameImagePath);
+  const setRenameImage = useSessionStore((s) => s.setRenameImage);
+  const infoImagePath = useSessionStore((s) => s.infoImagePath);
+  const setInfoImage = useSessionStore((s) => s.setInfoImage);
+  const shotPath = useSessionStore((s) => s.shotPath);
+  const sequencePath = useSessionStore((s) => s.sequencePath);
+  const targetVersion = useSessionStore((s) => s.targetVersion);
+  const viewMode = useSessionStore((s) => s.viewMode);
+  const setViewMode = useSessionStore((s) => s.setViewMode);
+  const setImageDrag = useSessionStore((s) => s.setImageDrag);
+  const setSelectedImage = useSessionStore((s) => s.setSelectedImage);
+  const rescanShot = useSessionStore((s) => s.rescanShot);
+  const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
+  const rescanStarred = useSessionStore((s) => s.rescanStarred);
+  const createNextVersion = useSessionStore((s) => s.createNextVersion);
 
   const flatImages = columns.flatMap((c) => c.images);
   const zoomImage = zoomImagePath
@@ -57,8 +63,9 @@ export function Gallery() {
     ? flatImages.find((i) => i.path === renameImagePath) ?? syntheticImage(renameImagePath)
     : null;
 
-  const onImageAction = (action: ImageAction, path: string) =>
-    performImageAction(action, path);
+  // Stable reference — performImageAction is module-level, so memo'd
+  // Thumbnails downstream keep referentially-equal callbacks.
+  const onImageAction = performImageAction;
 
   const [dragState, setDragState] = useState<DragState>(null);
 
@@ -109,9 +116,9 @@ export function Gallery() {
         pointerX: payload.pointerEvent.clientX,
         pointerY: payload.pointerEvent.clientY,
       });
-      session.setImageDrag({ fromPath: payload.fromPath });
+      setImageDrag({ fromPath: payload.fromPath });
     },
-    [session],
+    [setImageDrag],
   );
 
   // Global drag handlers — installed only while dragging.
@@ -184,7 +191,7 @@ export function Gallery() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setDragState(null);
-        session.setImageDrag(null);
+        setImageDrag(null);
         return;
       }
       if (e.key === "Shift") {
@@ -207,7 +214,7 @@ export function Gallery() {
       const hitStacked = findStackedTargetAt(e.clientX, e.clientY);
       const hitCol = !hitStacked ? findColumnAt(e.clientX, e.clientY) : null;
       setDragState(null);
-      session.setImageDrag(null);
+      setImageDrag(null);
       if (!current) return;
       if (hitRef) {
         void commitRefDrop(current.fromPath);
@@ -225,7 +232,7 @@ export function Gallery() {
 
     const onCancel = () => {
       setDragState(null);
-      session.setImageDrag(null);
+      setImageDrag(null);
     };
 
     window.addEventListener("pointermove", onMove);
@@ -255,8 +262,8 @@ export function Gallery() {
     try {
       const fn = copy ? cmd.image_copy_to_dir : cmd.image_move_to_dir;
       const newPath = await fn(fromPath, destDir);
-      await session.rescanShot();
-      session.setSelectedImage(newPath);
+      await rescanShot();
+      setSelectedImage(newPath);
     } catch (e) {
       const msg = String(e);
       if (msg.includes("FILENAME_EXISTS")) {
@@ -273,7 +280,7 @@ export function Gallery() {
   async function commitRefDrop(fromPath: string) {
     try {
       await addImageToRefs(fromPath);
-      await session.rescanShot();
+      await rescanShot();
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
     }
@@ -315,9 +322,9 @@ export function Gallery() {
         }
         await cmd.image_move_to_dir(current.fromPath, destDir);
       }
-      await session.rescanSequenceStacks();
-      await session.rescanShot();
-      if (session.viewMode === "starred") await session.rescanStarred();
+      await rescanSequenceStacks();
+      await rescanShot();
+      if (useSessionStore.getState().viewMode === "starred") await rescanStarred();
     } catch (e) {
       const msg = String(e);
       if (msg.includes("FILENAME_EXISTS")) {
@@ -350,7 +357,7 @@ export function Gallery() {
       if (columns.every((c) => c.images.length === 0)) return;
 
       e.preventDefault();
-      const selected = session.selectedImagePath;
+      const selected = useSessionStore.getState().selectedImagePath;
       let colIdx = selected
         ? columns.findIndex((c) => c.images.some((i) => i.path === selected))
         : -1;
@@ -363,7 +370,7 @@ export function Gallery() {
       if (colIdx < 0 || rowIdx < 0) {
         const firstCol = columns.findIndex((c) => c.images.length > 0);
         if (firstCol < 0) return;
-        session.setSelectedImage(columns[firstCol].images[0].path);
+        setSelectedImage(columns[firstCol].images[0].path);
         return;
       }
 
@@ -382,16 +389,15 @@ export function Gallery() {
       }
 
       const next = columns[colIdx].images[rowIdx];
-      if (next) session.setSelectedImage(next.path);
+      if (next) setSelectedImage(next.path);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [columns, zoomImagePath, session]);
+  }, [columns, zoomImagePath, setSelectedImage]);
 
   async function onFolderDelete(version: string) {
     const col = columns.find((c) => c.version === version);
     if (!col || col.isSrc) return;
-    const shotPath = session.shotPath;
     if (!shotPath) return;
     const ok = await confirmAction(`Delete version folder ${version} and all its images?`, {
       title: "Delete column",
@@ -400,7 +406,7 @@ export function Gallery() {
     if (!ok) return;
     try {
       await cmd.column_delete(`${shotPath}/${version}`);
-      await session.rescanShot();
+      await rescanShot();
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
     }
@@ -408,7 +414,7 @@ export function Gallery() {
 
   async function onAddNewVersion() {
     try {
-      await session.createNextVersion();
+      await createNextVersion();
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
     }
@@ -416,7 +422,7 @@ export function Gallery() {
 
   const splitButtons = (
     <div className="flex flex-col shrink-0 self-stretch">
-      {viewMode === "columns" && session.shotPath && (
+      {viewMode === "columns" && shotPath && (
         <button
           className="accent-hover px-3 py-2 flex items-center justify-center"
           title="Add new version"
@@ -447,7 +453,7 @@ export function Gallery() {
           <Icon name="view_module" size={22} fill={viewMode === "stacked"} />
         </button>
       )}
-      {viewMode === "columns" && session.shotPath && (
+      {viewMode === "columns" && shotPath && (
         <button
           className={`${autoCollapse ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
           title={
@@ -478,11 +484,11 @@ export function Gallery() {
           <Icon name="delete" size={22} />
         </button>
       )}
-      {session.shotPath && (
+      {shotPath && (
         <button
           className="accent-hover px-3 py-2 flex items-center justify-center"
           title="Rescan shot from disk"
-          onClick={() => void session.rescanShot()}
+          onClick={() => void rescanShot()}
         >
           <Icon name="refresh" size={22} />
         </button>
@@ -529,7 +535,7 @@ export function Gallery() {
                     onToggleCollapsed={() => toggleCollapsed(c.version)}
                     onFolderDelete={() => onFolderDelete(c.version)}
                     onImageAction={onImageAction}
-                    onRefresh={c.isSrc ? () => session.rescanShot() : undefined}
+                    onRefresh={c.isSrc ? () => rescanShot() : undefined}
                     onDragStart={onDragStart}
                   />
                   {i < columns.length - 1 && (
@@ -594,6 +600,13 @@ export function Gallery() {
         <RenameImageModal
           image={renameImage}
           onClose={() => setRenameImage(null)}
+        />
+      )}
+
+      {infoImagePath && (
+        <ImageInfoModal
+          path={infoImagePath}
+          onClose={() => setInfoImage(null)}
         />
       )}
     </div>

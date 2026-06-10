@@ -32,6 +32,7 @@ const DEFAULT_ITEMS: MenuItem[] = [
   "copy_to_global_src",
   "open_location",
   "rename",
+  "show_info",
   "---",
   "delete",
 ];
@@ -55,6 +56,7 @@ const LABELS: Record<AvailableAction, string> = {
   refresh: "Refresh",
   open_location: "Open Location",
   delete: "Delete",
+  show_info: "Show info",
 };
 
 // Right-click menu for any gallery/preview image. Covers the full image-op

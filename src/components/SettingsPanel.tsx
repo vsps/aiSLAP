@@ -1,9 +1,15 @@
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectCurrentModel,
+  selectSettings,
+  useGenerationStore,
+} from "../stores/generationStore";
 import type { Parameter, EnumParam, IntParam, FloatParam, BoolParam } from "../lib/types";
 import { ToggleGroup } from "./ToggleGroup";
 
 export function SettingsPanel() {
-  const { currentModel, settings, setSetting } = useGenerationStore();
+  const currentModel = useGenerationStore(selectCurrentModel);
+  const settings = useGenerationStore(selectSettings);
+  const setSetting = useGenerationStore((s) => s.setSetting);
 
   if (!currentModel) {
     return <div className="text-text opacity-60 text-xs">Select a model.</div>;

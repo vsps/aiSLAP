@@ -1,10 +1,13 @@
 mod commands;
 mod domain;
 mod error;
+mod fsjson;
 mod paths;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Route tracing::warn!/error! to stderr; without a subscriber they vanish.
+    tracing_subscriber::fmt::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_http::init())
@@ -30,16 +33,16 @@ pub fn run() {
             commands::session::shot_open,
             commands::session::shot_create,
             commands::session::shot_rename,
-            commands::session::shot_rescan,
+            commands::gallery::shot_rescan,
             commands::session::version_create_next,
-            commands::session::project_starred_scan,
-            commands::session::image_set_visible,
-            commands::session::ref_copy_to_global_src,
-            commands::session::image_copy_to_dir,
-            commands::session::image_move_to_dir,
-            commands::session::image_rename,
-            commands::session::save_png_base64,
-            commands::session::reveal_in_explorer,
+            commands::gallery::project_starred_scan,
+            commands::gallery::image_set_visible,
+            commands::image::ref_copy_to_global_src,
+            commands::image::image_copy_to_dir,
+            commands::image::image_move_to_dir,
+            commands::image::image_rename,
+            commands::image::save_png_base64,
+            commands::image::reveal_in_explorer,
             commands::session::sequence_prompt_append,
             commands::session::shot_prompt_append,
             commands::session::shot_prompts_append,
@@ -52,8 +55,8 @@ pub fn run() {
             commands::download::download_to_path,
             commands::media::video_thumbnail_extract,
             commands::media::timeline_export,
-            commands::session::timeline_init,
-            commands::session::sequence_timeline_save,
+            commands::timeline::timeline_init,
+            commands::timeline::sequence_timeline_save,
             commands::session::shot_clip_media_set,
             commands::session::shot_version_comment_set,
             commands::session::project_version_prefix_get,
@@ -63,9 +66,9 @@ pub fn run() {
             commands::pending::pending_remove,
             commands::session::dirs_exist,
             commands::session::dir_ensure,
-            commands::session::sequence_stacks_scan,
+            commands::gallery::sequence_stacks_scan,
             commands::session::shot_version_select_set,
-            commands::session::version_stack_move,
+            commands::image::version_stack_move,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

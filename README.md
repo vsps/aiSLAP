@@ -155,6 +155,34 @@ All text inputs can now be enhanced through an LLM of your choice. Click the spa
 
 ---
 
+## Architecture (for contributors)
+
+```
+src/                      React + Tailwind frontend
+  components/             UI (Gallery, PromptColumn, Timeline, modals, …)
+  stores/                 zustand stores (session, generation, timeline, script, …)
+  lib/                    non-UI logic
+    generation/           job pipeline: prompts → enqueue → runner → output
+    tauri.ts              typed IPC wrappers for every Rust command
+src-tauri/src/            Rust host (Tauri v2)
+  fsjson.rs               lenient JSON read / atomic write helpers
+  commands/
+    session.rs            project/sequence/shot CRUD, rename cascade, prompt history
+    gallery.rs            column / stacked / starred scanning
+    image.rs              media triple copy/move/rename, version stack moves
+    timeline.rs           latest-media scan + timeline sidecar
+    visible.rs            starred ("visible") set persistence
+    fsutil.rs             shared path/naming helpers (+ unit tests)
+    config.rs / models.rs / metadata.rs / download.rs / media.rs / pending.rs
+models/                   model definitions (JSON) — add new models here
+```
+
+Checks: `npm run build` (tsc + vite), `cargo check` / `cargo test` in `src-tauri/`.
+
+API keys live in `%APPDATA%\aiSLAP\.env` (not the repo root) — see `.env.example`.
+
+---
+
 ## License
 
 AGPL v3.0

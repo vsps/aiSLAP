@@ -17,20 +17,18 @@ export function SessionBar({
   onOpenSettings,
   onOpenProjectSettings,
 }: Props) {
-  const {
-    projectPath,
-    sequencePath,
-    shotPath,
-    sequencesInProject,
-    shotsInSequence,
-    setProject,
-    setSequence,
-    setShot,
-    createSequence,
-    createShot,
-    renameSequence,
-    renameShot,
-  } = useSessionStore();
+  const projectPath = useSessionStore((s) => s.projectPath);
+  const sequencePath = useSessionStore((s) => s.sequencePath);
+  const shotPath = useSessionStore((s) => s.shotPath);
+  const sequencesInProject = useSessionStore((s) => s.sequencesInProject);
+  const shotsInSequence = useSessionStore((s) => s.shotsInSequence);
+  const setProject = useSessionStore((s) => s.setProject);
+  const setSequence = useSessionStore((s) => s.setSequence);
+  const setShot = useSessionStore((s) => s.setShot);
+  const createSequence = useSessionStore((s) => s.createSequence);
+  const createShot = useSessionStore((s) => s.createShot);
+  const renameSequence = useSessionStore((s) => s.renameSequence);
+  const renameShot = useSessionStore((s) => s.renameShot);
 
   const [creating, setCreating] = useState<
     null | "sequence" | "shot" | "rename-sequence" | "rename-shot"

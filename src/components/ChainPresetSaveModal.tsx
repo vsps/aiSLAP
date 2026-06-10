@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChainPresetLink } from "../lib/types";
 import { usePresetsStore } from "../stores/presetsStore";
+import { ModalDialog } from "./ModalDialog";
 
 type Props = {
   links: ChainPresetLink[];
@@ -41,16 +42,8 @@ export function ChainPresetSaveModal({ links, onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
-      onClick={onClose}
-    >
-      <div
-        className="bg-panel text-text border border-dim p-4 min-w-[320px] flex flex-col gap-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="text-sm font-semibold">Save chain preset</div>
-        <div className="text-xs opacity-60">{links.length} link{links.length !== 1 ? "s" : ""} · models + prompts only</div>
+    <ModalDialog title="Save chain preset" onClose={onClose}>
+      <div className="text-xs opacity-60">{links.length} link{links.length !== 1 ? "s" : ""} · models + prompts only</div>
         <input
           ref={inputRef}
           type="text"
@@ -86,7 +79,6 @@ export function ChainPresetSaveModal({ links, onClose }: Props) {
             Save
           </button>
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }

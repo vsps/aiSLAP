@@ -4,7 +4,11 @@ import { IconBtn } from "./IconBtn";
 import { RoleMenu } from "./RoleMenu";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
 import { useLayoutStore } from "../stores/layoutStore";
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectCurrentModel,
+  selectRefImages,
+  useGenerationStore,
+} from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { fileSrc } from "../lib/assets";
 import { basename } from "../lib/paths";
@@ -62,16 +66,14 @@ type DropTarget =
   | null;
 
 export function RefImagesColumn() {
-  const {
-    currentModel,
-    refImages,
-    addRefs,
-    removeRef,
-    removeAllRefs,
-    assignRole,
-    swapRoleAssignments,
-    reorderRefs,
-  } = useGenerationStore();
+  const currentModel = useGenerationStore(selectCurrentModel);
+  const refImages = useGenerationStore(selectRefImages);
+  const addRefs = useGenerationStore((s) => s.addRefs);
+  const removeRef = useGenerationStore((s) => s.removeRef);
+  const removeAllRefs = useGenerationStore((s) => s.removeAllRefs);
+  const assignRole = useGenerationStore((s) => s.assignRole);
+  const swapRoleAssignments = useGenerationStore((s) => s.swapRoleAssignments);
+  const reorderRefs = useGenerationStore((s) => s.reorderRefs);
   const expandedIdx = useGenerationStore((s) => s.expandedIdx);
   const width = useLayoutStore((s) => s.widths.refImages);
   const linksLen = useGenerationStore((s) => s.links.length);

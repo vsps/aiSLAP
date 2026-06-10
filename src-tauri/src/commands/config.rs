@@ -1,28 +1,7 @@
 use crate::domain::{AppState, Config};
 use crate::error::AppResult;
+use crate::fsjson::{read_json_or_default, write_json_atomic};
 use crate::paths;
-
-pub(crate) fn read_json_or_default<T: Default + serde::de::DeserializeOwned>(path: &std::path::Path) -> AppResult<T> {
-    if !path.exists() {
-        return Ok(T::default());
-    }
-    let text = std::fs::read_to_string(path)?;
-    match serde_json::from_str::<T>(&text) {
-        Ok(v) => Ok(v),
-        Err(_) => Ok(T::default()),
-    }
-}
-
-fn write_json_atomic<T: serde::Serialize>(path: &std::path::Path, value: &T) -> AppResult<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(value)?;
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
-}
 
 // ----- config.json -----
 

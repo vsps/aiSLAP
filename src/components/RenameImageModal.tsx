@@ -3,6 +3,7 @@ import type { GalleryImage } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
+import { ModalDialog } from "./ModalDialog";
 
 type Props = {
   image: GalleryImage;
@@ -36,7 +37,6 @@ export function RenameImageModal({ image, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const session = useSessionStore();
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -58,6 +58,7 @@ export function RenameImageModal({ image, onClose }: Props) {
     setBusy(true);
     try {
       const newPath = await cmd.image_rename(image.path, trimmed);
+      const session = useSessionStore.getState();
       await session.rescanShot();
       session.setSelectedImage(newPath);
       onClose();
@@ -73,15 +74,7 @@ export function RenameImageModal({ image, onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
-      onClick={onClose}
-    >
-      <div
-        className="bg-panel text-text border border-dim p-4 min-w-[320px] flex flex-col gap-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="text-sm font-semibold">Rename</div>
+    <ModalDialog title="Rename" onClose={onClose}>
         <div className="flex items-center gap-1 font-mono text-sm">
           <input
             ref={inputRef}
@@ -124,7 +117,6 @@ export function RenameImageModal({ image, onClose }: Props) {
             Rename
           </button>
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
 import type { ImageAction } from "../lib/actions";
@@ -59,8 +59,10 @@ export function GalleryColumn({
   onRefresh,
   onDragStart,
 }: Props) {
-  const { targetVersion, setTargetVersion, selectedImagePath, shotPath } =
-    useSessionStore();
+  const targetVersion = useSessionStore((s) => s.targetVersion);
+  const setTargetVersion = useSessionStore((s) => s.setTargetVersion);
+  const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
+  const shotPath = useSessionStore((s) => s.shotPath);
   const clipMediaPath = useTimelineStore((s) =>
     shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
   );
@@ -68,6 +70,25 @@ export function GalleryColumn({
   const comment = useSessionStore((s) => s.versionComments[column.version] ?? "");
   const setVersionComment = useSessionStore((s) => s.setVersionComment);
   const [editing, setEditing] = useState(false);
+
+  // Stable per-column callbacks so memo'd Thumbnails skip re-renders.
+  const handleSelect = useCallback(
+    (path: string) => onImageAction("select", path),
+    [onImageAction],
+  );
+  const handleToggleStar = useCallback(
+    (path: string) => onImageAction("toggle_star", path),
+    [onImageAction],
+  );
+  const handleToggleClipMedia = useCallback(
+    (path: string) => {
+      if (!shotPath) return;
+      const current =
+        useTimelineStore.getState().shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null;
+      void setShotClipMedia(shotPath, path === current ? null : path);
+    },
+    [shotPath, setShotClipMedia],
+  );
   const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
   const [refsCollapsed, setRefsCollapsed] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -286,8 +307,8 @@ export function GalleryColumn({
                         selected={selectedImagePath === img.path}
                         columnVersion={column.version}
                         isDragSource={dragState?.fromPath === img.path}
-                        onSelect={() => onImageAction("select", img.path)}
-                        onToggleStar={() => onImageAction("toggle_star", img.path)}
+                        onSelect={handleSelect}
+                        onToggleStar={handleToggleStar}
                         onDragStart={onDragStart}
                         clipMediaSelected={false}
                       />
@@ -305,18 +326,12 @@ export function GalleryColumn({
             selected={selectedImagePath === img.path}
             columnVersion={column.version}
             isDragSource={dragState?.fromPath === img.path}
-            onSelect={() => onImageAction("select", img.path)}
-            onToggleStar={() => onImageAction("toggle_star", img.path)}
+            onSelect={handleSelect}
+            onToggleStar={handleToggleStar}
             onDragStart={onDragStart}
             clipMediaSelected={img.path === clipMediaPath}
             onToggleClipMedia={
-              shotPath && !column.isSrc
-                ? () =>
-                    void setShotClipMedia(
-                      shotPath,
-                      img.path === clipMediaPath ? null : img.path,
-                    )
-                : undefined
+              shotPath && !column.isSrc ? handleToggleClipMedia : undefined
             }
           />
         ))}

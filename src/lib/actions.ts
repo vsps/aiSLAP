@@ -214,7 +214,8 @@ export type ImageAction =
   | "edit"
   | "crop"
   | "toggle_star"
-  | "restore_chain";
+  | "restore_chain"
+  | "show_info";
 
 const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
 
@@ -265,6 +266,12 @@ async function copyImageToClipboard(path: string): Promise<void> {
 }
 
 /** Single entry point for any image op invoked from thumbs, preview, or zoom. */
+// Module-level per-path handlers — stable references for memo'd Thumbnails.
+export const selectImagePath = (path: string) =>
+  void performImageAction("select", path);
+export const toggleStarPath = (path: string) =>
+  void performImageAction("toggle_star", path);
+
 export async function performImageAction(
   action: ImageAction,
   path: string,
@@ -475,6 +482,9 @@ export async function performImageAction(
       }
       return;
     }
+    case "show_info":
+      useSessionStore.getState().setInfoImage(path);
+      return;
   }
 }
 

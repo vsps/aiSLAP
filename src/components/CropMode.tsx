@@ -120,7 +120,6 @@ export function CropMode({ image, onSave, onCancel }: Props) {
   const [flipH, setFlipH] = useState(false);
   const [flipV, setFlipV] = useState(false);
   const dragRef = useRef<{ handle: Handle; startX: number; startY: number; startCrop: Rect; imgW: number; imgH: number } | null>(null);
-  const session = useSessionStore();
 
   const updateBounds = useCallback(() => {
     const el = imgRef.current;
@@ -200,7 +199,7 @@ export function CropMode({ image, onSave, onCancel }: Props) {
       const name = basename(image.path).replace(/\.[^.]+$/, "");
       const savePath = `${dir}/${name}_crop.png`;
       await cmd.save_png_base64(savePath, base64);
-      await session.rescanShot();
+      await useSessionStore.getState().rescanShot();
       onSave(savePath);
     } catch (e) {
       await showMessage(String(e), { kind: "error" });

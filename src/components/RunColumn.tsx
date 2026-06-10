@@ -1,34 +1,35 @@
 import { useMemo } from "react";
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectCurrentModel,
+  selectSequencePrompt,
+  selectShotPrompts,
+  useGenerationStore,
+} from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import {
   cancelAllGenerations,
   enqueueChain,
   enqueueGeneration,
-} from "../lib/generate";
+} from "../lib/generation/enqueue";
 import { preflightChain } from "../lib/chainValidation";
+import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
 import { basename } from "../lib/paths";
 
 export function RunColumn() {
-  const {
-    iterations,
-    setIterations,
-    currentModel,
-    sequencePrompt,
-    shotPrompts,
-    jobs,
-    resetGenerationForm,
-  } = useGenerationStore();
+  const iterations = useGenerationStore((s) => s.iterations);
+  const setIterations = useGenerationStore((s) => s.setIterations);
+  const currentModel = useGenerationStore(selectCurrentModel);
+  const sequencePrompt = useGenerationStore(selectSequencePrompt);
+  const shotPrompts = useGenerationStore(selectShotPrompts);
+  const jobs = useGenerationStore((s) => s.jobs);
+  const resetGenerationForm = useGenerationStore((s) => s.resetGenerationForm);
   const shotPath = useSessionStore((s) => s.shotPath);
   const targetVersion = useSessionStore((s) => s.targetVersion);
   const createNextVersion = useSessionStore((s) => s.createNextVersion);
 
-  const activeJobs = jobs.filter(
-    (j) =>
-      j.status !== "done" && j.status !== "failed" && j.status !== "cancelled",
-  );
+  const activeJobs = jobs.filter((j) => !isJobTerminal(j.status));
 
   const queueCount = activeJobs.length;
   const columns = useSessionStore((s) => s.columns);

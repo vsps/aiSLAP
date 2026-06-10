@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useGenerationStore } from "../stores/generationStore";
+import { selectRefImages, useGenerationStore } from "../stores/generationStore";
 import type { ModelNode, RefImage, RoleAssignment } from "../lib/types";
 
 type Props = {
@@ -30,7 +30,7 @@ function rolesSupportedBy(model: ModelNode | null): {
 
 export function RoleMenu({ anchor, ref_, model, onAssign, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const refImages = useGenerationStore((s) => s.refImages);
+  const refImages = useGenerationStore(selectRefImages);
   const supported = rolesSupportedBy(model);
   const anyRole = supported.source || supported.start || supported.end || supported.element || supported.image;
 

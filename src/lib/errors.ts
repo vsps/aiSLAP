@@ -69,3 +69,9 @@ export function extractErrorMessage(e: unknown): string {
 
   return parts.join(" — ");
 }
+
+/** For fire-and-forget promises: log the failure at debug level instead of
+ *  dropping it on the floor. Usage: `p.catch(swallow("history append"))`. */
+export function swallow(scope: string): (e: unknown) => void {
+  return (e) => console.debug(`[swallowed] ${scope}:`, e);
+}

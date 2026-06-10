@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { useGenerationStore } from "../stores/generationStore";
+import {
+  selectActiveLink,
+  selectSequencePrompt,
+  selectShotPrompts,
+  useGenerationStore,
+} from "../stores/generationStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
 import { findSequenceBody, findShotBody } from "../lib/script";
@@ -50,15 +55,18 @@ function ScriptSegment({
 // ---------- Sequence: single textarea, store-managed cursor ----------
 
 function SequencePromptColumn({ title }: { title: string }) {
-  const generation = useGenerationStore();
-  const session = useSessionStore();
+  const live = useGenerationStore(selectSequencePrompt);
+  const setLive = useGenerationStore((s) => s.setSequencePrompt);
+  const setSequenceScriptIncluded = useGenerationStore((s) => s.setSequenceScriptIncluded);
+  const setSequencePromptIncluded = useGenerationStore((s) => s.setSequencePromptIncluded);
+  const activeLink = useGenerationStore(selectActiveLink);
+  const history = useSessionStore((s) => s.sequenceHistory);
+  const sequencePath = useSessionStore((s) => s.sequencePath);
+  const navigatePromptHistory = useSessionStore((s) => s.navigatePromptHistory);
+  const snapToLive = useSessionStore((s) => s.snapToLive);
   const parsed = useScriptStore((s) => s.parsed);
   const [llmOpen, setLlmOpen] = useState(false);
   const width = useLayoutStore((s) => s.widths.seqPrompt);
-
-  const history = session.sequenceHistory;
-  const live = generation.sequencePrompt;
-  const setLive = generation.setSequencePrompt;
 
   const atLive = history.cursor >= history.entries.length;
   const displayed = atLive ? live : history.entries[history.cursor]?.prompt ?? "";
@@ -68,12 +76,9 @@ function SequencePromptColumn({ title }: { title: string }) {
   const canGoBack = history.cursor > 0 && history.entries.length > 0;
   const canGoFwd = history.cursor < history.entries.length;
 
-  const seqName = session.sequencePath ? basename(session.sequencePath) : "";
+  const seqName = sequencePath ? basename(sequencePath) : "";
   const seqScript = seqName ? findSequenceBody(parsed, seqName) : "";
 
-  const activeLink = generation.expandedIdx != null
-    ? generation.links[generation.expandedIdx]
-    : generation.links[0];
   const sequencePromptIncluded = activeLink?.sequencePromptIncluded !== false;
   const sequenceScriptIncluded = activeLink?.sequenceScriptIncluded !== false;
 
@@ -102,14 +107,14 @@ function SequencePromptColumn({ title }: { title: string }) {
           name="keyboard_arrow_left"
           size={18}
           title={entry ? `Older · ${entry.timestamp}` : "Older"}
-          onClick={() => session.navigatePromptHistory("sequence", -1)}
+          onClick={() => navigatePromptHistory("sequence", -1)}
           disabled={!canGoBack}
         />
         <IconBtn
           name="keyboard_arrow_right"
           size={18}
           title="Newer / live"
-          onClick={() => session.navigatePromptHistory("sequence", +1)}
+          onClick={() => navigatePromptHistory("sequence", +1)}
           disabled={!canGoFwd}
         />
       </div>
@@ -118,7 +123,7 @@ function SequencePromptColumn({ title }: { title: string }) {
         <ScriptSegment
           text={seqScript}
           included={sequenceScriptIncluded}
-          onToggle={generation.setSequenceScriptIncluded}
+          onToggle={setSequenceScriptIncluded}
         />
       )}
 
@@ -126,7 +131,7 @@ function SequencePromptColumn({ title }: { title: string }) {
         <input
           type="checkbox"
           checked={sequencePromptIncluded}
-          onChange={(e) => generation.setSequencePromptIncluded(e.currentTarget.checked)}
+          onChange={(e) => setSequencePromptIncluded(e.currentTarget.checked)}
           disabled={readOnly}
           className="mt-[6px] accent-accent"
           title="Include sequence prompt in submitted prompt"
@@ -135,16 +140,16 @@ function SequencePromptColumn({ title }: { title: string }) {
           value={displayed}
           readOnly={readOnly}
           onFocus={() => {
-            if (readOnly) session.snapToLive("sequence");
+            if (readOnly) snapToLive("sequence");
           }}
           onChange={(e) => setLive(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.altKey && e.key === "ArrowLeft") {
               e.preventDefault();
-              session.navigatePromptHistory("sequence", -1);
+              navigatePromptHistory("sequence", -1);
             } else if (e.altKey && e.key === "ArrowRight") {
               e.preventDefault();
-              session.navigatePromptHistory("sequence", +1);
+              navigatePromptHistory("sequence", +1);
             }
           }}
           placeholder="Prompt prepended to all shots in this sequence"
@@ -178,7 +183,14 @@ function SequencePromptColumn({ title }: { title: string }) {
 // ---------- Shot: N textareas, column-level cursor over grouped history ----------
 
 function ShotPromptColumn({ title }: { title: string }) {
-  const gen = useGenerationStore();
+  const shotPrompts = useGenerationStore(selectShotPrompts);
+  const setShotPrompts = useGenerationStore((s) => s.setShotPrompts);
+  const setShotScriptIncluded = useGenerationStore((s) => s.setShotScriptIncluded);
+  const setShotPromptIncludedAt = useGenerationStore((s) => s.setShotPromptIncludedAt);
+  const setShotPromptAt = useGenerationStore((s) => s.setShotPromptAt);
+  const addShotPromptAfter = useGenerationStore((s) => s.addShotPromptAfter);
+  const removeShotPromptAt = useGenerationStore((s) => s.removeShotPromptAt);
+  const activeLink = useGenerationStore(selectActiveLink);
   const entries = useSessionStore((s) => s.shotHistory.entries);
   const shotPath = useSessionStore((s) => s.shotPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);
@@ -195,7 +207,7 @@ function ShotPromptColumn({ title }: { title: string }) {
   const histEntry = atLive ? null : entries[safeCursor];
 
   const displayedPrompts: string[] = atLive
-    ? gen.shotPrompts
+    ? shotPrompts
     : histEntry?.prompts ?? [histEntry?.prompt ?? ""];
 
   const canGoBack = safeCursor > 0 && entries.length > 0;
@@ -205,19 +217,18 @@ function ShotPromptColumn({ title }: { title: string }) {
   const shotName = shotPath ? basename(shotPath) : "";
   const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
 
-  const activeLink = gen.expandedIdx != null ? gen.links[gen.expandedIdx] : gen.links[0];
   const shotScriptIncluded = activeLink?.shotScriptIncluded !== false;
   const shotPromptsIncluded =
-    activeLink?.shotPromptsIncluded ?? gen.shotPrompts.map(() => true);
+    activeLink?.shotPromptsIncluded ?? shotPrompts.map(() => true);
 
   // Replace all shot prompts with AI-split sections, after a warning. Returns
   // whether the split was applied (false when the user cancels).
   async function applySplit(parts: string[]): Promise<boolean> {
     const ok = await confirmAction(
-      `Replace all ${gen.shotPrompts.length} shot prompt(s) with ${parts.length} new one(s)?`,
+      `Replace all ${shotPrompts.length} shot prompt(s) with ${parts.length} new one(s)?`,
       { title: "Split into prompts", kind: "warning" },
     );
-    if (ok) gen.setShotPrompts(parts);
+    if (ok) setShotPrompts(parts);
     return ok;
   }
 
@@ -237,7 +248,7 @@ function ShotPromptColumn({ title }: { title: string }) {
         <button
           className="text-xs opacity-50 hover:opacity-100 px-1"
           title="Clear all shot prompts"
-          onClick={() => gen.setShotPrompts([""])}
+          onClick={() => setShotPrompts([""])}
         >
           clear
         </button>
@@ -261,7 +272,7 @@ function ShotPromptColumn({ title }: { title: string }) {
         <ScriptSegment
           text={shotScript}
           included={shotScriptIncluded}
-          onToggle={gen.setShotScriptIncluded}
+          onToggle={setShotScriptIncluded}
         />
       )}
 
@@ -274,10 +285,10 @@ function ShotPromptColumn({ title }: { title: string }) {
             readOnly={!atLive}
             isFirst={idx === 0}
             included={shotPromptsIncluded[idx] !== false}
-            onToggleIncluded={(v) => gen.setShotPromptIncludedAt(idx, v)}
-            onChange={(v) => gen.setShotPromptAt(idx, v)}
-            onAdd={() => gen.addShotPromptAfter(idx)}
-            onRemove={() => gen.removeShotPromptAt(idx)}
+            onToggleIncluded={(v) => setShotPromptIncludedAt(idx, v)}
+            onChange={(v) => setShotPromptAt(idx, v)}
+            onAdd={() => addShotPromptAfter(idx)}
+            onRemove={() => removeShotPromptAt(idx)}
             onSplit={applySplit}
             onFocusWhenReadOnly={() => setCursor(entries.length)}
           />

@@ -11,7 +11,7 @@ import {
 import {
   downloadAndWrite,
   type DownloadCtx,
-} from "./generate";
+} from "./generation/output";
 import type { ModelNode, PendingSubmission } from "./types";
 
 export type RecoveryResult = {

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useGenerationStore } from "../stores/generationStore";
 
 export function ErrorPopup() {
-  const { errorPopup, setError } = useGenerationStore();
+  const errorPopup = useGenerationStore((s) => s.errorPopup);
+  const setError = useGenerationStore((s) => s.setError);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {

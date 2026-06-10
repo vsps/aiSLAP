@@ -9,6 +9,7 @@ import {
   saveLastLlmModel,
 } from "../lib/llm";
 import { splitPromptsByDelimiter } from "../lib/args";
+import { ModalDialog } from "./ModalDialog";
 
 type Props = {
   originalPrompt: string;
@@ -30,20 +31,9 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel, onSplit }: 
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        cancel();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      abortRef.current?.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Abort any in-flight LLM call on unmount (Escape/backdrop close is
+  // handled by ModalDialog via onClose={cancel}).
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   function cancel() {
     abortRef.current?.abort();
@@ -98,14 +88,10 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel, onSplit }: 
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
-      onClick={cancel}
+    <ModalDialog
+      onClose={cancel}
+      panelClassName="w-[640px] max-w-[92vw] max-h-[92vh] gap-3"
     >
-      <div
-        className="bg-panel text-text border border-dim p-4 w-[640px] max-w-[92vw] max-h-[92vh] flex flex-col gap-3"
-        onClick={(e) => e.stopPropagation()}
-      >
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
             auto_awesome
@@ -213,7 +199,6 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel, onSplit }: 
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }
