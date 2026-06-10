@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::commands::session::visible_set_remove_path_or_prefix;
+use crate::commands::visible::visible_set_remove_path_or_prefix;
 use crate::error::{AppError, AppResult};
 
 #[tauri::command]
