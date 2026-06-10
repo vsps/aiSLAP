@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
-import { performImageAction, type ImageAction } from "../lib/actions";
+import { selectImagePath as selectImageAction, toggleStarPath } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 import type { GalleryImage, RefImage } from "../lib/types";
 import { basename, dirname } from "../lib/paths";
@@ -144,8 +144,9 @@ function computeLayout(
 }
 
 export function TraceView({ onDragStart }: Props) {
-  const { traceActive, selectedImagePath, columns: galleryColumns } =
-    useSessionStore();
+  const traceActive = useSessionStore((s) => s.traceActive);
+  const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
+  const galleryColumns = useSessionStore((s) => s.columns);
   const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
@@ -220,9 +221,6 @@ export function TraceView({ onDragStart }: Props) {
     return () => ro.disconnect();
   }, [recompute]);
 
-  const onAction = (action: ImageAction, path: string) =>
-    performImageAction(action, path);
-
   // Resolve a traced path to its scanned gallery image when available so the
   // visibility star reflects real state; fall back to a synthetic image for
   // paths outside the current shot's scan.
@@ -276,8 +274,8 @@ export function TraceView({ onDragStart }: Props) {
                     image={img}
                     selected={selectedImagePath === p}
                     columnVersion={labelFor(p)}
-                    onSelect={() => onAction("select", p)}
-                    onToggleStar={() => onAction("toggle_star", p)}
+                    onSelect={selectImageAction}
+                    onToggleStar={toggleStarPath}
                     onDragStart={onDragStart}
                     clipMediaSelected={clipSelected}
                     onToggleClipMedia={

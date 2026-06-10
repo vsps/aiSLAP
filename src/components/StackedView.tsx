@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { cmd } from "../lib/tauri";
-import { performImageAction, type ImageAction } from "../lib/actions";
+import { selectImagePath, toggleStarPath } from "../lib/actions";
 import { showMessage } from "../lib/dialog";
 import { VersionStack } from "./VersionStack";
 import { SelectPickerPopup } from "./SelectPickerPopup";
@@ -29,15 +29,13 @@ type PickerState = {
 };
 
 export function StackedView({ onDragStart }: Props) {
-  const {
-    sequencePath,
-    shotPath,
-    selectedImagePath,
-    sequenceStacks,
-    sequenceStacksLoading,
-    rescanSequenceStacks,
-    setShot,
-  } = useSessionStore();
+  const sequencePath = useSessionStore((s) => s.sequencePath);
+  const shotPath = useSessionStore((s) => s.shotPath);
+  const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
+  const sequenceStacks = useSessionStore((s) => s.sequenceStacks);
+  const sequenceStacksLoading = useSessionStore((s) => s.sequenceStacksLoading);
+  const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
+  const setShot = useSessionStore((s) => s.setShot);
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const [picker, setPicker] = useState<PickerState | null>(null);
@@ -84,8 +82,6 @@ export function StackedView({ onDragStart }: Props) {
     void rescanSequenceStacks();
   }
 
-  const onAction = (action: ImageAction, path: string) => performImageAction(action, path);
-
   return (
     <>
       <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface p-gallery-column">
@@ -108,8 +104,8 @@ export function StackedView({ onDragStart }: Props) {
                     image={img}
                     selected={selectedImagePath === img.path}
                     columnVersion="GLOBAL SRC"
-                    onSelect={() => onAction("select", img.path)}
-                    onToggleStar={() => onAction("toggle_star", img.path)}
+                    onSelect={selectImagePath}
+                    onToggleStar={toggleStarPath}
                     onDragStart={(payload) =>
                       onDragStart({
                         fromPath: payload.fromPath,

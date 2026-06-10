@@ -136,7 +136,7 @@ function StatusBar({
 }) {
   const { entries, loaded } = useModelsStore();
   const jobs = useGenerationStore((s) => s.jobs);
-  const { traceActive } = useSessionStore();
+  const traceActive = useSessionStore((s) => s.traceActive);
 
   const active = jobs.filter(
     (j) =>

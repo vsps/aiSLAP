@@ -12,15 +12,13 @@ import { showMessage } from "../lib/dialog";
 import { basename } from "../lib/paths";
 
 export function RunColumn() {
-  const {
-    iterations,
-    setIterations,
-    currentModel,
-    sequencePrompt,
-    shotPrompts,
-    jobs,
-    resetGenerationForm,
-  } = useGenerationStore();
+  const iterations = useGenerationStore((s) => s.iterations);
+  const setIterations = useGenerationStore((s) => s.setIterations);
+  const currentModel = useGenerationStore((s) => s.currentModel);
+  const sequencePrompt = useGenerationStore((s) => s.sequencePrompt);
+  const shotPrompts = useGenerationStore((s) => s.shotPrompts);
+  const jobs = useGenerationStore((s) => s.jobs);
+  const resetGenerationForm = useGenerationStore((s) => s.resetGenerationForm);
   const shotPath = useSessionStore((s) => s.shotPath);
   const targetVersion = useSessionStore((s) => s.targetVersion);
   const createNextVersion = useSessionStore((s) => s.createNextVersion);

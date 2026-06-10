@@ -62,16 +62,14 @@ type DropTarget =
   | null;
 
 export function RefImagesColumn() {
-  const {
-    currentModel,
-    refImages,
-    addRefs,
-    removeRef,
-    removeAllRefs,
-    assignRole,
-    swapRoleAssignments,
-    reorderRefs,
-  } = useGenerationStore();
+  const currentModel = useGenerationStore((s) => s.currentModel);
+  const refImages = useGenerationStore((s) => s.refImages);
+  const addRefs = useGenerationStore((s) => s.addRefs);
+  const removeRef = useGenerationStore((s) => s.removeRef);
+  const removeAllRefs = useGenerationStore((s) => s.removeAllRefs);
+  const assignRole = useGenerationStore((s) => s.assignRole);
+  const swapRoleAssignments = useGenerationStore((s) => s.swapRoleAssignments);
+  const reorderRefs = useGenerationStore((s) => s.reorderRefs);
   const expandedIdx = useGenerationStore((s) => s.expandedIdx);
   const width = useLayoutStore((s) => s.widths.refImages);
   const linksLen = useGenerationStore((s) => s.links.length);

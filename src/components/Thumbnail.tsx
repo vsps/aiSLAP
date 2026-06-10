@@ -11,8 +11,8 @@ type Props = {
   hidden?: boolean;
   columnVersion: string;
   isDragSource?: boolean;
-  onSelect: () => void;
-  onToggleStar: () => void;
+  onSelect: (path: string) => void;
+  onToggleStar: (path: string) => void;
   onDragStart: (payload: {
     fromPath: string;
     fromColumnVersion: string;
@@ -23,7 +23,7 @@ type Props = {
   /** Whether this image is currently the shot's exclusive "clip media" pick. */
   clipMediaSelected?: boolean;
   /** When defined, renders the clip-media toggle button. */
-  onToggleClipMedia?: () => void;
+  onToggleClipMedia?: (path: string) => void;
 };
 
 const DRAG_THRESHOLD_PX = 5;
@@ -139,7 +139,7 @@ export const Thumbnail = memo(function Thumbnail({
       onPointerDown={onPointerDown}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect();
+        onSelect(image.path);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -198,7 +198,7 @@ export const Thumbnail = memo(function Thumbnail({
         title={image.starred ? "Remove from favorites" : "Add to favorites"}
         onClick={(e) => {
           e.stopPropagation();
-          onToggleStar();
+          onToggleStar(image.path);
         }}
         className={`absolute bottom-1 left-1 drop-shadow transition-opacity ${
           image.starred
@@ -214,7 +214,7 @@ export const Thumbnail = memo(function Thumbnail({
           title={clipMediaSelected ? "Clear clip media" : "Set as clip media"}
           onClick={(e) => {
             e.stopPropagation();
-            onToggleClipMedia();
+            onToggleClipMedia(image.path);
           }}
           className={`absolute bottom-1 right-1 drop-shadow transition-opacity ${
             clipMediaSelected

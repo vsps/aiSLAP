@@ -47,7 +47,6 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
   const [imgReady, setImgReady] = useState(false);
   const [imgBounds, setImgBounds] = useState<DOMRect | null>(null);
 
-  const session = useSessionStore();
 
   // Update canvas bounds when image loads or window resizes
   const updateBounds = useCallback(() => {
@@ -282,7 +281,7 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
       const savePath = `${dir}/${name}_paint.png`;
 
       await cmd.save_png_base64(savePath, base64);
-      await session.rescanShot();
+      await useSessionStore.getState().rescanShot();
       onSave(savePath);
     } catch (e) {
       await showMessage(String(e), { kind: "error" });

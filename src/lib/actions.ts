@@ -266,6 +266,12 @@ async function copyImageToClipboard(path: string): Promise<void> {
 }
 
 /** Single entry point for any image op invoked from thumbs, preview, or zoom. */
+// Module-level per-path handlers — stable references for memo'd Thumbnails.
+export const selectImagePath = (path: string) =>
+  void performImageAction("select", path);
+export const toggleStarPath = (path: string) =>
+  void performImageAction("toggle_star", path);
+
 export async function performImageAction(
   action: ImageAction,
   path: string,

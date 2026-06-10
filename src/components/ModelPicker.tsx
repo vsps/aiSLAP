@@ -6,7 +6,8 @@ type Provider = "fal" | "replicate";
 
 export function ModelPicker() {
   const { entries, loaded } = useModelsStore();
-  const { currentModel, selectModel } = useGenerationStore();
+  const currentModel = useGenerationStore((s) => s.currentModel);
+  const selectModel = useGenerationStore((s) => s.selectModel);
 
   const [provider, setProvider] = useState<Provider>(
     () => ((currentModel?.provider ?? "fal") as Provider),

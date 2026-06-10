@@ -36,7 +36,6 @@ export function RenameImageModal({ image, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const session = useSessionStore();
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -58,6 +57,7 @@ export function RenameImageModal({ image, onClose }: Props) {
     setBusy(true);
     try {
       const newPath = await cmd.image_rename(image.path, trimmed);
+      const session = useSessionStore.getState();
       await session.rescanShot();
       session.setSelectedImage(newPath);
       onClose();
