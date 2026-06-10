@@ -34,7 +34,8 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
 Pre-built installers are available on the [Releases page](https://github.com/vsps/aiSLAP/releases). Builds track the `main` branch. Only Windows is actively tested — macOS/Linux feedback welcome.
 
-### [LATEST BUILDS](https://github.com/vsps/aiSLAP/releases)
+<!-- release-links:start -->
+### [LATEST BUILDS](https://github.com/vsps/aiSLAP/releases) — v0.2.9
 
 > **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.
 > **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.
@@ -42,21 +43,21 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 ### Windows
 | | |
 |---|---|
-| MSI installer | [aiSLAP_0.2.7_x64_en-US.msi](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.7/aiSLAP_0.2.7_x64_en-US.msi) |
-| EXE installer | [aiSLAP_0.2.7_x64-setup.exe](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.7/aiSLAP_0.2.7_x64-setup.exe) |
+| MSI installer | [aiSLAP_0.2.9_x64_en-US.msi](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.9/aiSLAP_0.2.9_x64_en-US.msi) |
+| EXE installer | [aiSLAP_0.2.9_x64-setup.exe](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.9/aiSLAP_0.2.9_x64-setup.exe) |
 
 ### macOS
 | | |
 |---|---|
-| Apple Silicon (M-series) | [aiSLAP_0.2.7_aarch64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.7/aiSLAP_0.2.7_aarch64.dmg) |
-| Intel | [aiSLAP_0.2.7_x64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.7/aiSLAP_0.2.7_x64.dmg) |
+| Apple Silicon (M-series) | [aiSLAP_0.2.9_aarch64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.9/aiSLAP_0.2.9_aarch64.dmg) |
+| Intel | [aiSLAP_0.2.9_x64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.9/aiSLAP_0.2.9_x64.dmg) |
 
 ### Linux
 | | |
 |---|---|
-| AppImage | [aiSLAP_0.2.7_amd64.AppImage](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.7/aiSLAP_0.2.7_amd64.AppImage) |
-| .deb | [aiSLAP_0.2.7_amd64.deb](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.7/aiSLAP_0.2.7_amd64.deb) |
-
+| AppImage | [aiSLAP_0.2.9_amd64.AppImage](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.9/aiSLAP_0.2.9_amd64.AppImage) |
+| .deb | [aiSLAP_0.2.9_amd64.deb](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.2.9/aiSLAP_0.2.9_amd64.deb) |
+<!-- release-links:end -->
 
 ---
 
