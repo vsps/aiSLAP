@@ -169,3 +169,51 @@ pub(crate) fn validate_filename_stem(stem: &str) -> AppResult<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_names_accept_letter_prefixes_with_three_digits() {
+        assert!(is_version_name("v001"));
+        assert!(is_version_name("gen001"));
+        assert!(is_version_name("ab-c123"));
+        assert!(is_version_name("a_b001"));
+    }
+
+    #[test]
+    fn version_names_reject_bad_shapes() {
+        assert!(!is_version_name("001")); // no prefix
+        assert!(!is_version_name("1bc001")); // prefix must start with a letter
+        assert!(!is_version_name("v01")); // len < 4
+        assert!(!is_version_name("v0011x")); // non-digit suffix
+        assert!(!is_version_name("gen01a")); // digits required at the end
+        assert!(!is_version_name(""));
+    }
+
+    #[test]
+    fn version_number_extracts_suffix() {
+        assert_eq!(version_number("gen001"), Some(1));
+        assert_eq!(version_number("v123"), Some(123));
+        assert_eq!(version_number("take999"), Some(999));
+        assert_eq!(version_number("SRC"), None);
+        assert_eq!(version_number("gen01"), None);
+    }
+
+    #[test]
+    fn sanitize_replaces_reserved_chars() {
+        assert_eq!(sanitize("a/b\\c:d*e?f\"g<h>i|j"), "a_b_c_d_e_f_g_h_i_j");
+        assert_eq!(sanitize("plain name"), "plain name");
+        assert_eq!(sanitize("tab\there"), "tab_here");
+    }
+
+    #[test]
+    fn filename_stems_validate() {
+        assert!(validate_filename_stem("fine_name-01").is_ok());
+        assert!(validate_filename_stem("").is_err());
+        assert!(validate_filename_stem("bad/slash").is_err());
+        assert!(validate_filename_stem("con").is_err()); // reserved (case-insensitive)
+        assert!(validate_filename_stem("LPT3").is_err());
+    }
+}
