@@ -13,6 +13,7 @@ import {
   selectActiveLink,
   useGenerationStore,
 } from "../stores/generationStore";
+import { swallow } from "./errors";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePresetsStore } from "../stores/presetsStore";
 import { useSessionStore } from "../stores/sessionStore";
@@ -223,9 +224,7 @@ function installPersistence(): () => void {
       const serialized = JSON.stringify(state);
       if (serialized === lastSerialized) return;
       lastSerialized = serialized;
-      void cmd.app_state_save(state).catch(() => {
-        /* swallow */
-      });
+      void cmd.app_state_save(state).catch(swallow("app-state save"));
     }, 500);
   };
 

@@ -12,6 +12,7 @@ import {
   enqueueGeneration,
 } from "../lib/generate";
 import { preflightChain } from "../lib/chainValidation";
+import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
 import { basename } from "../lib/paths";
@@ -28,10 +29,7 @@ export function RunColumn() {
   const targetVersion = useSessionStore((s) => s.targetVersion);
   const createNextVersion = useSessionStore((s) => s.createNextVersion);
 
-  const activeJobs = jobs.filter(
-    (j) =>
-      j.status !== "done" && j.status !== "failed" && j.status !== "cancelled",
-  );
+  const activeJobs = jobs.filter((j) => !isJobTerminal(j.status));
 
   const queueCount = activeJobs.length;
   const columns = useSessionStore((s) => s.columns);

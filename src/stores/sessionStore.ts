@@ -13,6 +13,8 @@ import { useTimelineStore } from "./timelineStore";
 import { useScriptStore } from "./scriptStore";
 import { useGenerationStore } from "./generationStore";
 import { basename } from "../lib/paths";
+import { inFlightJobs } from "../lib/jobs";
+import { swallow } from "../lib/errors";
 import { rewriteScriptHeading } from "../lib/script";
 
 type PromptScope = "sequence" | "shot";
@@ -198,9 +200,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     const timelineLoad = useTimelineStore
       .getState()
       .loadForSequence(sequencePath)
-      .catch(() => {
-        /* non-fatal — leave the timeline empty if init fails */
-      });
+      .catch(swallow("timeline init"));
     if (shots.length > 0) {
       await get().setShot(shots[shots.length - 1]);
     }
@@ -276,14 +276,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     const oldSeqBase = basename(oldSeqPath);
 
     // Job-safety guard. Refuse if any non-terminal job targets this sequence.
-    const jobs = useGenerationStore.getState().jobs;
-    const inFlight = jobs.filter(
-      (j) =>
-        j.shotPath.startsWith(oldSeqPath + "/") &&
-        j.status !== "done" &&
-        j.status !== "failed" &&
-        j.status !== "cancelled",
-    );
+    const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldSeqPath);
     if (inFlight.length > 0) {
       throw new Error(
         `Cannot rename — ${inFlight.length} job${
@@ -324,9 +317,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       trimmed,
     );
     if (nextRaw !== scriptState.raw) {
-      await scriptState.save(projectPath, nextRaw).catch(() => {
-        /* swallow */
-      });
+      await scriptState.save(projectPath, nextRaw).catch(swallow("script heading rewrite"));
     }
   },
 
@@ -341,15 +332,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
     const oldShotPath = shotPath;
     const oldShotBase = basename(oldShotPath);
 
-    const jobs = useGenerationStore.getState().jobs;
-    const inFlight = jobs.filter(
-      (j) =>
-        (j.shotPath === oldShotPath ||
-          j.shotPath.startsWith(oldShotPath + "/")) &&
-        j.status !== "done" &&
-        j.status !== "failed" &&
-        j.status !== "cancelled",
-    );
+    const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldShotPath);
     if (inFlight.length > 0) {
       throw new Error(
         `Cannot rename — ${inFlight.length} job${
@@ -376,9 +359,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
       trimmed,
     );
     if (nextRaw !== scriptState.raw) {
-      await scriptState.save(projectPath, nextRaw).catch(() => {
-        /* swallow */
-      });
+      await scriptState.save(projectPath, nextRaw).catch(swallow("script heading rewrite"));
     }
   },
 

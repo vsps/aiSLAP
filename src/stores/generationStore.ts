@@ -8,6 +8,7 @@ import type {
   RoleAssignment,
 } from "../lib/types";
 import { classifyMedia } from "../lib/media";
+import { isJobTerminal } from "../lib/jobs";
 
 type State = {
   // Source of truth: prompt-chain links. Always >= 1 entry. expandedIdx
@@ -498,11 +499,9 @@ export const useGenerationStore = create<State & Actions>((set) => {
         const MAX = 50;
         if (next.length <= MAX) return { jobs: next };
         // Drop oldest *completed* jobs first so active work is never evicted.
-        const completed = (j: Job) =>
-          j.status === "done" || j.status === "failed" || j.status === "cancelled";
         const trimmed = next.slice();
         for (let i = 0; trimmed.length > MAX && i < trimmed.length; ) {
-          if (completed(trimmed[i])) trimmed.splice(i, 1);
+          if (isJobTerminal(trimmed[i].status)) trimmed.splice(i, 1);
           else i++;
         }
         // If still over (>50 active jobs at once — pathological), keep newest.
@@ -519,12 +518,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
     },
     clearFinishedJobs() {
       set((s) => ({
-        jobs: s.jobs.filter(
-          (j) =>
-            j.status !== "done" &&
-            j.status !== "failed" &&
-            j.status !== "cancelled",
-        ),
+        jobs: s.jobs.filter((j) => !isJobTerminal(j.status)),
       }));
     },
     setError(msg) {

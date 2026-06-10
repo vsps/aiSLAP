@@ -21,7 +21,8 @@ import { selectActiveLink, useGenerationStore } from "../stores/generationStore"
 import { useSessionStore } from "../stores/sessionStore";
 import { getProvider } from "./providers";
 import type { ProviderOutput, ProviderProgress } from "./providers";
-import { extractErrorMessage } from "./errors";
+import { extractErrorMessage, swallow } from "./errors";
+import { isJobTerminal } from "./jobs";
 import { buildArgs, combinePromptParts, guessContentType } from "./args";
 import { findSequenceBody, findShotBody } from "./script";
 import { useScriptStore } from "../stores/scriptStore";
@@ -72,8 +73,8 @@ async function appendPromptHistories(
     try {
       const sidecar = await cmd.sequence_prompt_append(sequencePath, sequenceText);
       useSessionStore.getState().hydrateSequenceSidecar(sidecar);
-    } catch {
-      /* swallow — history append failures are non-fatal */
+    } catch (e) {
+      swallow("sequence prompt history append")(e);
     }
   }
   const panels = nonEmptyTrimmed(shotPrompts);
@@ -81,8 +82,8 @@ async function appendPromptHistories(
     try {
       const sidecar = await cmd.shot_prompts_append(shotPath, panels);
       useSessionStore.getState().hydrateShotSidecar(sidecar);
-    } catch {
-      /* swallow — history append failures are non-fatal */
+    } catch (e) {
+      swallow("shot prompt history append")(e);
     }
   }
 }
@@ -545,9 +546,9 @@ export async function enqueueChain(): Promise<void> {
       // Backfill predecessor sidecar with downstream paths so a future
       // restore-chain knows the full graph.
       if (prevMediaPath) {
-        await appendChainNextMediaPaths(prevMediaPath, outputs).catch(() => {
-          /* swallow — backfill is best-effort */
-        });
+        await appendChainNextMediaPaths(prevMediaPath, outputs).catch(
+          swallow("chain nextMediaPaths backfill"),
+        );
       }
 
       prevMediaPath = outputs[0];
@@ -606,14 +607,9 @@ async function appendChainNextMediaPaths(
 }
 
 function activeJobCount(): number {
-  return useGenerationStore.getState().jobs.filter((j) => {
-    return (
-      j.status !== "queued" &&
-      j.status !== "done" &&
-      j.status !== "failed" &&
-      j.status !== "cancelled"
-    );
-  }).length;
+  return useGenerationStore.getState().jobs.filter(
+    (j) => j.status !== "queued" && !isJobTerminal(j.status),
+  ).length;
 }
 
 /**
@@ -650,12 +646,7 @@ async function pumpQueue(): Promise<void> {
 export function cancelAllGenerations(): void {
   const state = useGenerationStore.getState();
   for (const j of state.jobs) {
-    if (
-      j.status === "done" ||
-      j.status === "failed" ||
-      j.status === "cancelled"
-    )
-      continue;
+    if (isJobTerminal(j.status)) continue;
     if (j.status === "queued") {
       const spec = jobSpecs.get(j.id);
       jobSpecs.delete(j.id);
@@ -730,9 +721,7 @@ async function runJob(spec: JobSpec): Promise<void> {
             onSubmitted: async (requestId) => {
               await cmd
                 .pending_add(buildPendingRecord(pendingId, spec, k, requestId))
-                .catch(() => {
-                  /* persistence is best-effort — never fail the job over it */
-                });
+                .catch(swallow("pending-record persistence"));
             },
           },
         );
@@ -770,7 +759,7 @@ async function runJob(spec: JobSpec): Promise<void> {
         // Whether the iter succeeded, failed, or was aborted, the pending
         // record's job is done. Crash-path is the one case `finally` doesn't
         // fire — that's exactly when the recovery flow picks it up later.
-        await cmd.pending_remove(pendingId).catch(() => {});
+        await cmd.pending_remove(pendingId).catch(swallow("pending-record removal"));
       }
     }
 

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bootstrap } from "./lib/bootstrap";
+import { isJobTerminal } from "./lib/jobs";
+import { swallow } from "./lib/errors";
 import { SessionBar } from "./components/SessionBar";
 import { Workbench } from "./components/Workbench";
 import { Timeline } from "./components/Timeline";
@@ -40,9 +42,7 @@ export default function App() {
         setVersion(v);
         return getCurrentWindow().setTitle(`aiSLAP ${v}`);
       })
-      .catch(() => {
-        /* non-fatal — title/version just won't update */
-      });
+      .catch(swallow("window title/version update"));
     bootstrap()
       .then((d) => {
         dispose = d;
@@ -138,10 +138,7 @@ function StatusBar({
   const jobs = useGenerationStore((s) => s.jobs);
   const traceActive = useSessionStore((s) => s.traceActive);
 
-  const active = jobs.filter(
-    (j) =>
-      j.status !== "done" && j.status !== "failed" && j.status !== "cancelled",
-  );
+  const active = jobs.filter((j) => !isJobTerminal(j.status));
   // Surface the latest active job's progress; with multi-job runs the badge in
   // RunColumn shows the full picture, the status bar just gives the gist.
   const latest = active[active.length - 1];
