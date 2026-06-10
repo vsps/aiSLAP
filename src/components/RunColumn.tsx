@@ -10,7 +10,7 @@ import {
   cancelAllGenerations,
   enqueueChain,
   enqueueGeneration,
-} from "../lib/generate";
+} from "../lib/generation/enqueue";
 import { preflightChain } from "../lib/chainValidation";
 import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
