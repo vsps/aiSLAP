@@ -6,6 +6,8 @@ mod paths;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Route tracing::warn!/error! to stderr; without a subscriber they vanish.
+    tracing_subscriber::fmt::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_http::init())

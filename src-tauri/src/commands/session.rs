@@ -884,7 +884,7 @@ pub fn version_stack_move(
     }
 
     for src in &moves {
-        move_triple_to_dir(src, &dst_dir)?;
+        transfer_triple_to_dir(src, &dst_dir, TransferMode::Move, CollisionPolicy::Error)?;
     }
 
     // Update visible set, re-keying any moved files that were marked visible.
@@ -1073,42 +1073,26 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     as_str(a) == as_str(b)
 }
 
-fn copy_triple_to_dir(src: &Path, dest_dir: &Path, policy: CollisionPolicy) -> AppResult<PathBuf> {
-    if !src.is_file() {
-        return Err(AppError::Msg(format!("not a file: {}", as_str(src))));
-    }
-    if !dest_dir.is_dir() {
-        ensure_dir(dest_dir)?;
-    }
-    let src_dir = src
-        .parent()
-        .ok_or_else(|| AppError::Msg("no parent dir".into()))?;
-    if same_dir(src_dir, dest_dir) {
-        return Err(AppError::Msg(
-            "source and destination are the same directory".into(),
-        ));
-    }
-    let (_stem, filename, src_sidecar, src_thumb) = sibling_paths(src)?;
-    let dest_primary = dest_dir.join(&filename);
-    if dest_primary.exists()
-        && matches!(policy, CollisionPolicy::Error) {
-            return Err(AppError::Msg(format!("FILENAME_EXISTS: {filename}")));
-        }
-    std::fs::copy(src, &dest_primary)?;
-    // Sidecar/thumb are best-effort companions; skip silently if unnamed.
-    if let (true, Some(name)) = (src_sidecar.exists(), src_sidecar.file_name()) {
-        let dest_sidecar = dest_dir.join(name);
-        if let Err(e) = std::fs::copy(&src_sidecar, &dest_sidecar) {
-            eprintln!("sidecar copy failed: {e}");
+#[derive(Clone, Copy)]
+enum TransferMode {
+    Copy,
+    Move,
+}
+
+impl TransferMode {
+    fn label(self) -> &'static str {
+        match self {
+            TransferMode::Copy => "copy",
+            TransferMode::Move => "move",
         }
     }
-    if let (true, Some(name)) = (src_thumb.exists(), src_thumb.file_name()) {
-        let dest_thumb = dest_dir.join(name);
-        if let Err(e) = std::fs::copy(&src_thumb, &dest_thumb) {
-            eprintln!("thumb copy failed: {e}");
-        }
+}
+
+fn transfer_one(mode: TransferMode, src: &Path, dest: &Path) -> std::io::Result<()> {
+    match mode {
+        TransferMode::Copy => std::fs::copy(src, dest).map(|_| ()),
+        TransferMode::Move => move_one(src, dest),
     }
-    Ok(dest_primary)
 }
 
 fn move_one(src: &Path, dest: &Path) -> std::io::Result<()> {
@@ -1123,7 +1107,12 @@ fn move_one(src: &Path, dest: &Path) -> std::io::Result<()> {
     }
 }
 
-fn move_triple_to_dir(src: &Path, dest_dir: &Path) -> AppResult<PathBuf> {
+fn transfer_triple_to_dir(
+    src: &Path,
+    dest_dir: &Path,
+    mode: TransferMode,
+    policy: CollisionPolicy,
+) -> AppResult<PathBuf> {
     if !src.is_file() {
         return Err(AppError::Msg(format!("not a file: {}", as_str(src))));
     }
@@ -1140,21 +1129,19 @@ fn move_triple_to_dir(src: &Path, dest_dir: &Path) -> AppResult<PathBuf> {
     }
     let (_stem, filename, src_sidecar, src_thumb) = sibling_paths(src)?;
     let dest_primary = dest_dir.join(&filename);
-    if dest_primary.exists() {
+    if dest_primary.exists() && matches!(policy, CollisionPolicy::Error) {
         return Err(AppError::Msg(format!("FILENAME_EXISTS: {filename}")));
     }
-    move_one(src, &dest_primary)?;
+    transfer_one(mode, src, &dest_primary)?;
     // Sidecar/thumb are best-effort companions; skip silently if unnamed.
     if let (true, Some(name)) = (src_sidecar.exists(), src_sidecar.file_name()) {
-        let dest_sidecar = dest_dir.join(name);
-        if let Err(e) = move_one(&src_sidecar, &dest_sidecar) {
-            eprintln!("sidecar move failed: {e}");
+        if let Err(e) = transfer_one(mode, &src_sidecar, &dest_dir.join(name)) {
+            tracing::warn!("sidecar {} failed: {e}", mode.label());
         }
     }
     if let (true, Some(name)) = (src_thumb.exists(), src_thumb.file_name()) {
-        let dest_thumb = dest_dir.join(name);
-        if let Err(e) = move_one(&src_thumb, &dest_thumb) {
-            eprintln!("thumb move failed: {e}");
+        if let Err(e) = transfer_one(mode, &src_thumb, &dest_dir.join(name)) {
+            tracing::warn!("thumb {} failed: {e}", mode.label());
         }
     }
     Ok(dest_primary)
@@ -1189,7 +1176,7 @@ pub fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResu
         .ok_or_else(|| AppError::Msg("no project parent".into()))?
         .join(SRC_DIR);
     ensure_dir(&project_dir)?;
-    let dest = copy_triple_to_dir(&src, &project_dir, CollisionPolicy::Overwrite)?;
+    let dest = transfer_triple_to_dir(&src, &project_dir, TransferMode::Copy, CollisionPolicy::Overwrite)?;
     Ok(as_str(&dest))
 }
 
@@ -1197,7 +1184,7 @@ pub fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResu
 pub fn image_copy_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
     let src = PathBuf::from(&source_path);
     let dest = PathBuf::from(&dest_dir);
-    let out = copy_triple_to_dir(&src, &dest, CollisionPolicy::Error)?;
+    let out = transfer_triple_to_dir(&src, &dest, TransferMode::Copy, CollisionPolicy::Error)?;
     // If source is visible, mark the copy visible too.
     if let Ok(root) = project_root_for(&src) {
         let src_rel = relativize(&src, &root);
@@ -1217,7 +1204,7 @@ pub fn image_copy_to_dir(source_path: String, dest_dir: String) -> AppResult<Str
 pub fn image_move_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
     let src = PathBuf::from(&source_path);
     let dest = PathBuf::from(&dest_dir);
-    let out = move_triple_to_dir(&src, &dest)?;
+    let out = transfer_triple_to_dir(&src, &dest, TransferMode::Move, CollisionPolicy::Error)?;
     // Re-key the visible entry if the source was visible.
     if let Ok(root) = project_root_for(&out) {
         // src no longer exists; relativize against pre-move path string directly.
@@ -1280,12 +1267,12 @@ pub fn image_rename(source_path: String, new_stem: String) -> AppResult<String> 
     std::fs::rename(&src, &new_primary)?;
     if old_sidecar.exists() {
         if let Err(e) = std::fs::rename(&old_sidecar, &new_sidecar) {
-            eprintln!("sidecar rename failed: {e}");
+            tracing::warn!("sidecar rename failed: {e}");
         }
     }
     if old_thumb.exists() {
         if let Err(e) = std::fs::rename(&old_thumb, &new_thumb) {
-            eprintln!("thumb rename failed: {e}");
+            tracing::warn!("thumb rename failed: {e}");
         }
     }
     // Re-key visible entry if present.
