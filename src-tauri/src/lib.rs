@@ -1,6 +1,7 @@
 mod commands;
 mod domain;
 mod error;
+mod fsjson;
 mod paths;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

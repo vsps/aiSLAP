@@ -97,32 +97,9 @@ fn version_prefix_for(path: &Path) -> String {
     }
 }
 
-fn read_sidecar<T: serde::de::DeserializeOwned + Default>(path: &Path) -> AppResult<T> {
-    if !path.exists() {
-        return Ok(T::default());
-    }
-    let text = std::fs::read_to_string(path)?;
-    match serde_json::from_str::<T>(&text) {
-        Ok(v) => Ok(v),
-        Err(_) => Ok(T::default()),
-    }
-}
-
-fn write_sidecar_atomic<T: Serialize>(path: &Path, value: &T) -> AppResult<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(value)?;
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
-}
-
-fn ensure_dir(path: &Path) -> AppResult<()> {
-    std::fs::create_dir_all(path)?;
-    Ok(())
-}
+use crate::fsjson::{
+    ensure_dir, read_json_or_default as read_sidecar, write_json_atomic as write_sidecar_atomic,
+};
 
 /// Walk up the parent chain and return the *topmost* ancestor that contains a
 /// `project.json`. Going to the top (rather than stopping at the first hit)

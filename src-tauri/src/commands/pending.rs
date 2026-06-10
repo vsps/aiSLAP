@@ -9,33 +9,16 @@
 use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
+use crate::fsjson::{read_json_or_default, write_json_atomic};
 use crate::paths;
 
+// Missing, empty, or corrupt file → empty list rather than a loud failure.
 fn read_list() -> AppResult<Vec<Value>> {
-    let path = paths::pending_path()?;
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    let text = std::fs::read_to_string(&path)?;
-    if text.trim().is_empty() {
-        return Ok(vec![]);
-    }
-    match serde_json::from_str::<Vec<Value>>(&text) {
-        Ok(v) => Ok(v),
-        Err(_) => Ok(vec![]), // corrupt file → treat as empty rather than fail loudly
-    }
+    read_json_or_default(&paths::pending_path()?)
 }
 
 fn write_list(list: &[Value]) -> AppResult<()> {
-    let path = paths::pending_path()?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(list)?;
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(())
+    write_json_atomic(&paths::pending_path()?, &list)
 }
 
 fn record_id(record: &Value) -> Option<&str> {
