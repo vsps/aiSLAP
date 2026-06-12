@@ -92,7 +92,7 @@ export function GalleryColumn({
   const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
   const [refsCollapsed, setRefsCollapsed] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-  const twoCol = !collapsed && width > 220;
+  const subCols = !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
 
   // OS file drag-drop onto a column → copy each file in, then rescan so it
   // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
@@ -204,7 +204,7 @@ export function GalleryColumn({
     setTargetVersion(column.version);
   }
 
-  const effectiveWidth = collapsed ? COLLAPSED_WIDTH : width;
+  const effectiveWidth = collapsed ? COLLAPSED_WIDTH : width * subCols;
 
   return (
     <div
@@ -318,7 +318,7 @@ export function GalleryColumn({
               )}
             </div>
           )}
-          <div className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${twoCol ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}>
+          <div className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}>
             {column.images.map((img) => (
           <Thumbnail
             key={img.path}
@@ -336,7 +336,7 @@ export function GalleryColumn({
           />
         ))}
             {column.images.length === 0 && (
-              <div className={`text-xs text-dim text-center py-2${twoCol ? " col-span-2" : ""}`}>
+              <div className={`text-xs text-dim text-center py-2${subCols > 1 ? ` col-span-${subCols}` : ""}`}>
                 {column.isSrc ? "No refs" : "Empty"}
               </div>
             )}

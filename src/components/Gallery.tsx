@@ -8,7 +8,6 @@ import { StackedView } from "./StackedView";
 import { StarredView } from "./StarredView";
 import { TraceView } from "./TraceView";
 import { Icon } from "../lib/icon";
-import { ResizeBar } from "./ResizeBar";
 import { useSessionStore } from "../stores/sessionStore";
 import { addImageToRefs, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
@@ -421,7 +420,7 @@ export function Gallery() {
   }
 
   const splitButtons = (
-    <div className="flex flex-col shrink-0 self-stretch">
+    <div className="flex flex-col shrink-0 self-stretch overflow-hidden">
       {viewMode === "columns" && shotPath && (
         <button
           className="accent-hover px-3 py-2 flex items-center justify-center"
@@ -493,6 +492,16 @@ export function Gallery() {
           <Icon name="refresh" size={22} />
         </button>
       )}
+      <input
+        type="range"
+        min={80}
+        max={500}
+        value={thumbColWidth}
+        onChange={(e) => setThumbColWidth(Number(e.target.value))}
+        title={`Thumbnail size: ${thumbColWidth}px`}
+        className="accent-white mt-1 flex-1 min-h-0"
+        style={{ writingMode: "vertical-lr", direction: "rtl" }}
+      />
     </div>
   );
 
@@ -500,28 +509,30 @@ export function Gallery() {
     <div className="flex flex-1 min-h-0 min-w-0 gap-gallery-surface bg-gallery-surface">
       {traceActive ? (
         <>
-          <TraceView onDragStart={onDragStart} />
           {splitButtons}
+          <TraceView onDragStart={onDragStart} />
         </>
       ) : viewMode === "starred" ? (
         <>
-          <StarredView onDragStart={onDragStart} />
           {splitButtons}
+          <StarredView onDragStart={onDragStart} />
         </>
       ) : viewMode === "stacked" ? (
         <>
-          <StackedView onDragStart={onDragStart} />
           {splitButtons}
+          <StackedView onDragStart={onDragStart} />
         </>
       ) : (
-        <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
-          {columns.length === 0 ? (
-            <div className="text-sm text-dim p-4">Open a shot to see its versions.</div>
-          ) : (
-            <>
-              {columns.map((c, i) => (
-                <React.Fragment key={c.version}>
+        <>
+          {splitButtons}
+          <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
+            {columns.length === 0 ? (
+              <div className="text-sm text-dim p-4">Open a shot to see its versions.</div>
+            ) : (
+              <>
+                {columns.map((c) => (
                   <GalleryColumn
+                    key={c.version}
                     column={c}
                     width={thumbColWidth}
                     destDir={destDirFor(c)}
@@ -538,27 +549,11 @@ export function Gallery() {
                     onRefresh={c.isSrc ? () => rescanShot() : undefined}
                     onDragStart={onDragStart}
                   />
-                  {i < columns.length - 1 && (
-                    <ResizeBar
-                      orientation="vertical"
-                      value={thumbColWidth}
-                      onChange={setThumbColWidth}
-                      grow="right"
-                    />
-                  )}
-                </React.Fragment>
-              ))}
-              <ResizeBar
-                orientation="vertical"
-                value={thumbColWidth}
-                onChange={setThumbColWidth}
-                grow="right"
-              />
-              {splitButtons}
-              <div className="shrink-0 w-[200px]" />
-            </>
-          )}
-        </div>
+                ))}
+              </>
+            )}
+          </div>
+        </>
       )}
 
       {dragState && (

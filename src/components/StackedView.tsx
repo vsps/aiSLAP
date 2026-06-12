@@ -18,8 +18,6 @@ type Props = {
   }) => void;
 };
 
-const STACK_SIZE = 110;
-const SRC_THUMB_SIZE = 90;
 
 type PickerState = {
   shotPath: string;
@@ -36,6 +34,7 @@ export function StackedView({ onDragStart }: Props) {
   const sequenceStacksLoading = useSessionStore((s) => s.sequenceStacksLoading);
   const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
   const setShot = useSessionStore((s) => s.setShot);
+  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const [picker, setPicker] = useState<PickerState | null>(null);
@@ -98,7 +97,7 @@ export function StackedView({ onDragStart }: Props) {
                 <div
                   key={img.path}
                   className="shrink-0"
-                  style={{ width: SRC_THUMB_SIZE, height: SRC_THUMB_SIZE }}
+                  style={{ width: thumbColWidth, height: thumbColWidth }}
                 >
                   <Thumbnail
                     image={img}
@@ -155,7 +154,7 @@ export function StackedView({ onDragStart }: Props) {
                           shotPath={s.shotPath}
                           shotClipMediaPath={s.clipMediaPath ?? null}
                           stack={v}
-                          size={STACK_SIZE}
+                          size={thumbColWidth}
                           selectedGlobally={isSelectedGlobal}
                           onOpenPicker={(rect) => {
                             setPicker({

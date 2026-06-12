@@ -102,7 +102,7 @@ type Actions = {
 
 const GALLERY_H_MIN = 120;
 const GALLERY_H_MAX = 1200;
-const THUMB_W_MIN = 154;
+const THUMB_W_MIN = 80;
 const THUMB_W_MAX = 500;
 const LOG_H_MIN = 24;
 const LOG_H_MAX = 600;
