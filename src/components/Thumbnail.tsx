@@ -60,7 +60,9 @@ export const Thumbnail = memo(function Thumbnail({
     if (selected) rootRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selected]);
 
-  const srcUrl = image.isVideo ? (image.thumbPath ? fileSrc(image.thumbPath) : null) : fileSrc(image.path);
+  const srcUrl = (image.isVideo || image.isModel3d)
+    ? (image.thumbPath ? fileSrc(image.thumbPath) : null)
+    : fileSrc(image.path);
 
   // Reset aspect when image changes so the old ratio doesn't persist briefly.
   useEffect(() => { setAspect(1); }, [srcUrl]);
@@ -175,6 +177,12 @@ export const Thumbnail = memo(function Thumbnail({
             if (v.videoWidth > 0) setAspect(v.videoHeight / v.videoWidth);
           }}
         />
+      ) : image.isModel3d ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-dim text-text">
+          <span className="material-symbols-outlined" style={{ fontSize: 40 }}>
+            deployed_code
+          </span>
+        </div>
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-dim text-text">
           <span className="material-symbols-outlined" style={{ fontSize: 40 }}>
@@ -188,6 +196,14 @@ export const Thumbnail = memo(function Thumbnail({
           style={{ fontSize: 18 }}
         >
           play_circle
+        </span>
+      )}
+      {image.isModel3d && (
+        <span
+          className="absolute top-1 right-1 material-symbols-outlined text-text drop-shadow"
+          style={{ fontSize: 18 }}
+        >
+          deployed_code
         </span>
       )}
       {/* Corner toggles: hidden by default, visible on hover; stay visible + accent when ON. */}

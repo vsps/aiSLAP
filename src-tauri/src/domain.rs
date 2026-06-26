@@ -334,6 +334,8 @@ pub struct GalleryImage {
     pub path: String,
     pub metadata_path: String,
     pub is_video: bool,
+    #[serde(default)]
+    pub is_model_3d: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub thumb_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

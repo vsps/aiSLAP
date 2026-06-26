@@ -1,0 +1,49 @@
+{
+  "provider": "fal",
+  "family": "Meshy v6",
+  "category": "fal.ai/3D Generation",
+  "nodes": [
+    {
+      "id": "meshy_img2_3d",
+      "name": "Meshy v6 (img→3D)",
+      "endpoint": "fal-ai/meshy/v6/image-to-3d",
+      "inputs": [
+        { "name": "texture_prompt", "data_type": "STRING", "api_field": "texture_prompt", "required": false }
+      ],
+      "outputs": [
+        { "name": "model", "data_type": "MODEL_3D", "api_field": "model_glb" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "topology", "label": "Topology", "type": "enum", "api_field": "topology", "default": "triangle", "options": ["triangle", "quad"] },
+        { "name": "target_polycount", "label": "Polycount", "type": "int", "api_field": "target_polycount", "default": 30000, "min": 1000, "max": 300000 },
+        { "name": "symmetry_mode", "label": "Symmetry", "type": "enum", "api_field": "symmetry_mode", "default": "auto", "options": ["auto", "on", "off"] },
+        { "name": "should_remesh", "label": "Remesh", "type": "bool", "api_field": "should_remesh", "default": true },
+        { "name": "should_texture", "label": "Texture", "type": "bool", "api_field": "should_texture", "default": true },
+        { "name": "enable_pbr", "label": "PBR Maps", "type": "bool", "api_field": "enable_pbr", "default": false }
+      ]
+    },
+    {
+      "id": "meshy_multi_img2_3d",
+      "name": "Meshy v6 (multi→3D)",
+      "endpoint": "fal-ai/meshy/v6/multi-image-to-3d",
+      "inputs": [
+        { "name": "texture_prompt", "data_type": "STRING", "api_field": "texture_prompt", "required": false },
+        { "name": "image_refs", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "max": 4 }
+      ],
+      "outputs": [
+        { "name": "model", "data_type": "MODEL_3D", "api_field": "model_glb" }
+      ],
+      "parameters": [
+        { "name": "topology", "label": "Topology", "type": "enum", "api_field": "topology", "default": "triangle", "options": ["triangle", "quad"] },
+        { "name": "target_polycount", "label": "Polycount", "type": "int", "api_field": "target_polycount", "default": 30000, "min": 1000, "max": 300000 },
+        { "name": "symmetry_mode", "label": "Symmetry", "type": "enum", "api_field": "symmetry_mode", "default": "auto", "options": ["auto", "on", "off"] },
+        { "name": "should_remesh", "label": "Remesh", "type": "bool", "api_field": "should_remesh", "default": true },
+        { "name": "should_texture", "label": "Texture", "type": "bool", "api_field": "should_texture", "default": true },
+        { "name": "enable_pbr", "label": "PBR Maps", "type": "bool", "api_field": "enable_pbr", "default": false }
+      ]
+    }
+  ]
+}

@@ -13,6 +13,7 @@ type Actions = {
   findById: (id: string) => ModelNode | null;
   imageEntries: () => ModelEntry[];
   videoEntries: () => ModelEntry[];
+  model3dEntries: () => ModelEntry[];
 };
 
 export const useModelsStore = create<State & Actions>((set, get) => ({
@@ -38,5 +39,8 @@ export const useModelsStore = create<State & Actions>((set, get) => ({
   },
   videoEntries() {
     return get().entries.filter((e) => e.node.kind === "video");
+  },
+  model3dEntries() {
+    return get().entries.filter((e) => e.node.kind === "model3d");
   },
 }));

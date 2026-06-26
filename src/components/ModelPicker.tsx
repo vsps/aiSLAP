@@ -37,7 +37,19 @@ export function ModelPicker() {
     return result;
   }, [providerEntries]);
 
-  const families = useMemo(() => [...imageFamilies, ...videoFamilies], [imageFamilies, videoFamilies]);
+  const model3dFamilies = useMemo(() => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const e of providerEntries.filter((e) => e.node.kind === "model3d")) {
+      if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
+    }
+    return result;
+  }, [providerEntries]);
+
+  const families = useMemo(
+    () => [...imageFamilies, ...videoFamilies, ...model3dFamilies],
+    [imageFamilies, videoFamilies, model3dFamilies],
+  );
 
   const currentFamily = useMemo(() => {
     if (!currentModel) return null;
@@ -84,6 +96,11 @@ export function ModelPicker() {
         {videoFamilies.length > 0 && (
           <optgroup label="Video">
             {videoFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+          </optgroup>
+        )}
+        {model3dFamilies.length > 0 && (
+          <optgroup label="3D">
+            {model3dFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
           </optgroup>
         )}
       </select>

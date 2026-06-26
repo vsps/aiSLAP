@@ -170,7 +170,7 @@ function routeRefsByMediaType(
 
   // Single-IMAGE-only nodes: accept everything into image_urls (legacy).
   const onlyImage = slots.size === 1 && slots.has("image");
-  const buckets: Record<MediaKind, string[]> = { image: [], video: [], audio: [] };
+  const buckets: Record<MediaKind, string[]> = { image: [], video: [], audio: [], model3d: [] };
 
   for (const u of uploaded) {
     const kind = onlyImage ? "image" : classifyMedia(u.ref.path);

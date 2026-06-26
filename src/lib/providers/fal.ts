@@ -113,6 +113,13 @@ export function unwrapFalOutput(result: unknown): ProviderOutput {
     return { files, raw: result };
   }
 
+  const model3d = r["model_glb"] as { url?: string } | undefined;
+  if (model3d && typeof model3d.url === "string") {
+    const thumbUrl = (r["thumbnail"] as { url?: string } | undefined)?.url;
+    files.push({ url: model3d.url, isVideo: false, isModel3d: true, thumbUrl });
+    return { files, raw: result };
+  }
+
   const imagesField = r["images"];
   const single = r["image"] as { url?: string } | undefined;
   const images: { url?: string }[] = Array.isArray(imagesField)

@@ -5,7 +5,7 @@ export type ProviderProgress =
   | { kind: "running" }
   | { kind: "completed" };
 
-export type ProviderFile = { url: string; isVideo: boolean };
+export type ProviderFile = { url: string; isVideo: boolean; isModel3d?: boolean; thumbUrl?: string };
 
 export type ProviderOutput = {
   /** Normalized list of media URLs the API produced. */
