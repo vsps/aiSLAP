@@ -492,16 +492,6 @@ export function Gallery() {
           <Icon name="refresh" size={22} />
         </button>
       )}
-      <input
-        type="range"
-        min={80}
-        max={500}
-        value={thumbColWidth}
-        onChange={(e) => setThumbColWidth(Number(e.target.value))}
-        title={`Thumbnail size: ${thumbColWidth}px`}
-        className="accent-white mt-1 flex-1 min-h-0"
-        style={{ writingMode: "vertical-lr", direction: "rtl" }}
-      />
     </div>
   );
 
