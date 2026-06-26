@@ -1,0 +1,25 @@
+{
+  "provider": "fal",
+  "family": "Depth Anything",
+  "category": "fal.ai/Utility",
+  "nodes": [
+    {
+      "id": "depth_anything_video",
+      "name": "Depth Anything (video)",
+      "endpoint": "fal-ai/depth-anything-video",
+      "inputs": [],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "video_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "model", "label": "Model", "type": "enum", "api_field": "model", "default": "VDA-Large", "options": ["VDA-Small", "VDA-Base", "VDA-Large"] },
+        { "name": "colormap", "label": "Colormap", "type": "enum", "api_field": "colormap", "default": "grayscale", "options": ["grayscale", "turbo", "inferno", "magma", "viridis"] },
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "auto", "options": ["auto", "360p", "480p", "720p", "1080p"] },
+        { "name": "side_by_side", "label": "Side by Side", "type": "bool", "api_field": "side_by_side", "default": false }
+      ]
+    }
+  ]
+}
