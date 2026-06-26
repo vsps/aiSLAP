@@ -45,6 +45,9 @@ fn infer_kind(outputs: &[ModelOutput], declared: &Option<String>) -> String {
     if let Some(k) = declared {
         return k.clone();
     }
+    if outputs.iter().any(|o| o.data_type.eq_ignore_ascii_case("MODEL_3D")) {
+        return "model3d".into();
+    }
     let any_video = outputs.iter().any(|o| o.data_type.eq_ignore_ascii_case("VIDEO"));
     if any_video { "video".into() } else { "image".into() }
 }

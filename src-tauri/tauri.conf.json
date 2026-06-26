@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "aiSLAP",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "identifier": "tv.heckler.aislap",
   "build": {
     "beforeDevCommand": "npm run dev",

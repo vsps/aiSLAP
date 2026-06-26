@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, is_image_ext, is_video_ext, list_dirs, project_root_for, relativize, sidecar_path,
-    thumb_path, SHOT_SIDECAR, SRC_DIR,
+    as_str, is_image_ext, is_model3d_ext, is_video_ext, list_dirs, project_root_for, relativize,
+    sidecar_path, thumb_path, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::visible::{load_visible_set, save_visible_set};
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
@@ -103,11 +103,12 @@ fn scan_directory_images(
         }
         let is_image = is_image_ext(&path);
         let is_video = is_video_ext(&path);
-        if !is_image && !is_video {
+        let is_model_3d = is_model3d_ext(&path);
+        if !is_image && !is_video && !is_model_3d {
             continue;
         }
         let meta_path = sidecar_path(&path);
-        let thumb_path = if is_video {
+        let thumb_path = if is_video || is_model_3d {
             let t = thumb_path(&path);
             if t.exists() {
                 Some(as_str(&t))
@@ -125,6 +126,7 @@ fn scan_directory_images(
             path: as_str(&path),
             metadata_path: as_str(&meta_path),
             is_video,
+            is_model_3d,
             thumb_path,
             starred,
         });
@@ -273,11 +275,12 @@ fn make_gallery_image(abs_path: &Path) -> Option<GalleryImage> {
     }
     let is_image = is_image_ext(abs_path);
     let is_video = is_video_ext(abs_path);
-    if !is_image && !is_video {
+    let is_model_3d = is_model3d_ext(abs_path);
+    if !is_image && !is_video && !is_model_3d {
         return None;
     }
     let meta_path = sidecar_path(abs_path);
-    let thumb_path = if is_video {
+    let thumb_path = if is_video || is_model_3d {
         let t = thumb_path(abs_path);
         if t.exists() { Some(as_str(&t)) } else { None }
     } else {
@@ -288,6 +291,7 @@ fn make_gallery_image(abs_path: &Path) -> Option<GalleryImage> {
         path: as_str(abs_path),
         metadata_path: as_str(&meta_path),
         is_video,
+        is_model_3d,
         thumb_path,
         starred: Some(true),
     })

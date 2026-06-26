@@ -46,6 +46,22 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   const files = ctx.out.files;
   const multipleFiles = files.length > 1;
 
+  const firstModel3d = files.find((f) => f.isModel3d);
+  if (firstModel3d) {
+    const ext = extFromUrl(firstModel3d.url) ?? "glb";
+    const filename = resolveFilename(ctx, 1, ext, false);
+    const target = joinPath(ctx.versionDir, filename);
+    await cmd.download_to_path(firstModel3d.url, target);
+    if (firstModel3d.thumbUrl) {
+      const thumbPath = target.replace(/\.[^.]+$/, ".thumb.png");
+      await cmd.download_to_path(firstModel3d.thumbUrl, thumbPath).catch(() => {});
+    }
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase);
+    await cmd.image_metadata_write(target, meta as unknown as ImageMetadata);
+    written.push(target);
+    return written;
+  }
+
   const firstVideo = files.find((f) => f.isVideo);
   if (firstVideo) {
     const ext = extFromUrl(firstVideo.url) ?? "mp4";

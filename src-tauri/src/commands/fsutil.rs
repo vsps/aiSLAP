@@ -15,6 +15,7 @@ pub(crate) const SRC_DIR: &str = "SRC";
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 const VIDEO_EXTS: &[&str] = &["mp4", "webm"];
+const MODEL_3D_EXTS: &[&str] = &["glb", "gltf"];
 
 pub(crate) fn as_str(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
@@ -33,8 +34,11 @@ pub(crate) fn is_image_ext(p: &Path) -> bool {
 pub(crate) fn is_video_ext(p: &Path) -> bool {
     ext_matches(p, VIDEO_EXTS)
 }
+pub(crate) fn is_model3d_ext(p: &Path) -> bool {
+    ext_matches(p, MODEL_3D_EXTS)
+}
 pub(crate) fn is_media_ext(p: &Path) -> bool {
-    is_image_ext(p) || is_video_ext(p)
+    is_image_ext(p) || is_video_ext(p) || is_model3d_ext(p)
 }
 
 /// Sidecar (`<stem>.json`) sitting next to a media file.

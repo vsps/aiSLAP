@@ -2,7 +2,7 @@
 
 // ---------- Models ----------
 
-export type ModelKind = "image" | "video";
+export type ModelKind = "image" | "video" | "model3d";
 
 export type ModelInput = {
   name: string;
@@ -15,7 +15,7 @@ export type ModelInput = {
 
 export type ModelOutput = {
   name: string;
-  data_type: "IMAGE" | "VIDEO";
+  data_type: "IMAGE" | "VIDEO" | "MODEL_3D";
   api_field: string;
 };
 
@@ -152,6 +152,7 @@ export type GalleryImage = {
   path: string;
   metadataPath: string;
   isVideo: boolean;
+  isModel3d?: boolean;
   thumbPath?: string;
   starred?: boolean;
 };

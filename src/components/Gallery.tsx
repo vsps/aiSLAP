@@ -3,6 +3,7 @@ import type { GalleryImage } from "../lib/types";
 import { GalleryColumn, type DragState } from "./GalleryColumn";
 import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
+import { ModelZoomModal } from "./ModelZoomModal";
 import { RenameImageModal } from "./RenameImageModal";
 import { StackedView } from "./StackedView";
 import { StarredView } from "./StarredView";
@@ -14,6 +15,7 @@ import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
 import { confirmAction, showMessage } from "../lib/dialog";
 import { fileSrc } from "../lib/assets";
+import { MODEL_3D_EXTS } from "../lib/media";
 
 const VIDEO_EXTS = ["mp4", "webm", "mov", "mkv"];
 
@@ -27,6 +29,7 @@ function syntheticImage(path: string): GalleryImage {
     path,
     metadataPath: "",
     isVideo: VIDEO_EXTS.includes(ext),
+    isModel3d: MODEL_3D_EXTS.includes(ext),
   };
 }
 
@@ -35,7 +38,6 @@ export function Gallery() {
   const traceActive = useSessionStore((s) => s.traceActive);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
-  const setThumbColWidth = useSessionStore((s) => s.setThumbColWidth);
   const zoomImagePath = useSessionStore((s) => s.zoomImagePath);
   const setZoomImage = useSessionStore((s) => s.setZoomImage);
   const renameImagePath = useSessionStore((s) => s.renameImagePath);
@@ -492,16 +494,6 @@ export function Gallery() {
           <Icon name="refresh" size={22} />
         </button>
       )}
-      <input
-        type="range"
-        min={80}
-        max={500}
-        value={thumbColWidth}
-        onChange={(e) => setThumbColWidth(Number(e.target.value))}
-        title={`Thumbnail size: ${thumbColWidth}px`}
-        className="accent-white mt-1 flex-1 min-h-0"
-        style={{ writingMode: "vertical-lr", direction: "rtl" }}
-      />
     </div>
   );
 
@@ -580,7 +572,13 @@ export function Gallery() {
         </div>
       )}
 
-      {zoomImage && (
+      {zoomImage && (zoomImage.isModel3d ? (
+        <ModelZoomModal
+          image={zoomImage}
+          onClose={() => setZoomImage(null)}
+          onDelete={async () => onImageAction("delete", zoomImage.path)}
+        />
+      ) : (
         <ImageZoomModal
           image={zoomImage}
           onClose={() => setZoomImage(null)}
@@ -589,7 +587,7 @@ export function Gallery() {
           onTrace={async () => onImageAction("trace", zoomImage.path)}
           onDelete={async () => onImageAction("delete", zoomImage.path)}
         />
-      )}
+      ))}
 
       {renameImage && (
         <RenameImageModal

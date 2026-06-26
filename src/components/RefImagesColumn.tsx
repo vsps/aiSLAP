@@ -58,6 +58,7 @@ const ROW_TITLE: Record<MediaKind, string> = {
   image: "REF IMAGES",
   video: "REF VIDEOS",
   audio: "REF AUDIO",
+  model3d: "REF 3D",
 };
 
 type DropTarget =
@@ -289,6 +290,7 @@ export function RefImagesColumn() {
     image: [],
     video: [],
     audio: [],
+    model3d: [],
   };
   refImages.forEach((r, idx) => {
     const k = classifyMedia(r.path) ?? "image";

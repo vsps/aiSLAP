@@ -33,6 +33,8 @@ export default function App() {
   const setLogHeight = useSessionStore((s) => s.setLogHeight);
   const timelineHeight = useSessionStore((s) => s.timelineHeight);
   const setTimelineHeight = useSessionStore((s) => s.setTimelineHeight);
+  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
+  const setThumbColWidth = useSessionStore((s) => s.setThumbColWidth);
 
   useEffect(() => {
     let dispose: (() => void) | null = null;
@@ -105,6 +107,17 @@ export default function App() {
         value={logHeight}
         onChange={setLogHeight}
         grow="up"
+      />
+
+      <input
+        type="range"
+        min={80}
+        max={500}
+        value={thumbColWidth}
+        onChange={(e) => setThumbColWidth(Number(e.target.value))}
+        title={`Thumbnail size: ${thumbColWidth}px`}
+        className="accent-white w-full shrink-0"
+        style={{ height: 4, padding: 0, margin: 0, cursor: "ew-resize" }}
       />
 
       <div
