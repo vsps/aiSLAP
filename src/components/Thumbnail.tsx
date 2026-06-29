@@ -24,6 +24,8 @@ type Props = {
   clipMediaSelected?: boolean;
   /** When defined, renders the clip-media toggle button. */
   onToggleClipMedia?: (path: string) => void;
+  /** Caps the computed aspect ratio. In grid views portrait images are forced square. */
+  maxAspect?: number;
 };
 
 const DRAG_THRESHOLD_PX = 5;
@@ -43,6 +45,7 @@ export const Thumbnail = memo(function Thumbnail({
   dragDisabled,
   clipMediaSelected,
   onToggleClipMedia,
+  maxAspect,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [aspect, setAspect] = useState<number>(1);
@@ -50,22 +53,34 @@ export const Thumbnail = memo(function Thumbnail({
 
   // Hover tooltip state
   const [tooltipMeta, setTooltipMeta] = useState<ImageMetadata | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
+    null,
+  );
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const metaCache = useRef<ImageMetadata | null | "loading">(null);
 
   // When selection arrives via keyboard nav the thumb may be offscreen; scroll
   // it back into view. "nearest" avoids jumpy scrolls for already-visible rows.
   useEffect(() => {
-    if (selected) rootRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (selected)
+      rootRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selected]);
 
-  const srcUrl = (image.isVideo || image.isModel3d)
-    ? (image.thumbPath ? fileSrc(image.thumbPath) : null)
-    : fileSrc(image.path);
+  const srcUrl =
+    image.isVideo || image.isModel3d
+      ? image.thumbPath
+        ? fileSrc(image.thumbPath)
+        : null
+      : fileSrc(image.path);
 
   // Reset aspect when image changes so the old ratio doesn't persist briefly.
-  useEffect(() => { setAspect(1); }, [srcUrl]);
+  useEffect(() => {
+    setAspect(1);
+  }, [srcUrl]);
+
+  function clampAspect(raw: number): number {
+    return maxAspect != null ? Math.min(raw, maxAspect) : raw;
+  }
 
   // Drag origin: start tracking on pointerdown, only convert to a drag once the
   // pointer has moved past the threshold. Below threshold = the click handler runs.
@@ -105,7 +120,9 @@ export const Thumbnail = memo(function Thumbnail({
       let m = metaCache.current;
       if (m === null || m === "loading") {
         metaCache.current = "loading";
-        m = await cmd.image_metadata_read(image.path).catch(() => null) as ImageMetadata | null;
+        m = (await cmd
+          .image_metadata_read(image.path)
+          .catch(() => null)) as ImageMetadata | null;
         metaCache.current = m;
       }
       setTooltipMeta(m);
@@ -123,10 +140,16 @@ export const Thumbnail = memo(function Thumbnail({
   }
 
   const tooltipPrompt = tooltipMeta
-    ? (tooltipMeta.combinedPrompt ||
-       [tooltipMeta.sequencePrompt, ...(tooltipMeta.shotPrompts ?? (tooltipMeta.shotPrompt ? [tooltipMeta.shotPrompt] : [tooltipMeta.prompt ?? ""]))]
-         .filter(Boolean)
-         .join(" "))
+    ? tooltipMeta.combinedPrompt ||
+      [
+        tooltipMeta.sequencePrompt,
+        ...(tooltipMeta.shotPrompts ??
+          (tooltipMeta.shotPrompt
+            ? [tooltipMeta.shotPrompt]
+            : [tooltipMeta.prompt ?? ""])),
+      ]
+        .filter(Boolean)
+        .join(" ")
     : null;
 
   if (hidden) return null;
@@ -162,7 +185,8 @@ export const Thumbnail = memo(function Thumbnail({
           draggable={false}
           onLoad={(e) => {
             const el = e.currentTarget;
-            if (el.naturalWidth > 0) setAspect(el.naturalHeight / el.naturalWidth);
+            if (el.naturalWidth > 0)
+              setAspect(clampAspect(el.naturalHeight / el.naturalWidth));
           }}
           className="absolute inset-0 w-full h-full object-cover"
         />
@@ -174,7 +198,8 @@ export const Thumbnail = memo(function Thumbnail({
           className="absolute inset-0 w-full h-full object-cover pointer-events-none"
           onLoadedMetadata={(e) => {
             const v = e.currentTarget;
-            if (v.videoWidth > 0) setAspect(v.videoHeight / v.videoWidth);
+            if (v.videoWidth > 0)
+              setAspect(clampAspect(v.videoHeight / v.videoWidth));
           }}
         />
       ) : image.isModel3d ? (
@@ -251,7 +276,9 @@ export const Thumbnail = memo(function Thumbnail({
         >
           <div className="font-mono text-text truncate">{image.filename}</div>
           {tooltipPrompt && (
-            <div className="text-dim mt-0.5 line-clamp-4 whitespace-pre-wrap">{tooltipPrompt}</div>
+            <div className="text-dim mt-0.5 line-clamp-4 whitespace-pre-wrap">
+              {tooltipPrompt}
+            </div>
           )}
         </div>
       )}

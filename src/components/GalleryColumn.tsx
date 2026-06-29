@@ -64,10 +64,12 @@ export function GalleryColumn({
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const shotPath = useSessionStore((s) => s.shotPath);
   const clipMediaPath = useTimelineStore((s) =>
-    shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
+    shotPath ? (s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null) : null,
   );
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
-  const comment = useSessionStore((s) => s.versionComments[column.version] ?? "");
+  const comment = useSessionStore(
+    (s) => s.versionComments[column.version] ?? "",
+  );
   const setVersionComment = useSessionStore((s) => s.setVersionComment);
   const [editing, setEditing] = useState(false);
 
@@ -84,7 +86,8 @@ export function GalleryColumn({
     (path: string) => {
       if (!shotPath) return;
       const current =
-        useTimelineStore.getState().shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null;
+        useTimelineStore.getState().shotsLatestMedia.get(shotPath)
+          ?.clipMediaPath ?? null;
       void setShotClipMedia(shotPath, path === current ? null : path);
     },
     [shotPath, setShotClipMedia],
@@ -92,7 +95,11 @@ export function GalleryColumn({
   const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
   const [refsCollapsed, setRefsCollapsed] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-  const subCols = !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
+  const subCols =
+    !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
+
+  // Stable maxAspect for grid mode — references stay equal between renders.
+  const maxAspect = subCols > 1 ? 1 : undefined;
 
   // OS file drag-drop onto a column → copy each file in, then rescan so it
   // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
@@ -130,7 +137,9 @@ export function GalleryColumn({
           }
           any = true;
         } catch (e) {
-          await showMessage(`Failed to add ${basename(p)}: ${e}`, { kind: "error" });
+          await showMessage(`Failed to add ${basename(p)}: ${e}`, {
+            kind: "error",
+          });
         }
       }
       if (any) await useSessionStore.getState().rescanShot();
@@ -166,8 +175,8 @@ export function GalleryColumn({
   const headerClass = isTarget
     ? "bg-accent text-text"
     : column.isSrc
-    ? "bg-surface text-text"
-    : "accent-hover text-text";
+      ? "bg-surface text-text"
+      : "accent-hover text-text";
 
   const isDropTarget =
     !collapsed &&
@@ -212,7 +221,9 @@ export function GalleryColumn({
       data-column-version={column.version}
       data-column-dest={destDir}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
-        isDropTarget || osDragTarget != null ? "outline outline-2 outline-accent border-transparent" : "border-border"
+        isDropTarget || osDragTarget != null
+          ? "outline outline-2 outline-accent border-transparent"
+          : "border-border"
       } p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
       style={{ width: `${effectiveWidth}px` }}
     >
@@ -220,13 +231,15 @@ export function GalleryColumn({
         <div
           className={`flex-1 min-h-0 flex items-center justify-center text-sm cursor-pointer ${headerClass}`}
           onClick={onHeaderClick}
-          title={comment ? `${column.version}: ${comment}` : `Expand ${column.version}`}
+          title={
+            comment
+              ? `${column.version}: ${comment}`
+              : `Expand ${column.version}`
+          }
         >
-          <span
-            className="font-mono"
-            style={{ writingMode: "vertical-rl" }}
-          >
-            {column.version}{comment ? ` · ${comment}` : ""}
+          <span className="font-mono" style={{ writingMode: "vertical-rl" }}>
+            {column.version}
+            {comment ? ` · ${comment}` : ""}
           </span>
         </div>
       ) : (
@@ -288,12 +301,22 @@ export function GalleryColumn({
                 className="flex items-center h-[18px] px-1 cursor-pointer select-none"
                 onClick={() => setRefsCollapsed((v) => !v)}
               >
-                <span className="text-[10px] text-dim/50 font-mono flex-1">refs</span>
-                <span className="text-[10px] text-dim/40" style={{ transform: refsCollapsed ? "rotate(-90deg)" : undefined, display: "inline-block" }}>▾</span>
+                <span className="text-[10px] text-dim/50 font-mono flex-1">
+                  refs
+                </span>
+                <span
+                  className="text-[10px] text-dim/40"
+                  style={{
+                    transform: refsCollapsed ? "rotate(-90deg)" : undefined,
+                    display: "inline-block",
+                  }}
+                >
+                  ▾
+                </span>
               </div>
               {!refsCollapsed && (
                 <div
-                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : "flex flex-wrap gap-[3px] p-[3px]"}`}
+                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : `p-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}`}
                 >
                   {column.srcImages.length === 0 ? (
                     <span className="text-[10px] text-dim/30 border border-dashed border-dim/20 px-2 py-px select-none">
@@ -311,6 +334,7 @@ export function GalleryColumn({
                         onToggleStar={handleToggleStar}
                         onDragStart={onDragStart}
                         clipMediaSelected={false}
+                        maxAspect={maxAspect}
                       />
                     ))
                   )}
@@ -318,25 +342,30 @@ export function GalleryColumn({
               )}
             </div>
           )}
-          <div className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}>
+          <div
+            className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}
+          >
             {column.images.map((img) => (
-          <Thumbnail
-            key={img.path}
-            image={img}
-            selected={selectedImagePath === img.path}
-            columnVersion={column.version}
-            isDragSource={dragState?.fromPath === img.path}
-            onSelect={handleSelect}
-            onToggleStar={handleToggleStar}
-            onDragStart={onDragStart}
-            clipMediaSelected={img.path === clipMediaPath}
-            onToggleClipMedia={
-              shotPath && !column.isSrc ? handleToggleClipMedia : undefined
-            }
-          />
-        ))}
+              <Thumbnail
+                key={img.path}
+                image={img}
+                selected={selectedImagePath === img.path}
+                columnVersion={column.version}
+                isDragSource={dragState?.fromPath === img.path}
+                onSelect={handleSelect}
+                onToggleStar={handleToggleStar}
+                onDragStart={onDragStart}
+                clipMediaSelected={img.path === clipMediaPath}
+                onToggleClipMedia={
+                  shotPath && !column.isSrc ? handleToggleClipMedia : undefined
+                }
+                maxAspect={maxAspect}
+              />
+            ))}
             {column.images.length === 0 && (
-              <div className={`text-xs text-dim text-center py-2${subCols > 1 ? ` col-span-${subCols}` : ""}`}>
+              <div
+                className={`text-xs text-dim text-center py-2${subCols > 1 ? ` col-span-${subCols}` : ""}`}
+              >
                 {column.isSrc ? "No refs" : "Empty"}
               </div>
             )}

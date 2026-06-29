@@ -18,7 +18,6 @@ type Props = {
   }) => void;
 };
 
-
 type PickerState = {
   shotPath: string;
   version: string;
@@ -76,7 +75,11 @@ export function StackedView({ onDragStart }: Props) {
     }
   }
 
-  function toggleClipMediaFor(shot: string, currentClip: string | null | undefined, imagePath: string) {
+  function toggleClipMediaFor(
+    shot: string,
+    currentClip: string | null | undefined,
+    imagePath: string,
+  ) {
     void setShotClipMedia(shot, currentClip === imagePath ? null : imagePath);
     void rescanSequenceStacks();
   }
@@ -112,6 +115,7 @@ export function StackedView({ onDragStart }: Props) {
                         pointerEvent: payload.pointerEvent,
                       })
                     }
+                    maxAspect={1}
                   />
                 </div>
               ))
@@ -128,7 +132,9 @@ export function StackedView({ onDragStart }: Props) {
                 key={s.shotPath}
                 data-shot-row={s.shotPath}
                 className={`flex items-start gap-gallery-column-gap p-2 border ${
-                  isCurrentShot ? "border-accent bg-accent/10" : "border-border bg-surface"
+                  isCurrentShot
+                    ? "border-accent bg-accent/10"
+                    : "border-border bg-surface"
                 }`}
               >
                 <button
@@ -141,13 +147,16 @@ export function StackedView({ onDragStart }: Props) {
                 </button>
                 <div className="flex-1 min-w-0 flex flex-wrap gap-3 pt-1">
                   {s.versions.length === 0 ? (
-                    <div className="text-xs text-dim self-center pl-2">No versions</div>
+                    <div className="text-xs text-dim self-center pl-2">
+                      No versions
+                    </div>
                   ) : (
                     s.versions.map((v) => {
                       const selectPath = v.images.find(
                         (i) => i.filename === v.selectedFilename,
                       )?.path;
-                      const isSelectedGlobal = !!selectPath && selectPath === selectedImagePath;
+                      const isSelectedGlobal =
+                        !!selectPath && selectPath === selectedImagePath;
                       return (
                         <VersionStack
                           key={v.version}
@@ -165,7 +174,11 @@ export function StackedView({ onDragStart }: Props) {
                             });
                           }}
                           onToggleClipMedia={(imgPath) =>
-                            toggleClipMediaFor(s.shotPath, s.clipMediaPath, imgPath)
+                            toggleClipMediaFor(
+                              s.shotPath,
+                              s.clipMediaPath,
+                              imgPath,
+                            )
                           }
                           onDragStart={(payload) =>
                             onDragStart({
@@ -187,23 +200,28 @@ export function StackedView({ onDragStart }: Props) {
         </div>
       </div>
 
-      {picker && (() => {
-        const shot = sequenceStacks.shots.find((s) => s.shotPath === picker.shotPath);
-        const version = shot?.versions.find((v) => v.version === picker.version);
-        if (!version) return null;
-        return (
-          <SelectPickerPopup
-            anchor={picker.anchor}
-            images={version.images}
-            selectedFilename={picker.selectedFilename}
-            onPick={(filename) => {
-              setPicker(null);
-              void pickSelect(picker.shotPath, picker.version, filename);
-            }}
-            onClose={() => setPicker(null)}
-          />
-        );
-      })()}
+      {picker &&
+        (() => {
+          const shot = sequenceStacks.shots.find(
+            (s) => s.shotPath === picker.shotPath,
+          );
+          const version = shot?.versions.find(
+            (v) => v.version === picker.version,
+          );
+          if (!version) return null;
+          return (
+            <SelectPickerPopup
+              anchor={picker.anchor}
+              images={version.images}
+              selectedFilename={picker.selectedFilename}
+              onPick={(filename) => {
+                setPicker(null);
+                void pickSelect(picker.shotPath, picker.version, filename);
+              }}
+              onClose={() => setPicker(null)}
+            />
+          );
+        })()}
     </>
   );
 }
