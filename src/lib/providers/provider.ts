@@ -5,7 +5,15 @@ export type ProviderProgress =
   | { kind: "running" }
   | { kind: "completed" };
 
-export type ProviderFile = { url: string; isVideo: boolean; isModel3d?: boolean; thumbUrl?: string };
+export type ProviderFile = {
+  url: string;
+  isVideo: boolean;
+  isModel3d?: boolean;
+  thumbUrl?: string;
+  /** Inline text payload (no URL) written verbatim to a .txt sidecar — used
+   *  for non-media outputs like SAM3 image embeddings (base64). */
+  inlineText?: string;
+};
 
 export type ProviderOutput = {
   /** Normalized list of media URLs the API produced. */

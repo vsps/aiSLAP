@@ -147,6 +147,9 @@ export const cmd = {
   download_to_path: (url: string, target: string): Promise<void> =>
     rawInvoke("download_to_path", { url, target }),
 
+  write_text_file: (target: string, contents: string): Promise<void> =>
+    rawInvoke("write_text_file", { target, contents }),
+
   save_png_base64: (path: string, dataBase64: string): Promise<void> =>
     rawInvoke("save_png_base64", { path, dataBase64 }),
 

@@ -80,6 +80,13 @@ function defaultsFor(params: Parameter[]): Record<string, unknown> {
   return out;
 }
 
+// Session-only memory of each link's per-model settings, so switching a link's
+// model and back restores what was there (disk persistence already covers the
+// active settings across reloads). Keyed by link id + model id to avoid bleed
+// between chain links.
+const settingsCache = new Map<string, Record<string, unknown>>();
+const cacheKey = (linkId: string, modelId: string) => `${linkId}::${modelId}`;
+
 // Ensure every element group has exactly one frontal. If none is set, the first
 // ref in the group (by panel order) is auto-promoted.
 function ensureFrontals(refs: RefImage[]): RefImage[] {
@@ -155,12 +162,29 @@ export const useGenerationStore = create<State & Actions>((set) => {
     errorPopup: null,
 
     selectModel(model) {
-      set((s) =>
-        patchActive(s, {
-          model,
-          settings: model ? defaultsFor(model.parameters) : {},
-        }),
-      );
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {};
+        // Snapshot the outgoing model's settings so we can restore them later.
+        if (link.model) {
+          settingsCache.set(cacheKey(link.id, link.model.id), link.settings);
+        }
+        // Precedence: defaults < cached(this model) < shared keys from the
+        // outgoing (visible) settings — so point/box prompts follow the user
+        // across SAM nodes, while unrelated models restore their own settings.
+        let next: Record<string, unknown> = model ? defaultsFor(model.parameters) : {};
+        if (model) {
+          const cached = settingsCache.get(cacheKey(link.id, model.id));
+          if (cached) next = { ...next, ...cached };
+          if (link.model) {
+            const fields = new Set(model.parameters.map((p) => p.api_field));
+            for (const [k, v] of Object.entries(link.settings)) {
+              if (fields.has(k)) next[k] = v;
+            }
+          }
+        }
+        return patchActive(s, { model, settings: next });
+      });
     },
     setSequencePrompt(value) {
       set((s) => patchActive(s, { sequencePrompt: value }));
@@ -380,11 +404,14 @@ export const useGenerationStore = create<State & Actions>((set) => {
       set((s) => {
         if (s.expandedIdx == null) return { iterations: 1 };
         const link = s.links[s.expandedIdx];
+        const defaults = link.model ? defaultsFor(link.model.parameters) : {};
+        // Keep the cache in step so a later switch-back doesn't undo the reset.
+        if (link.model) settingsCache.set(cacheKey(link.id, link.model.id), defaults);
         return {
           ...patchActive(s, {
             sequencePrompt: "",
             shotPrompts: [""],
-            settings: link.model ? defaultsFor(link.model.parameters) : {},
+            settings: defaults,
             refImages: [],
           }),
           iterations: 1,

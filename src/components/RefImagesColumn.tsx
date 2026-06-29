@@ -25,12 +25,14 @@ const GROUP_PALETTE = [
 const START_COLOR = "#22c55e";
 const END_COLOR = "#ef4444";
 const SOURCE_COLOR = "#3b82f6";
+const MESH_COLOR = "#f97316";
 
 function roleColor(role: RoleAssignment | null): string | null {
   if (!role) return null;
   if (role.kind === "start") return START_COLOR;
   if (role.kind === "end") return END_COLOR;
   if (role.kind === "source") return SOURCE_COLOR;
+  if (role.kind === "mesh") return MESH_COLOR;
   if (role.kind === "element" || role.kind === "image") {
     const n = Number(role.groupName);
     const i = (Number.isFinite(n) ? n : 1) - 1;
@@ -42,6 +44,8 @@ function roleColor(role: RoleAssignment | null): string | null {
 function showRow(kind: MediaKind, hasRefs: boolean, m: ModelNode | null): boolean {
   if (hasRefs) return true;
   if (!m) return kind === "image";
+  // 3D mesh ref slot (e.g. SAM3 3d-align body_mesh_url) — surfaced by role.
+  if (kind === "model3d") return !!m.ref_roles?.some((r) => r.role === "mesh");
   for (const i of m.inputs) {
     if (kind === "image" && i.data_type === "IMAGE") return true;
     if (kind === "video" && i.data_type === "VIDEO") return true;
@@ -304,7 +308,7 @@ export function RefImagesColumn() {
   const showStartSlot = modelHasStart && !startTaken;
   const showEndSlot = modelHasEnd && !endTaken;
 
-  const visibleKinds = (["image", "video", "audio"] as MediaKind[]).filter(
+  const visibleKinds = (["image", "video", "audio", "model3d"] as MediaKind[]).filter(
     (k) =>
       showRow(k, buckets[k].length > 0, currentModel) ||
       (k === "image" && showChainPrev),
@@ -579,6 +583,7 @@ function roleLabel(r: RefImage): string {
     case "source": return "source";
     case "start": return "start";
     case "end": return "end";
+    case "mesh": return "mesh";
     case "element": return `@Element${a.groupName}${a.frontal ? " ★" : ""}`;
     case "image": return `@Image${a.groupName}`;
     case "chain_prev": return "prev link";

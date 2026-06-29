@@ -14,6 +14,7 @@ function rolesSupportedBy(model: ModelNode | null): {
   source: boolean;
   start: boolean;
   end: boolean;
+  mesh: boolean;
   element: boolean;
   image: boolean;
 } {
@@ -23,6 +24,7 @@ function rolesSupportedBy(model: ModelNode | null): {
     source: has("source"),
     start: has("start"),
     end: has("end"),
+    mesh: has("mesh"),
     element: has("element"),
     image: has("image"),
   };
@@ -32,7 +34,8 @@ export function RoleMenu({ anchor, ref_, model, onAssign, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   const refImages = useGenerationStore(selectRefImages);
   const supported = rolesSupportedBy(model);
-  const anyRole = supported.source || supported.start || supported.end || supported.element || supported.image;
+  const anyRole =
+    supported.source || supported.start || supported.end || supported.mesh || supported.element || supported.image;
 
   const current = ref_.roleAssignment;
   const myElement = current?.kind === "element" ? current : null;
@@ -116,6 +119,13 @@ export function RoleMenu({ anchor, ref_, model, onAssign, onClose }: Props) {
           label="end frame (exclusive)"
           active={ref_.roleAssignment?.kind === "end"}
           onClick={() => onAssign({ kind: "end" })}
+        />
+      )}
+      {supported.mesh && (
+        <RoleOption
+          label="mesh"
+          active={ref_.roleAssignment?.kind === "mesh"}
+          onClick={() => onAssign({ kind: "mesh" })}
         />
       )}
       {supported.element && (
