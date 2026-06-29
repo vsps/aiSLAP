@@ -1,8 +1,21 @@
 import { useMemo, useState } from "react";
 import { useModelsStore } from "../stores/modelsStore";
 import { selectCurrentModel, useGenerationStore } from "../stores/generationStore";
+import type { ModelEntry } from "../lib/types";
 
 type Provider = "fal" | "replicate";
+
+type UiGroup = "image" | "video" | "utility" | "model3d";
+
+// Picker grouping is a display concern, orthogonal to output `kind`: utility
+// tools (Topaz, Depth Anything, SAM3) span image/video/3d outputs but belong
+// under one "Utility" group. Driven by the family's `category` segment; falls
+// back to the node's output kind for generators.
+function effectiveGroup(e: ModelEntry): UiGroup {
+  const seg = e.category.split("/").pop()?.trim().toLowerCase() ?? "";
+  if (seg === "utility" || seg === "upscaling") return "utility";
+  return e.node.kind; // "image" | "video" | "model3d"
+}
 
 export function ModelPicker() {
   const { entries, loaded } = useModelsStore();
@@ -19,36 +32,26 @@ export function ModelPicker() {
     [entries, provider],
   );
 
-  const imageFamilies = useMemo(() => {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const e of providerEntries.filter((e) => e.node.kind === "image")) {
-      if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
+  const familiesByGroup = useMemo(() => {
+    const out: Record<UiGroup, string[]> = { image: [], video: [], utility: [], model3d: [] };
+    const seen: Record<UiGroup, Set<string>> = {
+      image: new Set(), video: new Set(), utility: new Set(), model3d: new Set(),
+    };
+    for (const e of providerEntries) {
+      const g = effectiveGroup(e);
+      if (!seen[g].has(e.family)) { seen[g].add(e.family); out[g].push(e.family); }
     }
-    return result;
+    return out;
   }, [providerEntries]);
 
-  const videoFamilies = useMemo(() => {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const e of providerEntries.filter((e) => e.node.kind === "video")) {
-      if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
-    }
-    return result;
-  }, [providerEntries]);
-
-  const model3dFamilies = useMemo(() => {
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const e of providerEntries.filter((e) => e.node.kind === "model3d")) {
-      if (!seen.has(e.family)) { seen.add(e.family); result.push(e.family); }
-    }
-    return result;
-  }, [providerEntries]);
+  const imageFamilies = familiesByGroup.image;
+  const videoFamilies = familiesByGroup.video;
+  const utilityFamilies = familiesByGroup.utility;
+  const model3dFamilies = familiesByGroup.model3d;
 
   const families = useMemo(
-    () => [...imageFamilies, ...videoFamilies, ...model3dFamilies],
-    [imageFamilies, videoFamilies, model3dFamilies],
+    () => [...imageFamilies, ...videoFamilies, ...utilityFamilies, ...model3dFamilies],
+    [imageFamilies, videoFamilies, utilityFamilies, model3dFamilies],
   );
 
   const currentFamily = useMemo(() => {
@@ -96,6 +99,11 @@ export function ModelPicker() {
         {videoFamilies.length > 0 && (
           <optgroup label="Video">
             {videoFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+          </optgroup>
+        )}
+        {utilityFamilies.length > 0 && (
+          <optgroup label="Utility">
+            {utilityFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
           </optgroup>
         )}
         {model3dFamilies.length > 0 && (

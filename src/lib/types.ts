@@ -67,7 +67,36 @@ export type BoolParam = {
   default: boolean;
 };
 
-export type Parameter = EnumParam | IntParam | FloatParam | BoolParam;
+/** SAM segmentation geometry prompts. Pixel-space coordinates. label 1=fg, 0=bg.
+ *  frame_index is only set for video sources. */
+export type SamPoint = {
+  x: number;
+  y: number;
+  label: 0 | 1;
+  object_id?: number;
+  frame_index?: number;
+};
+
+export type SamBox = {
+  x_min: number;
+  y_min: number;
+  x_max: number;
+  y_max: number;
+  object_id?: number;
+  frame_index?: number;
+};
+
+/** UI hook for the point/box prompt editor. The control writes two settings
+ *  keys directly (`point_prompts`, `box_prompts`); `api_field` is nominal. */
+export type PromptsParam = {
+  type: "prompts";
+  name: string;
+  label: string;
+  api_field: string;
+  default: [];
+};
+
+export type Parameter = EnumParam | IntParam | FloatParam | BoolParam | PromptsParam;
 
 export type ModelNode = {
   id: string;
@@ -95,6 +124,7 @@ export type RoleAssignment =
   | { kind: "source" }
   | { kind: "start" }
   | { kind: "end" }
+  | { kind: "mesh" }
   | { kind: "element"; groupName: string; frontal: boolean }
   | { kind: "image"; groupName: string }
   // Synthetic placeholder for the output of the previous chain link.

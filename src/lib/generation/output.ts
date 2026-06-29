@@ -46,6 +46,19 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   const files = ctx.out.files;
   const multipleFiles = files.length > 1;
 
+  // Inline-text output (e.g. SAM3 image embedding) — no URL to download; write
+  // the payload verbatim to a .txt sidecar. Not a viewable gallery tile.
+  const firstInline = files.find((f) => f.inlineText !== undefined);
+  if (firstInline) {
+    const filename = resolveFilename(ctx, 1, "txt", false);
+    const target = joinPath(ctx.versionDir, filename);
+    await cmd.write_text_file(target, firstInline.inlineText ?? "");
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase);
+    await cmd.image_metadata_write(target, meta as unknown as ImageMetadata);
+    written.push(target);
+    return written;
+  }
+
   const firstModel3d = files.find((f) => f.isModel3d);
   if (firstModel3d) {
     const ext = extFromUrl(firstModel3d.url) ?? "glb";

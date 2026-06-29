@@ -115,8 +115,27 @@ export function unwrapFalOutput(result: unknown): ProviderOutput {
 
   const model3d = r["model_glb"] as { url?: string } | undefined;
   if (model3d && typeof model3d.url === "string") {
-    const thumbUrl = (r["thumbnail"] as { url?: string } | undefined)?.url;
+    // Meshy uses `thumbnail`; SAM3 3D nodes expose `visualization` instead.
+    const thumbUrl =
+      (r["thumbnail"] as { url?: string } | undefined)?.url ??
+      (r["visualization"] as { url?: string } | undefined)?.url;
     files.push({ url: model3d.url, isVideo: false, isModel3d: true, thumbUrl });
+    return { files, raw: result };
+  }
+
+  // SAM3 image segmentation returns a `masks` array of image files.
+  const masks = r["masks"];
+  if (Array.isArray(masks) && masks.length > 0) {
+    for (const m of masks as { url?: string }[]) {
+      if (m?.url) files.push({ url: m.url, isVideo: false });
+    }
+    if (files.length > 0) return { files, raw: result };
+  }
+
+  // SAM3 image/embed returns a base64 embedding string — no media URL.
+  const embedding = r["embedding_b64"];
+  if (typeof embedding === "string" && embedding.length > 0) {
+    files.push({ url: "", isVideo: false, inlineText: embedding });
     return { files, raw: result };
   }
 

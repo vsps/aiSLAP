@@ -47,6 +47,9 @@ export function buildArgs(
 
   for (const [k, v] of Object.entries(settings)) {
     if (k === "seed" && v === -1) continue;
+    // Drop empty arrays (e.g. unused SAM point_prompts/box_prompts) so we don't
+    // send empty fields. No model stores non-prompt array settings.
+    if (Array.isArray(v) && v.length === 0) continue;
     if (k === "image_size" && typeof v === "string") {
       const m = v.match(/^(\d+)x(\d+)$/);
       if (m) { args[k] = { width: Number(m[1]), height: Number(m[2]) }; continue; }

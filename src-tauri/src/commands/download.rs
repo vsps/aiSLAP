@@ -23,3 +23,15 @@ pub async fn download_to_path(url: String, target: String) -> AppResult<()> {
     std::fs::rename(&tmp, &target)?;
     Ok(())
 }
+
+/// Write a UTF-8 string verbatim to `target`, creating parent dirs. Used for
+/// non-media outputs (e.g. SAM3 image embeddings) that have no URL to fetch.
+#[tauri::command]
+pub fn write_text_file(target: String, contents: String) -> AppResult<()> {
+    let target = PathBuf::from(&target);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&target, contents.as_bytes())?;
+    Ok(())
+}

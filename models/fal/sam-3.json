@@ -1,0 +1,124 @@
+{
+  "provider": "fal",
+  "family": "SAM 3",
+  "category": "fal.ai/Utility",
+  "nodes": [
+    {
+      "id": "sam3_image",
+      "name": "SAM 3 (image)",
+      "endpoint": "fal-ai/sam-3/image",
+      "inputs": [],
+      "outputs": [
+        { "name": "masks", "data_type": "IMAGE", "api_field": "masks" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "prompts", "label": "Point / Box Prompts", "type": "prompts", "api_field": "point_prompts", "default": [] },
+        { "name": "apply_mask", "label": "Apply Mask", "type": "bool", "api_field": "apply_mask", "default": true },
+        { "name": "return_multiple_masks", "label": "Multiple Masks", "type": "bool", "api_field": "return_multiple_masks", "default": false },
+        { "name": "max_masks", "label": "Max Masks", "type": "int", "api_field": "max_masks", "default": 3, "min": 1, "max": 32 },
+        { "name": "include_scores", "label": "Include Scores", "type": "bool", "api_field": "include_scores", "default": false },
+        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "png", "options": ["png", "jpeg", "webp"] }
+      ]
+    },
+    {
+      "id": "sam3_image_embed",
+      "name": "SAM 3 (embed)",
+      "endpoint": "fal-ai/sam-3/image/embed",
+      "inputs": [],
+      "outputs": [
+        { "name": "embedding", "data_type": "IMAGE", "api_field": "embedding_b64" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": []
+    },
+    {
+      "id": "sam3_video",
+      "name": "SAM 3 (video)",
+      "endpoint": "fal-ai/sam-3/video",
+      "inputs": [],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "video_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "prompts", "label": "Point / Box Prompts", "type": "prompts", "api_field": "point_prompts", "default": [] },
+        { "name": "apply_mask", "label": "Apply Mask", "type": "bool", "api_field": "apply_mask", "default": true },
+        { "name": "detection_threshold", "label": "Detection Threshold", "type": "float", "api_field": "detection_threshold", "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05 },
+        { "name": "video_output_type", "label": "Output Codec", "type": "enum", "api_field": "video_output_type", "default": "X264 (.mp4)", "options": ["X264 (.mp4)", "VP9 (.webm)"] }
+      ]
+    },
+    {
+      "id": "sam3_video_rle",
+      "name": "SAM 3 (video RLE)",
+      "endpoint": "fal-ai/sam-3/video-rle",
+      "inputs": [],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "video_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "prompts", "label": "Point / Box Prompts", "type": "prompts", "api_field": "point_prompts", "default": [] },
+        { "name": "apply_mask", "label": "Apply Mask", "type": "bool", "api_field": "apply_mask", "default": true },
+        { "name": "detection_threshold", "label": "Detection Threshold", "type": "float", "api_field": "detection_threshold", "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05 }
+      ]
+    },
+    {
+      "id": "sam3_3d_body",
+      "name": "SAM 3 (3D body)",
+      "endpoint": "fal-ai/sam-3/3d-body",
+      "inputs": [],
+      "outputs": [
+        { "name": "model", "data_type": "MODEL_3D", "api_field": "model_glb" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "export_meshes", "label": "Export Meshes", "type": "bool", "api_field": "export_meshes", "default": true },
+        { "name": "include_3d_keypoints", "label": "3D Keypoints", "type": "bool", "api_field": "include_3d_keypoints", "default": true },
+        { "name": "include_mhr_params", "label": "MHR Params", "type": "bool", "api_field": "include_mhr_params", "default": true }
+      ]
+    },
+    {
+      "id": "sam3_3d_objects",
+      "name": "SAM 3 (3D objects)",
+      "endpoint": "fal-ai/sam-3/3d-objects",
+      "inputs": [],
+      "outputs": [
+        { "name": "model", "data_type": "MODEL_3D", "api_field": "model_glb" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "prompts", "label": "Point / Box Prompts", "type": "prompts", "api_field": "point_prompts", "default": [] },
+        { "name": "export_textured_glb", "label": "Textured GLB", "type": "bool", "api_field": "export_textured_glb", "default": true },
+        { "name": "detection_threshold", "label": "Detection Threshold", "type": "float", "api_field": "detection_threshold", "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05 },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 }
+      ]
+    },
+    {
+      "id": "sam3_3d_align",
+      "name": "SAM 3 (3D align)",
+      "endpoint": "fal-ai/sam-3/3d-align",
+      "inputs": [],
+      "outputs": [
+        { "name": "model", "data_type": "MODEL_3D", "api_field": "model_glb" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 },
+        { "role": "mesh", "api_field": "body_mesh_url", "max": 1 }
+      ],
+      "parameters": []
+    }
+  ]
+}
