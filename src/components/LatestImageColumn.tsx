@@ -41,7 +41,7 @@ export function LatestImageColumn() {
   const tlVideoDurations = useTimelineStore((s) => s.videoDurations);
   const shotPath = useSessionStore((s) => s.shotPath);
   const clipMediaPath = useTimelineStore((s) =>
-    shotPath ? s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null : null,
+    shotPath ? (s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null) : null,
   );
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
@@ -55,7 +55,11 @@ export function LatestImageColumn() {
   const isSrcImage = useMemo(
     () =>
       image
-        ? columns.find((c) => c.images.some((i) => i.path === image.path))?.isSrc ?? false
+        ? (columns.find(
+            (c) =>
+              c.images.some((i) => i.path === image.path) ||
+              c.srcImages.some((i) => i.path === image.path),
+          )?.isSrc ?? false)
         : false,
     [columns, image],
   );
@@ -66,7 +70,9 @@ export function LatestImageColumn() {
     const v = videoRef.current;
     if (!image || !v) return;
     if (v.videoWidth === 0 || v.videoHeight === 0) {
-      await showMessage("Video not ready yet — wait for it to load.", { kind: "warning" });
+      await showMessage("Video not ready yet — wait for it to load.", {
+        kind: "warning",
+      });
       return;
     }
     // The visible <video> loads via the tauri:// asset protocol, which taints
@@ -88,8 +94,14 @@ export function LatestImageColumn() {
       off.src = blobUrl;
 
       await new Promise<void>((res, rej) => {
-        const ok = () => { cleanup(); res(); };
-        const fail = () => { cleanup(); rej(new Error("offscreen video load failed")); };
+        const ok = () => {
+          cleanup();
+          res();
+        };
+        const fail = () => {
+          cleanup();
+          rej(new Error("offscreen video load failed"));
+        };
         const cleanup = () => {
           off!.removeEventListener("loadedmetadata", ok);
           off!.removeEventListener("error", fail);
@@ -100,8 +112,14 @@ export function LatestImageColumn() {
 
       const target = Math.min(t, Math.max(0, (off.duration || t) - 0.001));
       await new Promise<void>((res, rej) => {
-        const ok = () => { cleanup(); res(); };
-        const fail = () => { cleanup(); rej(new Error("seek failed")); };
+        const ok = () => {
+          cleanup();
+          res();
+        };
+        const fail = () => {
+          cleanup();
+          rej(new Error("seek failed"));
+        };
         const cleanup = () => {
           off!.removeEventListener("seeked", ok);
           off!.removeEventListener("error", fail);
@@ -154,7 +172,10 @@ export function LatestImageColumn() {
         {!timelineActive && image && (
           <>
             <span className="flex-1" />
-            <span className="text-xs opacity-60 font-mono truncate" title={image.path}>
+            <span
+              className="text-xs opacity-60 font-mono truncate"
+              title={image.path}
+            >
               {image.filename}
             </span>
           </>
@@ -241,7 +262,9 @@ export function LatestImageColumn() {
               size={22}
               fill={image.path === clipMediaPath}
               title={
-                image.path === clipMediaPath ? "Clear clip media" : "Set as clip media"
+                image.path === clipMediaPath
+                  ? "Clear clip media"
+                  : "Set as clip media"
               }
               onClick={() =>
                 void setShotClipMedia(
@@ -531,10 +554,15 @@ function pickImage(
       const hit = c.images.find((i) => i.path === selectedImagePath);
       if (hit) return hit;
     }
+    for (const c of columns) {
+      const hit = c.srcImages.find((i) => i.path === selectedImagePath);
+      if (hit) return hit;
+    }
   }
   // Fall back to the last image in the target version column.
   const target = columns.find((c) => c.version === targetVersion && !c.isSrc);
-  if (target && target.images.length) return target.images[target.images.length - 1];
+  if (target && target.images.length)
+    return target.images[target.images.length - 1];
   // Otherwise last image in the latest non-SRC column.
   for (let i = columns.length - 1; i >= 0; i--) {
     const c = columns[i];

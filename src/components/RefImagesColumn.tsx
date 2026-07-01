@@ -16,11 +16,22 @@ import { pickFile, showMessage } from "../lib/dialog";
 import { cmd } from "../lib/tauri";
 import { performImageAction } from "../lib/actions";
 import type { ModelNode, RefImage, RoleAssignment } from "../lib/types";
-import { MEDIA_EXTS, VIDEO_EXTS, classifyMedia, type MediaKind } from "../lib/media";
+import {
+  MEDIA_EXTS,
+  VIDEO_EXTS,
+  classifyMedia,
+  type MediaKind,
+} from "../lib/media";
 
 const GROUP_PALETTE = [
-  "#e74c3c", "#f39c12", "#f1c40f", "#2ecc71",
-  "#1abc9c", "#9b59b6", "#e91e63", "#3498db",
+  "#e74c3c",
+  "#f39c12",
+  "#f1c40f",
+  "#2ecc71",
+  "#1abc9c",
+  "#9b59b6",
+  "#e91e63",
+  "#3498db",
 ];
 const START_COLOR = "#22c55e";
 const END_COLOR = "#ef4444";
@@ -41,7 +52,11 @@ function roleColor(role: RoleAssignment | null): string | null {
   return null;
 }
 
-function showRow(kind: MediaKind, hasRefs: boolean, m: ModelNode | null): boolean {
+function showRow(
+  kind: MediaKind,
+  hasRefs: boolean,
+  m: ModelNode | null,
+): boolean {
   if (hasRefs) return true;
   if (!m) return kind === "image";
   // 3D mesh ref slot (e.g. SAM3 3d-align body_mesh_url) — surfaced by role.
@@ -98,12 +113,16 @@ export function RefImagesColumn() {
       : null,
   );
 
-  const [menu, setMenu] = useState<{ anchor: HTMLElement; ref: RefImage } | null>(null);
+  const [menu, setMenu] = useState<{
+    anchor: HTMLElement;
+    ref: RefImage;
+  } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [galleryDragOver, setGalleryDragOver] = useState(false);
-  const [dragState, setDragState] = useState<{ fromIdx: number; overIdx: number | null } | null>(
-    null,
-  );
+  const [dragState, setDragState] = useState<{
+    fromIdx: number;
+    overIdx: number | null;
+  } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const imageDrag = useSessionStore((s) => s.imageDrag);
 
@@ -160,7 +179,9 @@ export function RefImagesColumn() {
         const dest = await cmd.image_copy_to_dir(p, destDir);
         copied.push(dest);
       } catch (e) {
-        await showMessage(`Failed to add ${basename(p)}: ${e}`, { kind: "error" });
+        await showMessage(`Failed to add ${basename(p)}: ${e}`, {
+          kind: "error",
+        });
       }
     }
     if (copied.length) {
@@ -217,7 +238,11 @@ export function RefImagesColumn() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function beginHandleDrag(fromIdx: number, pointerId: number, handleEl: HTMLElement) {
+  function beginHandleDrag(
+    fromIdx: number,
+    pointerId: number,
+    handleEl: HTMLElement,
+  ) {
     handleEl.setPointerCapture(pointerId);
     setDragState({ fromIdx, overIdx: null });
     let currentTarget: DropTarget = null;
@@ -301,14 +326,18 @@ export function RefImagesColumn() {
     buckets[k].push({ ref: r, idx });
   });
 
-  const modelHasStart = !!currentModel?.ref_roles?.some((r) => r.role === "start");
+  const modelHasStart = !!currentModel?.ref_roles?.some(
+    (r) => r.role === "start",
+  );
   const modelHasEnd = !!currentModel?.ref_roles?.some((r) => r.role === "end");
   const startTaken = refImages.some((r) => r.roleAssignment?.kind === "start");
   const endTaken = refImages.some((r) => r.roleAssignment?.kind === "end");
   const showStartSlot = modelHasStart && !startTaken;
   const showEndSlot = modelHasEnd && !endTaken;
 
-  const visibleKinds = (["image", "video", "audio", "model3d"] as MediaKind[]).filter(
+  const visibleKinds = (
+    ["image", "video", "audio", "model3d"] as MediaKind[]
+  ).filter(
     (k) =>
       showRow(k, buckets[k].length > 0, currentModel) ||
       (k === "image" && showChainPrev),
@@ -327,14 +356,18 @@ export function RefImagesColumn() {
         <div className="flex items-center text-sm font-semibold">
           <span>REFERENCES</span>
           <span className="flex-1" />
-          <span className="text-xs opacity-60 font-mono">{refImages.length}</span>
+          <span className="text-xs opacity-60 font-mono">
+            {refImages.length}
+          </span>
           <button
             type="button"
             onClick={removeAllRefs}
             disabled={refImages.length === 0}
             className="ml-2 px-1 text-xs font-mono text-red-500 hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
             title="Clear all references"
-          >[clear]</button>
+          >
+            [clear]
+          </button>
         </div>
         <div className="flex flex-col gap-prompt-column-gap overflow-y-auto thin-scroll bg-inset p-prompt-panel flex-1 min-h-0">
           {visibleKinds.map((kind) => (
@@ -350,8 +383,12 @@ export function RefImagesColumn() {
                     onRemove={() => setLinkConsumesPrev(activeLink.id, false)}
                   />
                 )}
-                {kind === "image" && showStartSlot && <RoleSlotPlaceholder kind="start" />}
-                {kind === "image" && showEndSlot && <RoleSlotPlaceholder kind="end" />}
+                {kind === "image" && showStartSlot && (
+                  <RoleSlotPlaceholder kind="start" />
+                )}
+                {kind === "image" && showEndSlot && (
+                  <RoleSlotPlaceholder kind="end" />
+                )}
                 {buckets[kind].map(({ ref: r, idx }) => (
                   <RefThumb
                     key={r.path}
@@ -366,7 +403,7 @@ export function RefImagesColumn() {
                     }
                     onRemove={() => removeRef(r.path)}
                     onOpenMenu={(anchor) => setMenu({ anchor, ref: r })}
-                    onZoom={() => void performImageAction("zoom", r.path)}
+                    onSelect={() => void performImageAction("select", r.path)}
                     onHandlePointerDown={(pointerId, handleEl) =>
                       beginHandleDrag(idx, pointerId, handleEl)
                     }
@@ -415,7 +452,7 @@ const RefThumb = memo(function RefThumb({
   isDropTarget,
   onRemove,
   onOpenMenu,
-  onZoom,
+  onSelect,
   onHandlePointerDown,
 }: {
   index: number;
@@ -425,7 +462,7 @@ const RefThumb = memo(function RefThumb({
   isDropTarget: boolean;
   onRemove: () => void;
   onOpenMenu: (anchor: HTMLElement) => void;
-  onZoom: () => void;
+  onSelect: () => void;
   onHandlePointerDown: (pointerId: number, handleEl: HTMLElement) => void;
 }) {
   const label = roleLabel(ref_);
@@ -485,8 +522,11 @@ const RefThumb = memo(function RefThumb({
       </div>
 
       <div
-        className="absolute inset-0 cursor-zoom-in"
-        onClick={onZoom}
+        className="absolute inset-0 cursor-pointer"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect();
+        }}
         title={ref_.path}
       />
 
@@ -501,7 +541,15 @@ const RefThumb = memo(function RefThumb({
           onHandlePointerDown(e.pointerId, e.currentTarget);
         }}
       >
-        <IconBtn name="close" size={18} title="Remove" onClick={(e) => { e.stopPropagation(); onRemove(); }} />
+        <IconBtn
+          name="close"
+          size={18}
+          title="Remove"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+        />
         <div className="flex-1" />
         <span
           aria-hidden
@@ -571,7 +619,12 @@ function ChainPrevTile({
 function RefAddTile({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="bg-surface w-[109px] h-[109px] flex items-center justify-center">
-      <IconBtn name="add_photo_alternate" size={28} title="Add reference media" onClick={onAdd} />
+      <IconBtn
+        name="add_photo_alternate"
+        size={28}
+        title="Add reference media"
+        onClick={onAdd}
+      />
     </div>
   );
 }
@@ -580,12 +633,19 @@ function roleLabel(r: RefImage): string {
   const a = r.roleAssignment;
   if (!a) return basename(r.path);
   switch (a.kind) {
-    case "source": return "source";
-    case "start": return "start";
-    case "end": return "end";
-    case "mesh": return "mesh";
-    case "element": return `@Element${a.groupName}${a.frontal ? " ★" : ""}`;
-    case "image": return `@Image${a.groupName}`;
-    case "chain_prev": return "prev link";
+    case "source":
+      return "source";
+    case "start":
+      return "start";
+    case "end":
+      return "end";
+    case "mesh":
+      return "mesh";
+    case "element":
+      return `@Element${a.groupName}${a.frontal ? " ★" : ""}`;
+    case "image":
+      return `@Image${a.groupName}`;
+    case "chain_prev":
+      return "prev link";
   }
 }

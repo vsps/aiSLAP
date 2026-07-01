@@ -68,6 +68,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
   const [previewing, setPreviewing] = useState(false);
   const [maskUrl, setMaskUrl] = useState<string | null>(null);
   const [previewFrame, setPreviewFrame] = useState<number | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const isVideo = mediaKind === "video";
@@ -176,18 +177,22 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
     const ac = new AbortController();
     abortRef.current = ac;
     setPreviewing(true);
+    setPreviewError(null);
     try {
       const provider = new FalProvider();
       await provider.prepare();
 
       let blob: Blob;
       let name: string;
+      // Always use readFile so asset:// URLs don't get rejected by browser fetch.
       if (isVideo) {
         blob = await captureVideoFrame(sourcePath, mediaRef.current?.currentTime ?? 0);
         name = "frame.png";
       } else {
-        blob = await fetch(fileSrc(sourcePath)).then((r) => r.blob());
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const bytes = await readFile(sourcePath);
         name = basename(sourcePath) || "source.png";
+        blob = new Blob([bytes], { type: guessContentType(name) });
       }
       if (ac.signal.aborted) return;
       const file = new File([blob], name, { type: blob.type || guessContentType(name) });
@@ -204,12 +209,21 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
         input.box_prompts = srcBxs.map((b) => ({ x_min: b.x_min, y_min: b.y_min, x_max: b.x_max, y_max: b.y_max, object_id: b.object_id ?? 0 }));
       }
 
+      console.log("[sam-preview] input:", JSON.stringify(input));
       const out = await provider.run("fal-ai/sam-3/image", input, ac.signal, () => {});
       if (ac.signal.aborted) return;
-      setMaskUrl(out.files[0]?.url ?? null);
+      console.log("[sam-preview] out.files:", JSON.stringify(out.files));
+      console.log("[sam-preview] out.raw:", JSON.stringify(out.raw));
+      const resultUrl = out.files[0]?.url ?? null;
+      if (!resultUrl) setPreviewError("SAM returned no mask.");
+      setMaskUrl(resultUrl);
       setPreviewFrame(isVideo ? frame : null);
     } catch (e) {
-      if (!ac.signal.aborted) await showMessage(String(e), { kind: "error" });
+      if (!ac.signal.aborted) {
+        const msg = String(e);
+        setPreviewError(msg);
+        showMessage(msg, { kind: "error" }).catch(() => {});
+      }
     } finally {
       if (abortRef.current === ac) abortRef.current = null;
       setPreviewing(false);
@@ -265,7 +279,11 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
                 <img
                   src={maskUrl!}
                   alt=""
-                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.6, pointerEvents: "none" }}
+                  style={{
+                    position: "absolute", inset: 0, width: "100%", height: "100%",
+                    opacity: 0.65, pointerEvents: "none",
+                    mixBlendMode: "screen",
+                  }}
                 />
               )}
               {visibleBxs.map((b, i) => (
@@ -377,13 +395,14 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
           clear
         </button>
         <div className="flex-1" />
+        {previewError && <span className="text-xs text-red-400 max-w-[200px] truncate" title={previewError}>{previewError}</span>}
         <button
           onClick={() => void runPreview()}
           disabled={previewing}
           className="text-xs px-3 py-0.5 border border-dim text-dim hover:border-text hover:text-text disabled:opacity-40"
           title="Run SAM on the current image/frame + prompts and overlay the mask"
         >
-          {previewing ? "previewing…" : "preview"}
+          {previewing ? "previewing…" : `preview (${pts.length}pt ${bxs.length}bx)`}
         </button>
         {maskUrl && (
           <button

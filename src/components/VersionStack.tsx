@@ -39,7 +39,10 @@ export function VersionStack({
     stack.images[stack.images.length - 1] ??
     null;
 
-  const visibleCards = Math.min(Math.max(stack.images.length - 1, 0), STACK_CARD_MAX);
+  const visibleCards = Math.min(
+    Math.max(stack.images.length - 1, 0),
+    STACK_CARD_MAX,
+  );
   // Reserve room around the top card for the stack-edge cards behind it.
   const padTotal = STACK_CARD_MAX * STACK_CARD_OFFSET + 2;
 
@@ -85,9 +88,12 @@ export function VersionStack({
                 // Set global selection to the visible select for downstream
                 // actions (delete, trace, etc.), then open the version picker.
                 void performImageAction("select", selectImg.path);
-                if (rootRef.current) onOpenPicker(rootRef.current.getBoundingClientRect());
+                if (rootRef.current)
+                  onOpenPicker(rootRef.current.getBoundingClientRect());
               }}
-              onToggleStar={() => void performImageAction("toggle_star", selectImg.path)}
+              onToggleStar={() =>
+                void performImageAction("toggle_star", selectImg.path)
+              }
               clipMediaSelected={clipMediaSelected}
               onToggleClipMedia={() => onToggleClipMedia(selectImg.path)}
               onDragStart={(payload) =>
@@ -98,6 +104,7 @@ export function VersionStack({
                   pointerEvent: payload.pointerEvent,
                 })
               }
+              maxAspect={1}
             />
           </div>
         ) : (
