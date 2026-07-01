@@ -118,7 +118,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
   function addPointAt(clientX: number, clientY: number) {
     const p = toPx(clientX, clientY);
     if (!p) return;
-    const pt: SamPoint = { x: p[0], y: p[1], label: newLabel, object_id: 0 };
+    const pt: SamPoint = { x: p[0], y: p[1], label: newLabel, obj_id: 0 };
     if (isVideo) pt.frame_index = frame;
     setPts((arr) => [...arr, pt]);
   }
@@ -167,7 +167,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
     const y2 = clamp(Math.round(Math.max(d.sy, cy) * (natH / b.height)), 0, natH);
     setDraft(null);
     if (x2 - x1 < 2 || y2 - y1 < 2) return; // ignore stray clicks
-    const box: SamBox = { x_min: x1, y_min: y1, x_max: x2, y_max: y2, object_id: 0 };
+    const box: SamBox = { x_min: x1, y_min: y1, x_max: x2, y_max: y2, obj_id: 0 };
     if (isVideo) box.frame_index = frame;
     setBxs((arr) => [...arr, box]);
   }
@@ -201,12 +201,16 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
       // For video, segment only the current frame's prompts (frame_index stripped).
       const srcPts = isVideo ? pts.filter((p) => (p.frame_index ?? 0) === frame) : pts;
       const srcBxs = isVideo ? bxs.filter((b) => (b.frame_index ?? 0) === frame) : bxs;
-      const input: Record<string, unknown> = { image_url: url };
+      // fal-ai/sam-3/image defaults `prompt` to a text concept ("wheel") when
+      // omitted, which gets ANDed against the geometry prompts below and
+      // silently drops masks for anything that isn't a wheel. Send an
+      // explicit empty string to disable that text-concept filter.
+      const input: Record<string, unknown> = { image_url: url, prompt: "" };
       if (srcPts.length) {
-        input.point_prompts = srcPts.map((p) => ({ x: p.x, y: p.y, label: p.label, object_id: p.object_id ?? 0 }));
+        input.point_prompts = srcPts.map((p) => ({ x: p.x, y: p.y, label: p.label, obj_id: p.obj_id ?? 0 }));
       }
       if (srcBxs.length) {
-        input.box_prompts = srcBxs.map((b) => ({ x_min: b.x_min, y_min: b.y_min, x_max: b.x_max, y_max: b.y_max, object_id: b.object_id ?? 0 }));
+        input.box_prompts = srcBxs.map((b) => ({ x_min: b.x_min, y_min: b.y_min, x_max: b.x_max, y_max: b.y_max, obj_id: b.obj_id ?? 0 }));
       }
 
       console.log("[sam-preview] input:", JSON.stringify(input));

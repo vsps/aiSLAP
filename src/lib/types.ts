@@ -73,7 +73,7 @@ export type SamPoint = {
   x: number;
   y: number;
   label: 0 | 1;
-  object_id?: number;
+  obj_id?: number;
   frame_index?: number;
 };
 
@@ -82,7 +82,7 @@ export type SamBox = {
   y_min: number;
   x_max: number;
   y_max: number;
-  object_id?: number;
+  obj_id?: number;
   frame_index?: number;
 };
 
@@ -445,6 +445,7 @@ export type ChainMetadataBlock = {
 };
 
 export type ImageMetadata = {
+  provider?: "fal" | "replicate";
   model: string;
   modelId: string;
   endpoint: string;

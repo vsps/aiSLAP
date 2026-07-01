@@ -44,6 +44,15 @@ export type DownloadCtx = {
 export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   const written: string[] = [];
   const files = ctx.out.files;
+  if (files.length === 0) {
+    // A provider call can return HTTP 200 with no recognized media field —
+    // e.g. the model found nothing to segment, or its response shape didn't
+    // match what unwrapFalOutput() expects. Fail loudly with the raw payload
+    // instead of silently reporting success with 0 files written.
+    throw new Error(
+      `${ctx.node.name} returned no output file. Raw response: ${JSON.stringify(ctx.out.raw).slice(0, 1000)}`,
+    );
+  }
   const multipleFiles = files.length > 1;
 
   // Inline-text output (e.g. SAM3 image embedding) — no URL to download; write
@@ -122,6 +131,7 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
   }
   const combined = nonEmptyTrimmed([ctx.sequencePrompt, ctx.shotPrompt]).join("\n\n");
   return {
+    provider: ctx.node.provider ?? "fal",
     model: ctx.node.name,
     modelId: ctx.node.id,
     endpoint: ctx.node.endpoint,

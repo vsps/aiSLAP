@@ -44,9 +44,9 @@ export function ResizeBar({ orientation, value, onChange, grow }: Props) {
       className={
         horizontal
           ? "shrink-0 accent-hover h-[7px] w-full cursor-row-resize"
-          : // Vertical: the gutter itself. Transparent at rest, highlights on
-            // hover/drag — mirrors the work-surface ColumnResizeHandle.
-            "shrink-0 w-[5px] h-full cursor-col-resize bg-transparent hover:bg-accent/40 active:bg-accent/60 transition-colors"
+          : // Vertical: the gutter itself. Handle-gray at rest (matches the
+            // horizontal bars), highlights on hover/drag.
+            "shrink-0 w-[5px] h-full cursor-col-resize bg-handle hover:bg-accent/40 active:bg-accent/60 transition-colors"
       }
       onPointerDown={(e) => {
         e.preventDefault();

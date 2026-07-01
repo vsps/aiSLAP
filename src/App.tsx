@@ -35,6 +35,8 @@ export default function App() {
   const setTimelineHeight = useSessionStore((s) => s.setTimelineHeight);
   const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
   const setThumbColWidth = useSessionStore((s) => s.setThumbColWidth);
+  const queueWidth = useSessionStore((s) => s.queueWidth);
+  const setQueueWidth = useSessionStore((s) => s.setQueueWidth);
 
   useEffect(() => {
     let dispose: (() => void) | null = null;
@@ -124,7 +126,17 @@ export default function App() {
         className="shrink-0 flex flex-row min-h-0"
         style={{ height: `${logHeight}px` }}
       >
-        <QueueChecklist height={logHeight} className="flex-1 min-w-0" />
+        <QueueChecklist
+          height={logHeight}
+          className="shrink-0"
+          style={{ width: `${queueWidth}px` }}
+        />
+        <ResizeBar
+          orientation="vertical"
+          value={queueWidth}
+          onChange={setQueueWidth}
+          grow="right"
+        />
         <LogWindow height={logHeight} className="flex-1 min-w-0" />
       </div>
       <StatusBar ready={ready} bootError={bootError} />

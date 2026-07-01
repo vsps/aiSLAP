@@ -250,7 +250,7 @@ export function LatestImageColumn() {
             }
           />
           <IconBtn
-            name="visibility"
+            name="star"
             size={22}
             fill={!!image.starred}
             title={image.starred ? "Demote from gallery" : "Promote to gallery"}

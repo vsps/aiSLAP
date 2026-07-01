@@ -155,6 +155,7 @@ export function Gallery() {
     ):
       | { kind: "cell"; shotPath: string; version: string }
       | { kind: "row"; shotPath: string }
+      | { kind: "global"; destDir: string }
       | null {
       const el = document.elementFromPoint(x, y);
       if (!el) return null;
@@ -170,6 +171,13 @@ export function Gallery() {
       if (row) {
         const shot = row.dataset.shotRow ?? "";
         if (shot) return { kind: "row", shotPath: shot };
+      }
+      const globalSrc = (el as HTMLElement).closest<HTMLElement>(
+        "[data-stacked-global-src]",
+      );
+      if (globalSrc) {
+        const destDir = globalSrc.dataset.stackedGlobalSrc ?? "";
+        if (destDir) return { kind: "global", destDir };
       }
       return null;
     }
@@ -222,7 +230,13 @@ export function Gallery() {
         return;
       }
       if (hitStacked) {
-        void commitStackedDrop(current, hitStacked, e.shiftKey);
+        if (hitStacked.kind === "global") {
+          if (current.fromColumnVersion !== "GLOBAL SRC") {
+            void commitGlobalSrcDrop(current.fromPath, hitStacked.destDir, e.shiftKey);
+          }
+        } else {
+          void commitStackedDrop(current, hitStacked, e.shiftKey);
+        }
         return;
       }
       if (!hitCol) return;
@@ -284,6 +298,26 @@ export function Gallery() {
       await rescanShot();
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
+    }
+  }
+
+  async function commitGlobalSrcDrop(fromPath: string, destDir: string, copy: boolean) {
+    try {
+      const fn = copy ? cmd.image_copy_to_dir : cmd.image_move_to_dir;
+      await fn(fromPath, destDir);
+      await rescanSequenceStacks();
+      await rescanShot();
+      if (useSessionStore.getState().viewMode === "starred") await rescanStarred();
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("FILENAME_EXISTS")) {
+        await showMessage(
+          `Skipped: ${basename(fromPath)} already exists at destination`,
+          { kind: "warning" },
+        );
+      } else {
+        await showMessage(msg, { kind: "error" });
+      }
     }
   }
 
@@ -440,7 +474,7 @@ export function Gallery() {
           title={viewMode === "starred" ? "Back to versions" : "Favorites"}
           onClick={() => setViewMode(viewMode === "starred" ? "columns" : "starred")}
         >
-          <Icon name="visibility" size={22} fill={viewMode === "starred"} />
+          <Icon name="star" size={22} fill={viewMode === "starred"} />
         </button>
       )}
       {sequencePath && (

@@ -4,6 +4,7 @@ import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
 import { cmd } from "../lib/tauri";
+import { basename, dirname } from "../lib/paths";
 
 type Props = {
   image: GalleryImage;
@@ -152,6 +153,15 @@ export const Thumbnail = memo(function Thumbnail({
         .join(" ")
     : null;
 
+  // Path layout is <project>/<sequence>/<shot>/<version>/<filename>. GLOBAL SRC
+  // sits directly under <project>, so it has no sequence/shot to show.
+  const sequenceShotLabel =
+    columnVersion === "GLOBAL SRC"
+      ? "GLOBAL SRC"
+      : [basename(dirname(dirname(dirname(image.path)))), basename(dirname(dirname(image.path)))]
+          .filter(Boolean)
+          .join(" / ");
+
   if (hidden) return null;
 
   return (
@@ -233,7 +243,7 @@ export const Thumbnail = memo(function Thumbnail({
       )}
       {/* Corner toggles: hidden by default, visible on hover; stay visible + accent when ON. */}
       <IconBtn
-        name="visibility"
+        name="star"
         size={18}
         fill={!!image.starred}
         title={image.starred ? "Remove from favorites" : "Add to favorites"}
@@ -267,16 +277,21 @@ export const Thumbnail = memo(function Thumbnail({
 
       {tooltipPos && tooltipMeta !== null && (
         <div
-          className="fixed z-50 pointer-events-none max-w-xs bg-panel/95 border border-dim shadow-xl px-2 py-1.5 text-xs"
+          className="fixed z-50 pointer-events-none max-w-xs bg-panel/95 border border-dim shadow-xl px-2 py-1.5 text-xs space-y-0.5"
           style={{
             left: Math.min(tooltipPos.x + 12, window.innerWidth - 260),
             top: tooltipPos.y - 8,
             transform: "translateY(-100%)",
           }}
         >
+          {tooltipMeta.provider && <div className="text-dim">{tooltipMeta.provider}</div>}
+          {tooltipMeta.model && (
+            <div className="text-text font-semibold truncate">{tooltipMeta.model}</div>
+          )}
+          <div className="text-dim truncate">{sequenceShotLabel}</div>
           <div className="font-mono text-text truncate">{image.filename}</div>
           {tooltipPrompt && (
-            <div className="text-dim mt-0.5 line-clamp-4 whitespace-pre-wrap">
+            <div className="text-dim mt-0.5 line-clamp-2 whitespace-pre-wrap">
               {tooltipPrompt}
             </div>
           )}
