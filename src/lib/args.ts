@@ -57,7 +57,21 @@ export function buildArgs(
     args[k] = v;
   }
 
-  if (combinedPrompt.length > 0) args["prompt"] = combinedPrompt;
+  // Only inject the shot/sequence prompt text if the node actually declares a
+  // "prompt" input. Utility nodes (SAM segmentation, depth extraction, etc.)
+  // have no such input — SAM 3 in particular treats `prompt` as a text-based
+  // concept filter defaulting to "wheel", so leaking the story prompt in
+  // there silently constrains segmentation to match that text, causing
+  // spurious "no mask" results even with valid point/box prompts.
+  const wantsPrompt = node.inputs.some((i) => i.api_field === "prompt");
+  if (wantsPrompt && combinedPrompt.length > 0) args["prompt"] = combinedPrompt;
+
+  // SAM-style geometry-prompt nodes (type "prompts") don't expose a text
+  // input, but fal's `prompt` field on those endpoints still defaults to a
+  // fixed placeholder concept ("wheel") when omitted. Send an explicit empty
+  // string so point/box prompts aren't silently ANDed against that default.
+  const hasGeometryPrompts = node.parameters.some((p) => p.type === "prompts");
+  if (!wantsPrompt && hasGeometryPrompts) args["prompt"] = "";
 
   if (node.ref_roles && node.ref_roles.length > 0) {
     const bucket: Record<string, UploadedRef[]> = {};

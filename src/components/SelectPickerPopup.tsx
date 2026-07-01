@@ -8,12 +8,25 @@ type Props = {
   selectedFilename: string;
   onPick: (filename: string) => void;
   onClose: () => void;
+  /** When provided, images can be drag-started (e.g. to another stack, shot, GLOBAL SRC, or REFERENCES). */
+  onDragStart?: (payload: {
+    fromPath: string;
+    pointerEvent: React.PointerEvent;
+  }) => void;
 };
 
 const THUMB = 72;
 const COLS_MAX = 5;
+const DRAG_THRESHOLD_PX = 5;
 
-export function SelectPickerPopup({ anchor, images, selectedFilename, onPick, onClose }: Props) {
+export function SelectPickerPopup({
+  anchor,
+  images,
+  selectedFilename,
+  onPick,
+  onClose,
+  onDragStart,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: anchor.x, top: anchor.y });
 
@@ -71,6 +84,29 @@ export function SelectPickerPopup({ anchor, images, selectedFilename, onPick, on
                 isSelect ? "border-accent" : "border-transparent"
               } hover:border-accent`}
               style={{ width: THUMB, height: THUMB }}
+              onPointerDown={(e) => {
+                if (!onDragStart || e.button !== 0) return;
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const onMove = (ev: PointerEvent) => {
+                  const dx = ev.clientX - startX;
+                  const dy = ev.clientY - startY;
+                  if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
+                    cleanup();
+                    onClose();
+                    onDragStart({ fromPath: img.path, pointerEvent: e });
+                  }
+                };
+                const onUp = () => cleanup();
+                const cleanup = () => {
+                  window.removeEventListener("pointermove", onMove);
+                  window.removeEventListener("pointerup", onUp);
+                  window.removeEventListener("pointercancel", onUp);
+                };
+                window.addEventListener("pointermove", onMove);
+                window.addEventListener("pointerup", onUp);
+                window.addEventListener("pointercancel", onUp);
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 onPick(img.filename);

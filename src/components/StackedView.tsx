@@ -4,6 +4,7 @@ import { useTimelineStore } from "../stores/timelineStore";
 import { cmd } from "../lib/tauri";
 import { selectImagePath, toggleStarPath } from "../lib/actions";
 import { showMessage } from "../lib/dialog";
+import { dirname, joinPath } from "../lib/paths";
 import { VersionStack } from "./VersionStack";
 import { SelectPickerPopup } from "./SelectPickerPopup";
 import { Thumbnail } from "./Thumbnail";
@@ -88,7 +89,10 @@ export function StackedView({ onDragStart }: Props) {
     <>
       <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface p-gallery-column">
         {/* GLOBAL SRC fixed row — Thumbnails so RMB + indicators come for free. */}
-        <div className="flex items-stretch gap-gallery-column-gap mb-gallery-column-gap">
+        <div
+          className="flex items-stretch gap-gallery-column-gap mb-gallery-column-gap"
+          data-stacked-global-src={joinPath(dirname(sequencePath), "SRC")}
+        >
           <div className="shrink-0 w-[140px] bg-src-bg border border-border px-2 py-1 text-sm font-semibold">
             GLOBAL SRC
           </div>
@@ -219,6 +223,15 @@ export function StackedView({ onDragStart }: Props) {
                 void pickSelect(picker.shotPath, picker.version, filename);
               }}
               onClose={() => setPicker(null)}
+              onDragStart={(payload) =>
+                onDragStart({
+                  fromPath: payload.fromPath,
+                  fromColumnVersion: picker.version,
+                  fromShotPath: picker.shotPath,
+                  fromVersionName: picker.version,
+                  pointerEvent: payload.pointerEvent,
+                })
+              }
             />
           );
         })()}

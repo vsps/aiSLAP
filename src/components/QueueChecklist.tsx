@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useEffect, useRef } from "react";
 import { useGenerationStore } from "../stores/generationStore";
 
@@ -10,9 +11,11 @@ import { useGenerationStore } from "../stores/generationStore";
 export function QueueChecklist({
   height,
   className = "",
+  style,
 }: {
   height: number;
   className?: string;
+  style?: CSSProperties;
 }) {
   const jobs = useGenerationStore((s) => s.jobs);
   const visible = jobs.filter((j) => j.status !== "cancelled");
@@ -30,7 +33,7 @@ export function QueueChecklist({
     <div
       ref={ref}
       className={`bg-panel text-dim px-2 py-1 font-mono overflow-y-auto thin-scroll flex flex-col shrink-0 ${className}`}
-      style={{ fontSize: 11, height: `${height}px` }}
+      style={{ fontSize: 11, height: `${height}px`, ...style }}
     >
       {visible.length === 0 ? (
         <span className="opacity-40">queue empty</span>
