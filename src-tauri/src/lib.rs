@@ -55,6 +55,7 @@ pub fn run() {
             commands::download::download_to_path,
             commands::download::write_text_file,
             commands::media::video_thumbnail_extract,
+            commands::media::video_info_probe,
             commands::media::timeline_export,
             commands::timeline::timeline_init,
             commands::timeline::sequence_timeline_save,

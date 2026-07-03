@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import type { GalleryImage, ImageMetadata } from "../lib/types";
+import type { Config, GalleryImage, ImageMetadata } from "../lib/types";
 import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
@@ -52,13 +52,19 @@ export const Thumbnail = memo(function Thumbnail({
   const [aspect, setAspect] = useState<number>(1);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // Natural pixel dimensions, for the hover tooltip. Set from the same
+  // onLoad/onLoadedMetadata handlers that compute `aspect`.
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+
   // Hover tooltip state
   const [tooltipMeta, setTooltipMeta] = useState<ImageMetadata | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [videoInfo, setVideoInfo] = useState<{ fps: number | null; durationSec: number | null } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const metaCache = useRef<ImageMetadata | null | "loading">(null);
+  const videoInfoCache = useRef<{ fps: number | null; durationSec: number | null } | "loading" | null>(null);
 
   // When selection arrives via keyboard nav the thumb may be offscreen; scroll
   // it back into view. "nearest" avoids jumpy scrolls for already-visible rows.
@@ -74,9 +80,10 @@ export const Thumbnail = memo(function Thumbnail({
         : null
       : fileSrc(image.path);
 
-  // Reset aspect when image changes so the old ratio doesn't persist briefly.
+  // Reset aspect/dims when image changes so stale values don't persist briefly.
   useEffect(() => {
     setAspect(1);
+    setDims(null);
   }, [srcUrl]);
 
   function clampAspect(raw: number): number {
@@ -127,6 +134,26 @@ export const Thumbnail = memo(function Thumbnail({
         metaCache.current = m;
       }
       setTooltipMeta(m);
+
+      // Video-only: fps/duration aren't derivable from the thumbnail image
+      // (which is what's actually rendered when a thumbPath exists), so probe
+      // via ffmpeg. Cached per-thumbnail; a missing/unconfigured ffmpeg just
+      // means the tooltip omits fps/duration.
+      if (image.isVideo) {
+        let v = videoInfoCache.current;
+        if (v === null || v === "loading") {
+          videoInfoCache.current = "loading";
+          const cfg = (await cmd.config_load().catch(() => null)) as Config | null;
+          const ffmpegPath = (cfg?.ffmpegPath ?? "").trim();
+          v = ffmpegPath
+            ? await cmd
+                .video_info_probe(image.path, ffmpegPath)
+                .catch(() => ({ fps: null, durationSec: null }))
+            : { fps: null, durationSec: null };
+          videoInfoCache.current = v;
+        }
+        setVideoInfo(v);
+      }
     }, 600);
   }
 
@@ -138,7 +165,22 @@ export const Thumbnail = memo(function Thumbnail({
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     setTooltipMeta(null);
     setTooltipPos(null);
+    setVideoInfo(null);
   }
+
+  // e.g. "1920x1080" for images, "1920x1080 24fps 3.0s" for videos (fps/duration
+  // only once the ffmpeg probe resolves — see onMouseEnter).
+  const dimsLabel = dims
+    ? image.isVideo
+      ? [
+          `${dims.w}x${dims.h}`,
+          videoInfo?.fps != null ? `${Math.round(videoInfo.fps * 10) / 10}fps` : null,
+          videoInfo?.durationSec != null ? `${videoInfo.durationSec.toFixed(1)}s` : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : `${dims.w}x${dims.h}`
+    : null;
 
   const tooltipPrompt = tooltipMeta
     ? tooltipMeta.combinedPrompt ||
@@ -195,8 +237,10 @@ export const Thumbnail = memo(function Thumbnail({
           draggable={false}
           onLoad={(e) => {
             const el = e.currentTarget;
-            if (el.naturalWidth > 0)
+            if (el.naturalWidth > 0) {
               setAspect(clampAspect(el.naturalHeight / el.naturalWidth));
+              setDims({ w: el.naturalWidth, h: el.naturalHeight });
+            }
           }}
           className="absolute inset-0 w-full h-full object-cover"
         />
@@ -208,8 +252,10 @@ export const Thumbnail = memo(function Thumbnail({
           className="absolute inset-0 w-full h-full object-cover pointer-events-none"
           onLoadedMetadata={(e) => {
             const v = e.currentTarget;
-            if (v.videoWidth > 0)
+            if (v.videoWidth > 0) {
               setAspect(clampAspect(v.videoHeight / v.videoWidth));
+              setDims({ w: v.videoWidth, h: v.videoHeight });
+            }
           }}
         />
       ) : image.isModel3d ? (
@@ -290,6 +336,9 @@ export const Thumbnail = memo(function Thumbnail({
           )}
           <div className="text-dim truncate">{sequenceShotLabel}</div>
           <div className="font-mono text-text truncate">{image.filename}</div>
+          {dimsLabel && (
+            <div className="text-dim font-mono truncate">{dimsLabel}</div>
+          )}
           {tooltipPrompt && (
             <div className="text-dim mt-0.5 line-clamp-2 whitespace-pre-wrap">
               {tooltipPrompt}

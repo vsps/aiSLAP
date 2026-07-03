@@ -160,6 +160,12 @@ export const cmd = {
   ): Promise<boolean> =>
     rawInvoke("video_thumbnail_extract", { videoPath, thumbPath, ffmpegPath }),
 
+  video_info_probe: (
+    videoPath: string,
+    ffmpegPath: string,
+  ): Promise<{ fps: number | null; durationSec: number | null }> =>
+    rawInvoke("video_info_probe", { videoPath, ffmpegPath }),
+
   // Timeline
   timeline_init: (seqPath: string): Promise<TimelineInit> =>
     rawInvoke("timeline_init", { seqPath }),

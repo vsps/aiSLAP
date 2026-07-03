@@ -17,6 +17,26 @@ function effectiveGroup(e: ModelEntry): UiGroup {
   return e.node.kind; // "image" | "video" | "model3d"
 }
 
+// Families grouped by UI group (Image, Video, Utility, 3D), deduped, in
+// first-seen order within each group.
+function familiesByGroupOf(list: ModelEntry[]): Record<UiGroup, string[]> {
+  const out: Record<UiGroup, string[]> = { image: [], video: [], utility: [], model3d: [] };
+  const seen: Record<UiGroup, Set<string>> = {
+    image: new Set(), video: new Set(), utility: new Set(), model3d: new Set(),
+  };
+  for (const e of list) {
+    const g = effectiveGroup(e);
+    if (!seen[g].has(e.family)) { seen[g].add(e.family); out[g].push(e.family); }
+  }
+  return out;
+}
+
+// Families in picker display order (Image, Video, Utility, 3D), deduped.
+function orderedFamilies(list: ModelEntry[]): string[] {
+  const g = familiesByGroupOf(list);
+  return [...g.image, ...g.video, ...g.utility, ...g.model3d];
+}
+
 export function ModelPicker() {
   const { entries, loaded } = useModelsStore();
   const currentModel = useGenerationStore(selectCurrentModel);
@@ -32,17 +52,7 @@ export function ModelPicker() {
     [entries, provider],
   );
 
-  const familiesByGroup = useMemo(() => {
-    const out: Record<UiGroup, string[]> = { image: [], video: [], utility: [], model3d: [] };
-    const seen: Record<UiGroup, Set<string>> = {
-      image: new Set(), video: new Set(), utility: new Set(), model3d: new Set(),
-    };
-    for (const e of providerEntries) {
-      const g = effectiveGroup(e);
-      if (!seen[g].has(e.family)) { seen[g].add(e.family); out[g].push(e.family); }
-    }
-    return out;
-  }, [providerEntries]);
+  const familiesByGroup = useMemo(() => familiesByGroupOf(providerEntries), [providerEntries]);
 
   const imageFamilies = familiesByGroup.image;
   const videoFamilies = familiesByGroup.video;
@@ -68,6 +78,15 @@ export function ModelPicker() {
     [providerEntries, selectedFamily],
   );
 
+  // Selecting a family (via the dropdown or a provider switch, which resets
+  // the family to that provider's first) has no submodel of its own — always
+  // land on the family's first submodel so a model is immediately active.
+  function selectFamilyAndFirstModel(list: ModelEntry[], family: string | null) {
+    setManualFamily(family);
+    const first = list.find((e) => e.family === family);
+    if (first) selectModel(first.node);
+  }
+
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-1 text-xs font-mono">
@@ -75,7 +94,14 @@ export function ModelPicker() {
           <button
             key={p}
             type="button"
-            onClick={() => { setProvider(p); setManualFamily(null); }}
+            onClick={() => {
+              setProvider(p);
+              const newProviderEntries = entries.filter(
+                (e) => (e.node.provider ?? "fal") === p,
+              );
+              const fam = orderedFamilies(newProviderEntries)[0] ?? null;
+              selectFamilyAndFirstModel(newProviderEntries, fam);
+            }}
             className={
               provider === p
                 ? "px-2 py-[1px] bg-accent text-bg"
@@ -89,7 +115,9 @@ export function ModelPicker() {
       <select
         className="bg-bg text-text px-1 py-[2px] w-full"
         value={selectedFamily ?? ""}
-        onChange={(e) => setManualFamily(e.currentTarget.value || null)}
+        onChange={(e) =>
+          selectFamilyAndFirstModel(providerEntries, e.currentTarget.value || null)
+        }
       >
         {imageFamilies.length > 0 && (
           <optgroup label="Image">

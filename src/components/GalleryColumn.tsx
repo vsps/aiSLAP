@@ -301,8 +301,17 @@ export function GalleryColumn({
                 className="flex items-center h-[18px] px-1 cursor-pointer select-none"
                 onClick={() => setRefsCollapsed((v) => !v)}
               >
-                <span className="text-[10px] text-dim/50 font-mono flex-1">
+                <span
+                  className={`text-[10px] font-mono flex-1 ${
+                    refsCollapsed && column.srcImages.length > 0
+                      ? "text-accent"
+                      : "text-dim/50"
+                  }`}
+                >
                   refs
+                  {refsCollapsed && column.srcImages.length > 0
+                    ? ` (${column.srcImages.length})`
+                    : ""}
                 </span>
                 <span
                   className="text-[10px] text-dim/40"
