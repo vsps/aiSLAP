@@ -14,6 +14,14 @@ import { useLayoutStore } from "../stores/layoutStore";
 import { IconBtn } from "./IconBtn";
 import { LlmPromptModal } from "./LlmPromptModal";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
+import { CollapsedColumnBar } from "./CollapsedColumnBar";
+
+// Clicking a column header toggles collapse, except when the click lands on
+// an interactive control inside it (history nav, AI rewrite, clear, etc.).
+function onHeaderClick(e: React.MouseEvent, toggle: () => void) {
+  if ((e.target as HTMLElement).closest("button, input")) return;
+  toggle();
+}
 
 type Scope = "sequence" | "shot";
 
@@ -67,6 +75,8 @@ function SequencePromptColumn({ title }: { title: string }) {
   const parsed = useScriptStore((s) => s.parsed);
   const [llmOpen, setLlmOpen] = useState(false);
   const width = useLayoutStore((s) => s.widths.seqPrompt);
+  const collapsed = useLayoutStore((s) => s.collapsed.seqPrompt);
+  const toggleCollapsed = useLayoutStore((s) => s.toggleCollapsed);
 
   const atLive = history.cursor >= history.entries.length;
   const displayed = atLive ? live : history.entries[history.cursor]?.prompt ?? "";
@@ -82,12 +92,22 @@ function SequencePromptColumn({ title }: { title: string }) {
   const sequencePromptIncluded = activeLink?.sequencePromptIncluded !== false;
   const sequenceScriptIncluded = activeLink?.sequenceScriptIncluded !== false;
 
+  if (collapsed) {
+    return (
+      <CollapsedColumnBar title={title} onClick={() => toggleCollapsed("seqPrompt")} />
+    );
+  }
+
   return (
     <div
       className="relative bg-surface border border-border p-prompt-column text-text flex flex-col gap-prompt-column-gap shrink-0"
       style={{ width }}
     >
-      <div className="flex items-center text-sm gap-[4px] font-semibold">
+      <div
+        className="flex items-center text-sm gap-[4px] font-semibold cursor-pointer select-none"
+        title="Click to collapse"
+        onClick={(e) => onHeaderClick(e, () => toggleCollapsed("seqPrompt"))}
+      >
         <span>{title}</span>
         {history.entries.length > 0 && (
           <span className="text-xs opacity-60 font-mono">
@@ -196,6 +216,8 @@ function ShotPromptColumn({ title }: { title: string }) {
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const parsed = useScriptStore((s) => s.parsed);
   const width = useLayoutStore((s) => s.widths.shotPrompt);
+  const collapsed = useLayoutStore((s) => s.collapsed.shotPrompt);
+  const toggleCollapsed = useLayoutStore((s) => s.toggleCollapsed);
   const [cursor, setCursor] = useState(entries.length);
 
   useEffect(() => {
@@ -232,12 +254,22 @@ function ShotPromptColumn({ title }: { title: string }) {
     return ok;
   }
 
+  if (collapsed) {
+    return (
+      <CollapsedColumnBar title={title} onClick={() => toggleCollapsed("shotPrompt")} />
+    );
+  }
+
   return (
     <div
       className="relative bg-surface border border-border p-prompt-column text-text flex flex-col gap-prompt-column-gap shrink-0 min-h-0"
       style={{ width }}
     >
-      <div className="flex items-center text-sm gap-[4px] font-semibold">
+      <div
+        className="flex items-center text-sm gap-[4px] font-semibold cursor-pointer select-none"
+        title="Click to collapse"
+        onClick={(e) => onHeaderClick(e, () => toggleCollapsed("shotPrompt"))}
+      >
         <span>{title}</span>
         {entries.length > 0 && (
           <span className="text-xs opacity-60 font-mono">

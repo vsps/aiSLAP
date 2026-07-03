@@ -1,9 +1,88 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoInfo {
+    pub fps: Option<f64>,
+    pub duration_sec: Option<f64>,
+}
+
+/// Probe a video's framerate + duration by parsing ffmpeg's own `-i` stderr
+/// banner (no ffprobe binary required — reuses the ffmpeg path already
+/// configured for thumbnail/export). Fields are `None` — not an error — when
+/// ffmpeg is missing or the banner doesn't parse; callers show what they have.
+#[tauri::command]
+pub fn video_info_probe(video_path: String, ffmpeg_path: String) -> AppResult<VideoInfo> {
+    let exe = ffmpeg_path.trim();
+    if exe.is_empty() {
+        return Ok(VideoInfo::default());
+    }
+    let exe_path = PathBuf::from(exe);
+    if !exe_path.is_file() {
+        return Ok(VideoInfo::default());
+    }
+    // `-i` with no output makes ffmpeg print the input's stream info to
+    // stderr and exit non-zero — that's expected, we only want the banner.
+    let output = Command::new(&exe_path)
+        .args(["-i", &video_path])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| AppError::Msg(format!("ffmpeg spawn failed: {e}")))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(VideoInfo {
+        fps: parse_fps(&stderr),
+        duration_sec: parse_duration(&stderr),
+    })
+}
+
+fn parse_fps(banner: &str) -> Option<f64> {
+    for line in banner.lines() {
+        let line = line.trim();
+        if !line.contains("Video:") {
+            continue;
+        }
+        for field in line.split(',') {
+            let field = field.trim();
+            if let Some(num) = field.strip_suffix("fps") {
+                if let Ok(f) = num.trim().parse::<f64>() {
+                    return Some(f);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_duration(banner: &str) -> Option<f64> {
+    for line in banner.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("Duration:") else {
+            continue;
+        };
+        let Some(ts) = rest.split(',').next() else {
+            continue;
+        };
+        let parts: Vec<&str> = ts.trim().split(':').collect();
+        if parts.len() != 3 {
+            continue;
+        }
+        let (h, m, s) = (
+            parts[0].trim().parse::<f64>(),
+            parts[1].trim().parse::<f64>(),
+            parts[2].trim().parse::<f64>(),
+        );
+        if let (Ok(h), Ok(m), Ok(s)) = (h, m, s) {
+            return Some(h * 3600.0 + m * 60.0 + s);
+        }
+    }
+    None
+}
 
 /// Extract a frame from `video_path` into `thumb_path` using the provided ffmpeg binary.
 /// Returns `false` (not an error) when ffmpeg is missing or extraction fails — caller decides.

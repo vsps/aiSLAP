@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { IconBtn } from "./IconBtn";
 import { RoleMenu } from "./RoleMenu";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
+import { CollapsedColumnBar } from "./CollapsedColumnBar";
 import { useLayoutStore } from "../stores/layoutStore";
 import {
   selectCurrentModel,
@@ -96,6 +97,8 @@ export function RefImagesColumn() {
   const reorderRefs = useGenerationStore((s) => s.reorderRefs);
   const expandedIdx = useGenerationStore((s) => s.expandedIdx);
   const width = useLayoutStore((s) => s.widths.refImages);
+  const collapsed = useLayoutStore((s) => s.collapsed.refImages);
+  const toggleCollapsed = useLayoutStore((s) => s.toggleCollapsed);
   const linksLen = useGenerationStore((s) => s.links.length);
   const activeLink = useGenerationStore((s) =>
     s.expandedIdx == null ? null : s.links[s.expandedIdx],
@@ -343,6 +346,15 @@ export function RefImagesColumn() {
       (k === "image" && showChainPrev),
   );
 
+  if (collapsed) {
+    return (
+      <CollapsedColumnBar
+        title="REFERENCES"
+        onClick={() => toggleCollapsed("refImages")}
+      />
+    );
+  }
+
   return (
     <>
       <div
@@ -353,7 +365,14 @@ export function RefImagesColumn() {
           dragOver || galleryDragOver ? "outline outline-2 outline-accent" : ""
         }`}
       >
-        <div className="flex items-center text-sm font-semibold">
+        <div
+          className="flex items-center text-sm font-semibold cursor-pointer select-none"
+          title="Click to collapse"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("button, input")) return;
+            toggleCollapsed("refImages");
+          }}
+        >
           <span>REFERENCES</span>
           <span className="flex-1" />
           <span className="text-xs opacity-60 font-mono">

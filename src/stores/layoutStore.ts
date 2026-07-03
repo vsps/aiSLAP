@@ -34,9 +34,41 @@ function loadWidths(): Record<ColumnKey, number> {
   }
 }
 
+// Editor columns that can be collapsed to a narrow vertical-label bar to free
+// up room for the preview panel. Model settings has no resizable width (fixed
+// column), so it's tracked separately from ColumnKey.
+export type CollapsibleKey = "modelSettings" | ColumnKey;
+
+const COLLAPSE_DEFAULTS: Record<CollapsibleKey, boolean> = {
+  modelSettings: false,
+  seqPrompt: false,
+  shotPrompt: false,
+  refImages: false,
+};
+
+const COLLAPSE_STORAGE_KEY = "aislap.columnCollapsed";
+
+function loadCollapsed(): Record<CollapsibleKey, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_STORAGE_KEY);
+    if (!raw) return { ...COLLAPSE_DEFAULTS };
+    const parsed = JSON.parse(raw) as Partial<Record<CollapsibleKey, boolean>>;
+    return {
+      modelSettings: !!parsed.modelSettings,
+      seqPrompt: !!parsed.seqPrompt,
+      shotPrompt: !!parsed.shotPrompt,
+      refImages: !!parsed.refImages,
+    };
+  } catch {
+    return { ...COLLAPSE_DEFAULTS };
+  }
+}
+
 type State = {
   widths: Record<ColumnKey, number>;
   setWidth: (key: ColumnKey, px: number) => void;
+  collapsed: Record<CollapsibleKey, boolean>;
+  toggleCollapsed: (key: CollapsibleKey) => void;
 };
 
 export const useLayoutStore = create<State>((set, get) => ({
@@ -48,6 +80,16 @@ export const useLayoutStore = create<State>((set, get) => ({
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch {
       /* swallow — width persistence is best-effort */
+    }
+  },
+  collapsed: loadCollapsed(),
+  toggleCollapsed(key) {
+    const next = { ...get().collapsed, [key]: !get().collapsed[key] };
+    set({ collapsed: next });
+    try {
+      localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* swallow — collapse-state persistence is best-effort */
     }
   },
 }));
