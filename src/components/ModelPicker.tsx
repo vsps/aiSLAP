@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useModelsStore } from "../stores/modelsStore";
+import { usePricesStore } from "../stores/pricesStore";
 import { selectCurrentModel, useGenerationStore } from "../stores/generationStore";
 import type { ModelEntry } from "../lib/types";
 
@@ -41,6 +42,11 @@ export function ModelPicker() {
   const { entries, loaded } = useModelsStore();
   const currentModel = useGenerationStore(selectCurrentModel);
   const selectModel = useGenerationStore((s) => s.selectModel);
+  const currentPrice = usePricesStore((s) =>
+    currentModel && (currentModel.provider ?? "fal") === "fal"
+      ? s.prices[currentModel.endpoint] ?? null
+      : null,
+  );
 
   const [provider, setProvider] = useState<Provider>(
     () => ((currentModel?.provider ?? "fal") as Provider),
@@ -159,6 +165,14 @@ export function ModelPicker() {
           <span className="text-xs text-dim">—</span>
         )}
       </div>
+      {currentPrice && (
+        <div
+          className="text-[11px] font-mono text-dim truncate"
+          title={`${currentPrice} (fetched from fal.ai — estimate)`}
+        >
+          {currentPrice}
+        </div>
+      )}
     </div>
   );
 }

@@ -134,30 +134,28 @@ export function ImageZoomModal({
           />
         )}
         {hasPrev && (
-          <button
-            type="button"
+          <IconBtn
+            name="chevron_left"
+            size={32}
             title="Previous (←)"
             className="absolute left-2 top-1/2 -translate-y-1/2 bg-panel/70 hover:bg-panel text-text rounded-full p-1"
             onClick={(e) => {
               e.stopPropagation();
               step(-1);
             }}
-          >
-            <IconBtn name="chevron_left" size={32} />
-          </button>
+          />
         )}
         {hasNext && (
-          <button
-            type="button"
+          <IconBtn
+            name="chevron_right"
+            size={32}
             title="Next (→)"
             className="absolute right-2 top-1/2 -translate-y-1/2 bg-panel/70 hover:bg-panel text-text rounded-full p-1"
             onClick={(e) => {
               e.stopPropagation();
               step(1);
             }}
-          >
-            <IconBtn name="chevron_right" size={32} />
-          </button>
+          />
         )}
       </div>
 

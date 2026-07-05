@@ -6,10 +6,13 @@ import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
 import { dirname, basename } from "../lib/paths";
 
+type Tool = "brush" | "line";
+
 type Stroke = {
   color: string;
   size: number;
   erase: boolean;
+  kind: Tool;
   points: [number, number][];
 };
 
@@ -20,6 +23,24 @@ const COLORS = [
 ];
 
 const SIZES = [4, 8, 16, 28, 44, 64];
+
+// Traces a stroke's path on `ctx` (caller sets style + strokes/fills). Line
+// strokes are just their two endpoints; brush strokes get the running
+// quadratic-midpoint smoothing that turns raw sampled points into a smooth
+// curve.
+function tracePath(ctx: CanvasRenderingContext2D, kind: Tool, points: [number, number][]) {
+  ctx.moveTo(points[0][0], points[0][1]);
+  if (kind === "line") {
+    const [x1, y1] = points[points.length - 1];
+    ctx.lineTo(x1, y1);
+    return;
+  }
+  for (let i = 1; i < points.length; i++) {
+    const [x0, y0] = points[i - 1];
+    const [x1, y1] = points[i];
+    ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+  }
+}
 
 type Props = {
   image: GalleryImage;
@@ -42,7 +63,8 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
   const [color, setColor] = useState(COLORS[2]);
   const [size, setSize] = useState(SIZES[1]);
   const [erase, setErase] = useState(false);
-  const [smoothing, setSmoothing] = useState(30);
+  const [tool, setTool] = useState<Tool>("brush");
+  const [smoothing, setSmoothing] = useState(15);
   const [saving, setSaving] = useState(false);
   const [imgReady, setImgReady] = useState(false);
   const [imgBounds, setImgBounds] = useState<DOMRect | null>(null);
@@ -80,19 +102,14 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.beginPath();
-      ctx.moveTo(s.points[0][0], s.points[0][1]);
-      for (let i = 1; i < s.points.length; i++) {
-        const [x0, y0] = s.points[i - 1];
-        const [x1, y1] = s.points[i];
-        ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
-      }
+      tracePath(ctx, s.kind, s.points);
       ctx.stroke();
       ctx.restore();
     }
 
-    // Draw lazy brush indicator
-    const brush = brushPosRef.current;
-    const cursor = cursorPosRef.current;
+    // Draw lazy brush indicator (brush tool only — line tool has no leash).
+    const brush = tool === "brush" ? brushPosRef.current : null;
+    const cursor = tool === "brush" ? cursorPosRef.current : null;
     if (brush && cursor) {
       ctx.save();
       ctx.globalCompositeOperation = "source-over";
@@ -118,7 +135,7 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
       ctx.stroke();
       ctx.restore();
     }
-  }, [imgBounds, color, size, erase]);
+  }, [imgBounds, color, size, erase, tool]);
 
   // Lazy-brush loop: the brush trails the cursor on a leash of length
   // `smoothing`. Each frame the brush only moves the slack beyond that radius
@@ -176,9 +193,17 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
     if (e.button !== 0) return;
     e.preventDefault();
     const pt = toCanvas(e);
+    if (tool === "line") {
+      // Straight lines are just two endpoints — no lazy-brush leash, the
+      // second point is dragged live in onMouseMove until release.
+      currentStrokeRef.current = { color, size, erase, kind: "line", points: [pt, pt] };
+      drawingRef.current = true;
+      render();
+      return;
+    }
     brushPosRef.current = pt;
     cursorPosRef.current = pt;
-    currentStrokeRef.current = { color, size, erase, points: [pt] };
+    currentStrokeRef.current = { color, size, erase, kind: "brush", points: [pt] };
     drawingRef.current = true;
     startBrushLoop();
   };
@@ -186,6 +211,13 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
   const onMouseMove = (e: React.MouseEvent) => {
     const pt = toCanvas(e);
     cursorPosRef.current = pt;
+    if (tool === "line") {
+      if (drawingRef.current && currentStrokeRef.current) {
+        currentStrokeRef.current.points[1] = pt;
+        render();
+      }
+      return;
+    }
     if (!drawingRef.current) {
       // Brush follows cursor instantly when idle; lag only applies mid-stroke
       brushPosRef.current = pt;
@@ -196,6 +228,16 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
   const onMouseUp = () => {
     if (!drawingRef.current) return;
     drawingRef.current = false;
+    if (tool === "line") {
+      const s = currentStrokeRef.current;
+      if (s) {
+        const [[x0, y0], [x1, y1]] = s.points;
+        if (Math.hypot(x1 - x0, y1 - y0) >= 2) strokesRef.current.push(s);
+      }
+      currentStrokeRef.current = null;
+      render();
+      return;
+    }
     stopBrushLoop();
     if (currentStrokeRef.current && currentStrokeRef.current.points.length >= 2) {
       strokesRef.current.push(currentStrokeRef.current);
@@ -263,12 +305,7 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
         ctx.lineJoin = "round";
         ctx.beginPath();
         const scaled = s.points.map(([x, y]) => [x * scale, y * scale] as [number, number]);
-        ctx.moveTo(scaled[0][0], scaled[0][1]);
-        for (let i = 1; i < scaled.length; i++) {
-          const [x0, y0] = scaled[i - 1];
-          const [x1, y1] = scaled[i];
-          ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
-        }
+        tracePath(ctx, s.kind, scaled);
         ctx.stroke();
         ctx.restore();
       }
@@ -338,6 +375,26 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
         className="bg-panel text-text p-2 flex items-center gap-3 flex-wrap"
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {/* Tool: freehand brush vs straight line */}
+        <div className="flex items-center gap-1">
+          <button
+            title="Brush"
+            onClick={() => setTool("brush")}
+            className={`text-xs px-2 py-0.5 border ${tool === "brush" ? "border-white text-white" : "border-dim text-dim"} hover:border-text hover:text-text`}
+          >
+            brush
+          </button>
+          <button
+            title="Line — click+drag to draw a straight line"
+            onClick={() => setTool("line")}
+            className={`text-xs px-2 py-0.5 border ${tool === "line" ? "border-white text-white" : "border-dim text-dim"} hover:border-text hover:text-text`}
+          >
+            line
+          </button>
+        </div>
+
+        <div className="w-px h-5 bg-dim" />
+
         {/* Colour swatches */}
         <div className="flex items-center gap-1">
           {COLORS.map((c) => (
@@ -397,14 +454,17 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
 
         <div className="w-px h-5 bg-dim" />
 
-        {/* Smoothing slider */}
-        <label className="flex items-center gap-2 text-xs text-dim">
+        {/* Smoothing slider — only meaningful for freehand brush strokes */}
+        <label
+          className={`flex items-center gap-2 text-xs text-dim ${tool === "line" ? "opacity-40" : ""}`}
+        >
           Smooth
           <input
             type="range"
             min={0}
             max={80}
             value={smoothing}
+            disabled={tool === "line"}
             onChange={(e) => setSmoothing(Number(e.currentTarget.value))}
             className="w-20 accent-white"
           />

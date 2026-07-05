@@ -30,9 +30,6 @@ type Props = {
   destDir: string;
   dragState: DragState;
   collapsed?: boolean;
-  /** When true the column-collapsed state is derived from `targetVersion`,
-   *  not the manual toggle. Header clicks should just promote to target. */
-  autoCollapse?: boolean;
   onToggleCollapsed: () => void;
   onFolderDelete: () => void;
   onImageAction: (action: ImageAction, imagePath: string) => void;
@@ -52,7 +49,6 @@ export function GalleryColumn({
   destDir,
   dragState,
   collapsed,
-  autoCollapse,
   onToggleCollapsed,
   onFolderDelete,
   onImageAction,
@@ -185,17 +181,6 @@ export function GalleryColumn({
     dragState.fromColumnVersion !== column.version;
 
   function onHeaderClick() {
-    if (autoCollapse) {
-      // Auto-collapse: SRC inert; non-target promotes; clicking the active
-      // non-SRC column opens the comment editor.
-      if (column.isSrc) return;
-      if (isTarget) {
-        setEditing(true);
-        return;
-      }
-      setTargetVersion(column.version);
-      return;
-    }
     if (collapsed) {
       onToggleCollapsed();
       return;
@@ -248,6 +233,16 @@ export function GalleryColumn({
             className={`flex items-center h-[25px] px-[5px] text-sm cursor-pointer shrink-0 ${headerClass}`}
             onClick={onHeaderClick}
           >
+            <IconBtn
+              name="unfold_less"
+              size={16}
+              title="Collapse column"
+              className="rotate-90 shrink-0 mr-1"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleCollapsed();
+              }}
+            />
             {editing && !column.isSrc ? (
               <VersionCommentInput
                 initial={comment}

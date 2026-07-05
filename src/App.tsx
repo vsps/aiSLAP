@@ -162,6 +162,7 @@ function StatusBar({
   const { entries, loaded } = useModelsStore();
   const jobs = useGenerationStore((s) => s.jobs);
   const traceActive = useSessionStore((s) => s.traceActive);
+  const restoringLastSession = useSessionStore((s) => s.restoringLastSession);
 
   const active = jobs.filter((j) => !isJobTerminal(j.status));
   // Surface the latest active job's progress; with multi-job runs the badge in
@@ -173,6 +174,11 @@ function StatusBar({
       <span>{ready ? "ready" : "booting..."}</span>
       <span>models: {loaded ? entries.length : "…"}</span>
       {bootError && <span className="text-bad">boot error: {bootError}</span>}
+      {restoringLastSession && (
+        <span title="Restoring the last-used project/sequence/shot in the background — pick a different project any time.">
+          restoring last session…
+        </span>
+      )}
       {latest && (
         <span className="text-text">
           {latest.progressMessage || "Generating..."}

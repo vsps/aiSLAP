@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useState } from "react";
-import type { GalleryImage } from "../lib/types";
 import { GalleryColumn, type DragState } from "./GalleryColumn";
 import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
@@ -15,23 +14,7 @@ import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
 import { confirmAction, showMessage } from "../lib/dialog";
 import { fileSrc } from "../lib/assets";
-import { MODEL_3D_EXTS } from "../lib/media";
-
-const VIDEO_EXTS = ["mp4", "webm", "mov", "mkv"];
-
-// Build a minimal GalleryImage for paths that aren't in the scanned columns
-// (e.g. a ref image added mid-session before the next rescan).
-function syntheticImage(path: string): GalleryImage {
-  const filename = basename(path);
-  const ext = filename.toLowerCase().split(".").pop() ?? "";
-  return {
-    filename,
-    path,
-    metadataPath: "",
-    isVideo: VIDEO_EXTS.includes(ext),
-    isModel3d: MODEL_3D_EXTS.includes(ext),
-  };
-}
+import { syntheticImage } from "../lib/media";
 
 export function Gallery() {
   const columns = useSessionStore((s) => s.columns);
@@ -46,7 +29,6 @@ export function Gallery() {
   const setInfoImage = useSessionStore((s) => s.setInfoImage);
   const shotPath = useSessionStore((s) => s.shotPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);
-  const targetVersion = useSessionStore((s) => s.targetVersion);
   const viewMode = useSessionStore((s) => s.viewMode);
   const setViewMode = useSessionStore((s) => s.setViewMode);
   const setImageDrag = useSessionStore((s) => s.setImageDrag);
@@ -55,6 +37,8 @@ export function Gallery() {
   const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
   const rescanStarred = useSessionStore((s) => s.rescanStarred);
   const createNextVersion = useSessionStore((s) => s.createNextVersion);
+  const thumbnailsEnabled = useSessionStore((s) => s.thumbnailsEnabled);
+  const enableThumbnails = useSessionStore((s) => s.enableThumbnails);
 
   const flatImages = columns.flatMap((c) => c.images);
   const zoomImage = zoomImagePath
@@ -74,10 +58,6 @@ export function Gallery() {
   const [collapsedVersions, setCollapsedVersions] = useState<Set<string>>(
     () => new Set(),
   );
-  // Auto-collapse mode: only GLOBAL SRC + the current target version stay
-  // expanded; everything else is forced collapsed regardless of the manual
-  // set. Survives shot navigation; reset only on explicit toggle.
-  const [autoCollapse, setAutoCollapse] = useState(false);
   useEffect(() => {
     setCollapsedVersions(new Set());
   }, [shotPath]);
@@ -88,6 +68,15 @@ export function Gallery() {
       else next.add(version);
       return next;
     });
+  };
+  // Toolbar bulk toggle: collapse every column, or clear all individual
+  // collapse state back to fully expanded.
+  const allCollapsed =
+    columns.length > 0 && columns.every((c) => collapsedVersions.has(c.version));
+  const toggleAllCollapsed = () => {
+    setCollapsedVersions(
+      allCollapsed ? new Set() : new Set(columns.map((c) => c.version)),
+    );
   };
 
   const destDirFor = useCallback(
@@ -490,15 +479,11 @@ export function Gallery() {
       )}
       {viewMode === "columns" && shotPath && (
         <button
-          className={`${autoCollapse ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
-          title={
-            autoCollapse
-              ? "Auto-collapse: ON (only GLOBAL SRC + target expanded)"
-              : "Auto-collapse: OFF"
-          }
-          onClick={() => setAutoCollapse((v) => !v)}
+          className={`${allCollapsed ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
+          title={allCollapsed ? "Expand all columns" : "Collapse all columns"}
+          onClick={toggleAllCollapsed}
         >
-          <Icon name="unfold_less" size={22} fill={autoCollapse} className="rotate-90" />
+          <Icon name="unfold_less" size={22} fill={allCollapsed} className="rotate-90" />
         </button>
       )}
       {selectedImagePath && (
@@ -530,6 +515,20 @@ export function Gallery() {
       )}
     </div>
   );
+
+  // Nothing reads from disk until the user opts in — avoids flooding a
+  // slow/network project dir with thumbnail reads the moment the app starts.
+  if (!thumbnailsEnabled) {
+    return (
+      <div
+        className="flex flex-1 min-h-0 min-w-0 items-center justify-center bg-gallery-surface text-dim text-sm cursor-pointer select-none hover:text-text transition-colors"
+        onClick={enableThumbnails}
+        title="Load thumbnails"
+      >
+        Click to load thumbnails
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-1 min-h-0 min-w-0 gap-gallery-surface bg-gallery-surface">
@@ -563,12 +562,7 @@ export function Gallery() {
                     width={thumbColWidth}
                     destDir={destDirFor(c)}
                     dragState={dragState}
-                    collapsed={
-                      autoCollapse
-                        ? !c.isSrc && c.version !== targetVersion
-                        : collapsedVersions.has(c.version)
-                    }
-                    autoCollapse={autoCollapse}
+                    collapsed={collapsedVersions.has(c.version)}
                     onToggleCollapsed={() => toggleCollapsed(c.version)}
                     onFolderDelete={() => onFolderDelete(c.version)}
                     onImageAction={onImageAction}
@@ -639,6 +633,3 @@ export function Gallery() {
     </div>
   );
 }
-
-// Side-effect free check the linter insists on.
-export type { GalleryImage };

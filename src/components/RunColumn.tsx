@@ -16,6 +16,31 @@ import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
 import { basename } from "../lib/paths";
+import { isPerItemUnit, parseFalPrice } from "../lib/falPrices";
+import { usePricesStore } from "../stores/pricesStore";
+import type { ChainLink } from "../lib/types";
+
+// Cost of one run of a link, when its model is fal-priced per output item
+// (request/image/video). Time/size-billed models return null — no fake totals.
+function perRunCost(
+  link: ChainLink | undefined,
+  prices: Record<string, string>,
+): number | null {
+  const model = link?.model;
+  if (!model || (model.provider ?? "fal") !== "fal") return null;
+  const text = prices[model.endpoint];
+  if (!text) return null;
+  const parsed = parseFalPrice(text);
+  if (!parsed || !isPerItemUnit(parsed.unit)) return null;
+  // Batch models produce N outputs per request but fal bills per output.
+  const batch = model.batch_field ? Number(link.settings[model.batch_field]) : 1;
+  return parsed.amount * (Number.isFinite(batch) && batch > 1 ? batch : 1);
+}
+
+// Sub-cent prices need more decimals than dollars-and-cents formatting gives.
+function formatCost(n: number): string {
+  return n < 0.1 ? n.toFixed(3) : n.toFixed(2);
+}
 
 export function RunColumn() {
   const iterations = useGenerationStore((s) => s.iterations);
@@ -55,6 +80,37 @@ export function RunColumn() {
   // Multi-link chains require collapse-to-submit and a clean preflight.
   // Single-link mode behaves exactly like the pre-chain workbench.
   const chainGateOk = !isMultiLink || (expandedIdx == null && !chainHasErrors);
+
+  // Estimated submit cost from cached fal prices (Settings → fetch prices).
+  // Only shown when every billed run is per-item priced; time/size-billed
+  // models fall back to the raw unit-price text (single-link only).
+  const prices = usePricesStore((s) => s.prices);
+  const { costEstimate, costLabel } = useMemo(() => {
+    if (isMultiLink) {
+      const active = links.filter((l) => l.active);
+      let sum = 0;
+      for (let i = 0; i < active.length; i++) {
+        const c = perRunCost(active[i], prices);
+        if (c == null) return { costEstimate: null, costLabel: null };
+        // Intermediate links run once; the final link honors iterations.
+        sum += i === active.length - 1 ? c * Math.max(1, iterations) : c;
+      }
+      return active.length > 0
+        ? { costEstimate: sum, costLabel: null }
+        : { costEstimate: null, costLabel: null };
+    }
+    const per = perRunCost(activeLink, prices);
+    if (per != null) {
+      return {
+        costEstimate: per * Math.max(1, iterations) * runCount,
+        costLabel: null,
+      };
+    }
+    const text = currentModel && (currentModel.provider ?? "fal") === "fal"
+      ? prices[currentModel.endpoint] ?? null
+      : null;
+    return { costEstimate: null, costLabel: text };
+  }, [isMultiLink, links, activeLink, prices, iterations, runCount, currentModel]);
 
   const canRun =
     !!currentModel &&
@@ -169,6 +225,23 @@ export function RunColumn() {
       >
         {showCount ? `[SUBMIT+ ${runCount}]` : "[SUBMIT+]"}
       </button>
+
+      {costEstimate != null && (
+        <span
+          className="text-xs font-mono text-dim cursor-help"
+          title="Estimated cost from fal.ai's published prices (fetched in Settings). Actual billing may differ."
+        >
+          ≈ ${formatCost(costEstimate)}
+        </span>
+      )}
+      {costEstimate == null && costLabel && (
+        <span
+          className="text-[11px] font-mono text-dim text-center cursor-help"
+          title={`${costLabel} — output-dependent, no fixed total. Fetched from fal.ai.`}
+        >
+          {costLabel}
+        </span>
+      )}
 
       {queueCount > 0 && (
         <span

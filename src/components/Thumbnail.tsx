@@ -287,7 +287,8 @@ export const Thumbnail = memo(function Thumbnail({
           deployed_code
         </span>
       )}
-      {/* Corner toggles: hidden by default, visible on hover; stay visible + accent when ON. */}
+      {/* Corner toggles: hidden by default, visible on hover; white when off,
+          accent + filled when ON; hovering the icon itself previews accent. */}
       <IconBtn
         name="star"
         size={18}
@@ -297,10 +298,10 @@ export const Thumbnail = memo(function Thumbnail({
           e.stopPropagation();
           onToggleStar(image.path);
         }}
-        className={`absolute bottom-1 left-1 drop-shadow transition-opacity ${
+        className={`absolute bottom-1 left-1 drop-shadow transition-opacity transition-colors ${
           image.starred
             ? "opacity-100 text-accent"
-            : "opacity-0 group-hover:opacity-100"
+            : "opacity-0 group-hover:opacity-100 text-white hover:text-accent"
         }`}
       />
       {onToggleClipMedia && (
@@ -313,10 +314,10 @@ export const Thumbnail = memo(function Thumbnail({
             e.stopPropagation();
             onToggleClipMedia(image.path);
           }}
-          className={`absolute bottom-1 right-1 drop-shadow transition-opacity ${
+          className={`absolute bottom-1 right-1 drop-shadow transition-opacity transition-colors ${
             clipMediaSelected
               ? "opacity-100 text-accent"
-              : "opacity-0 group-hover:opacity-100"
+              : "opacity-0 group-hover:opacity-100 text-white hover:text-accent"
           }`}
         />
       )}
