@@ -3,7 +3,10 @@ import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
 import { recoverOrphans } from "../lib/recovery";
+import { fetchFalPrices } from "../lib/falPrices";
 import { pushLog } from "../stores/logStore";
+import { useModelsStore } from "../stores/modelsStore";
+import { usePricesStore } from "../stores/pricesStore";
 import type { ColorOverrides, Config, FalLifecycle } from "../lib/types";
 
 const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
@@ -53,6 +56,10 @@ export function SettingsDialog({ onClose }: Props) {
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
   const [orphanStatus, setOrphanStatus] = useState<string | null>(null);
+  const [pricesBusy, setPricesBusy] = useState(false);
+  const [pricesStatus, setPricesStatus] = useState<string | null>(null);
+  const pricesFetchedAt = usePricesStore((s) => s.fetchedAt);
+  const pricesCount = usePricesStore((s) => Object.keys(s.prices).length);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -102,6 +109,42 @@ export function SettingsDialog({ onClose }: Props) {
       setOrphanStatus(`Error: ${String(e)}`);
     } finally {
       setOrphanBusy(false);
+    }
+  }
+
+  async function fetchPrices() {
+    if (pricesBusy) return;
+    setPricesBusy(true);
+    setPricesStatus("Fetching…");
+    try {
+      const endpoints = useModelsStore
+        .getState()
+        .entries.filter((e) => (e.node.provider ?? "fal") === "fal")
+        .map((e) => e.node.endpoint);
+      const unique = [...new Set(endpoints)];
+      const prices = await fetchFalPrices(unique);
+      const fetchedAt = new Date().toISOString();
+
+      // Persist immediately into the on-disk config (merged into a fresh
+      // load, NOT the dialog's edited copy — Cancel must not lose prices,
+      // and fetching must not silently commit unsaved dialog edits).
+      const onDisk = ((await cmd.config_load().catch(() => null)) ??
+        DEFAULT) as Config;
+      await cmd.config_save({
+        ...onDisk,
+        falPrices: prices,
+        falPricesFetchedAt: fetchedAt,
+      });
+      usePricesStore.getState().setPrices(prices, fetchedAt);
+      // Keep the dialog's copy in sync so a later Save doesn't revert them.
+      setConfig((c) => ({ ...c, falPrices: prices, falPricesFetchedAt: fetchedAt }));
+      setPricesStatus(
+        `${Object.keys(prices).length} of ${unique.length} fal models priced.`,
+      );
+    } catch (e) {
+      setPricesStatus(`Error: ${String(e)}`);
+    } finally {
+      setPricesBusy(false);
     }
   }
 
@@ -292,6 +335,32 @@ export function SettingsDialog({ onClose }: Props) {
             <div className="text-xs text-dim mt-1">
               {orphanStatus ??
                 "If the app was killed mid-submit, the result may still be on fal.ai. Click Check to pull it down."}
+            </div>
+          </Field>
+
+          <Field label="fal.ai prices">
+            <div className="flex gap-1 items-center">
+              <button
+                type="button"
+                className="px-2 bg-bg text-xs disabled:opacity-50"
+                onClick={() => void fetchPrices()}
+                disabled={pricesBusy}
+              >
+                {pricesBusy ? "Fetching…" : "Fetch prices"}
+              </button>
+              <span className="text-xs text-dim">
+                {pricesCount > 0
+                  ? `${pricesCount} cached${
+                      pricesFetchedAt
+                        ? ` · ${new Date(pricesFetchedAt).toLocaleString()}`
+                        : ""
+                    }`
+                  : "no prices cached"}
+              </span>
+            </div>
+            <div className="text-xs text-dim mt-1">
+              {pricesStatus ??
+                "Pulls per-model prices from fal.ai's model gallery (unofficial — prices are estimates)."}
             </div>
           </Field>
 

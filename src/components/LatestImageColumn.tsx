@@ -14,9 +14,11 @@ import { performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { showMessage } from "../lib/dialog";
 import { basename, dirname } from "../lib/paths";
+import { syntheticImage } from "../lib/media";
 import type {
   GalleryImage,
   GalleryColumn,
+  SeqStarredGroup,
   TimelineClip,
   ShotLatestMedia,
 } from "../lib/types";
@@ -33,6 +35,7 @@ export function LatestImageColumn() {
   const columns = useSessionStore((s) => s.columns);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const targetVersion = useSessionStore((s) => s.targetVersion);
+  const starredGroups = useSessionStore((s) => s.starredGroups);
   const tlClips = useTimelineStore((s) => s.clips);
   const tlTotal = useTimelineStore((s) => s.totalDurationSec);
   const tlPlaying = useTimelineStore((s) => s.playing);
@@ -48,8 +51,8 @@ export function LatestImageColumn() {
   const timelineActive = tlPlaying || tlPlayhead > 0;
 
   const image = useMemo(
-    () => pickImage(columns, selectedImagePath, targetVersion),
-    [columns, selectedImagePath, targetVersion],
+    () => pickImage(columns, selectedImagePath, targetVersion, starredGroups),
+    [columns, selectedImagePath, targetVersion, starredGroups],
   );
   // Clip media only applies to images living in a shot version dir, not SRC refs.
   const isSrcImage = useMemo(
@@ -548,6 +551,7 @@ function pickImage(
   columns: GalleryColumn[],
   selectedImagePath: string | null,
   targetVersion: string | null,
+  starredGroups: SeqStarredGroup[],
 ): GalleryImage | null {
   if (selectedImagePath) {
     for (const c of columns) {
@@ -558,6 +562,19 @@ function pickImage(
       const hit = c.srcImages.find((i) => i.path === selectedImagePath);
       if (hit) return hit;
     }
+    // Selected image belongs to a shot other than the one currently open
+    // (e.g. picked from the starred/favorites view) — its columns aren't
+    // loaded here, but it's still the user's explicit selection, so show it
+    // rather than silently falling back to "no image". Check the starred
+    // data first so the star icon/metadata reflect reality; otherwise fall
+    // back to a bare synthetic image built from the path alone.
+    for (const seq of starredGroups) {
+      for (const shot of seq.shots) {
+        const hit = shot.images.find((i) => i.path === selectedImagePath);
+        if (hit) return hit;
+      }
+    }
+    return syntheticImage(selectedImagePath);
   }
   // Fall back to the last image in the target version column.
   const target = columns.find((c) => c.version === targetVersion && !c.isSrc);

@@ -250,6 +250,9 @@ export type Config = {
   colors?: ColorOverrides;
   /** fal.ai object lifecycle: "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never" | seconds. Unset = fal default. */
   falLifecycle?: FalLifecycle;
+  /** Per-endpoint price texts fetched from fal's gallery API (see lib/falPrices.ts). */
+  falPrices?: Record<string, string>;
+  falPricesFetchedAt?: string;
 };
 
 // ---------- Submission queue ----------

@@ -61,6 +61,15 @@ type State = {
   logHeight: number;
   timelineHeight: number;
   queueWidth: number;
+
+  /** Gallery thumbnails render nothing (a "click to load" placeholder instead)
+   *  until the user opts in — avoids flooding a slow/network project dir with
+   *  reads the moment the app starts. Resets every launch (not persisted). */
+  thumbnailsEnabled: boolean;
+  /** True while bootstrap is restoring the last-used project/sequence/shot in
+   *  the background (see lib/bootstrap.ts) — surfaced as a status hint since
+   *  it no longer blocks the UI from becoming interactive. */
+  restoringLastSession: boolean;
 };
 
 type Actions = {
@@ -100,6 +109,9 @@ type Actions = {
   setLogHeight: (n: number) => void;
   setTimelineHeight: (n: number) => void;
   setQueueWidth: (n: number) => void;
+
+  enableThumbnails: () => void;
+  setRestoringLastSession: (v: boolean) => void;
 };
 
 const GALLERY_H_MIN = 120;
@@ -156,6 +168,9 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   logHeight: 78,
   timelineHeight: TIMELINE_H_MIN,
   queueWidth: 400,
+
+  thumbnailsEnabled: false,
+  restoringLastSession: false,
 
   async setProject(projectPath) {
     // Rust's list_dirs returns forward-slash paths. Normalize the incoming path
@@ -519,5 +534,12 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   },
   setQueueWidth(n) {
     set({ queueWidth: clamp(n, QUEUE_W_MIN, QUEUE_W_MAX) });
+  },
+
+  enableThumbnails() {
+    set({ thumbnailsEnabled: true });
+  },
+  setRestoringLastSession(v) {
+    set({ restoringLastSession: v });
   },
 }));

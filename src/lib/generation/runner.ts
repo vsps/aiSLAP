@@ -365,7 +365,21 @@ async function uploadRefs(
   const out: UploadedRef[] = [];
   for (const r of refs) {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
-    const blob = await fetch(fileSrc(r.path)).then((x) => x.blob());
+    // fetch() against the asset:// protocol doesn't throw on a missing file —
+    // it resolves with a 404 response — so an unchecked .blob() would upload
+    // garbage/empty content and fail late with a confusing remote 500. Fail
+    // fast locally instead, naming the actual missing path (refs can outlive
+    // the shot they were added from, e.g. after a rename/move/delete).
+    const res = await fetch(fileSrc(r.path));
+    if (!res.ok) {
+      throw new Error(
+        `Reference file not found or unreadable: ${r.path} (HTTP ${res.status})`,
+      );
+    }
+    const blob = await res.blob();
+    if (blob.size === 0) {
+      throw new Error(`Reference file is empty: ${r.path}`);
+    }
     const name = basename(r.path);
     const type = blob.type || guessContentType(name);
     const file = new File([blob], name, { type });

@@ -16,6 +16,7 @@ import {
 import { swallow } from "./errors";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePresetsStore } from "../stores/presetsStore";
+import { usePricesStore } from "../stores/pricesStore";
 import { useSessionStore } from "../stores/sessionStore";
 
 function emptyAppState(): AppState {
@@ -125,6 +126,12 @@ export async function bootstrap(): Promise<() => void> {
   // Always apply colors at startup so CSS variables are explicit inline values.
   applyColors(config?.colors);
 
+  // Seed cached fal prices (fetched manually via Settings) so cost labels
+  // work without re-hitting the gallery API.
+  usePricesStore
+    .getState()
+    .setPrices(config?.falPrices ?? {}, config?.falPricesFetchedAt ?? null);
+
   const entries = useModelsStore.getState().entries;
   const gen = useGenerationStore.getState();
 
@@ -171,45 +178,63 @@ export async function bootstrap(): Promise<() => void> {
     useSessionStore.getState().setLogHeight(appState.logHeight);
   }
 
-  // Restore session paths.
-  const session = useSessionStore.getState();
-  if (appState.projectPath) {
-    try {
-      await session.setProject(appState.projectPath);
-      if (appState.lastSequence) {
-        const seqPath = joinPath(appState.projectPath, appState.lastSequence);
-        try {
-          await useSessionStore.getState().setSequence(seqPath);
-          if (appState.lastShot) {
-            const sp = useSessionStore.getState().sequencePath;
-            if (sp) {
-              const shotPath = joinPath(sp, appState.lastShot);
-              try {
-                await useSessionStore.getState().setShot(shotPath);
-              } catch (e) {
-                console.warn(
-                  `[bootstrap] shot restore failed for ${shotPath}:`,
-                  e,
-                );
-              }
-            }
-          }
-        } catch (e) {
-          console.warn(
-            `[bootstrap] sequence restore failed for ${seqPath}:`,
-            e,
-          );
-        }
-      }
-    } catch (e) {
-      console.warn(
-        `[bootstrap] project restore failed for ${appState.projectPath}:`,
-        e,
-      );
-    }
-  }
+  // Restore session paths (project/sequence/shot) in the background — this
+  // hits the filesystem (potentially a slow/offline network drive) and must
+  // not block the UI from becoming interactive. Errors are logged, not
+  // thrown: a failed restore just leaves the user with an empty session,
+  // which they can fix via the project picker in SessionBar.
+  void restoreSessionPaths(appState).catch(
+    swallow("background session restore"),
+  );
 
   return installPersistence();
+}
+
+// Same normalization setProject() applies internally, so we can tell whether
+// the project we just restored is still the current one before proceeding.
+function normalizeProjectPath(p: string): string {
+  return p.replaceAll("\\", "/").replace(/\/+$/, "");
+}
+
+async function restoreSessionPaths(appState: AppState): Promise<void> {
+  if (!appState.projectPath) return;
+  const session = useSessionStore.getState();
+  session.setRestoringLastSession(true);
+  try {
+    await session.setProject(appState.projectPath);
+    // Bail if the user has since picked a different project themselves —
+    // don't clobber their choice with a stale background restore.
+    if (
+      useSessionStore.getState().projectPath !==
+      normalizeProjectPath(appState.projectPath)
+    ) {
+      return;
+    }
+
+    if (!appState.lastSequence) return;
+    const seqPath = joinPath(appState.projectPath, appState.lastSequence);
+    try {
+      await useSessionStore.getState().setSequence(seqPath);
+      if (useSessionStore.getState().sequencePath !== seqPath) return;
+
+      if (!appState.lastShot) return;
+      const shotPath = joinPath(seqPath, appState.lastShot);
+      try {
+        await useSessionStore.getState().setShot(shotPath);
+      } catch (e) {
+        console.warn(`[bootstrap] shot restore failed for ${shotPath}:`, e);
+      }
+    } catch (e) {
+      console.warn(`[bootstrap] sequence restore failed for ${seqPath}:`, e);
+    }
+  } catch (e) {
+    console.warn(
+      `[bootstrap] project restore failed for ${appState.projectPath}:`,
+      e,
+    );
+  } finally {
+    session.setRestoringLastSession(false);
+  }
 }
 
 function installPersistence(): () => void {
