@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::fsutil::{
     as_str, is_media_ext, next_version_name, project_root_for, rel_of, relativize, sidecar_path,
-    thumb_path, validate_filename_stem, TransferMode, SHOT_SIDECAR, SRC_DIR,
+    thumb_path, validate_filename_stem, TransferMode, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::visible::{visible_set_rekey, visible_set_rekey_one};
 use crate::domain::ShotSidecar;
@@ -113,8 +113,12 @@ pub fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResu
         .ok_or_else(|| AppError::Msg("no project parent".into()))?
         .join(SRC_DIR);
     ensure_dir(&project_dir)?;
-    let dest =
-        transfer_triple_to_dir(&src, &project_dir, TransferMode::Copy, CollisionPolicy::Overwrite)?;
+    let dest = transfer_triple_to_dir(
+        &src,
+        &project_dir,
+        TransferMode::Copy,
+        CollisionPolicy::Overwrite,
+    )?;
     Ok(as_str(&dest))
 }
 
@@ -186,9 +190,7 @@ pub fn image_rename(source_path: String, new_stem: String) -> AppResult<String> 
         return Err(AppError::Msg(format!("FILENAME_EXISTS: {new_filename}")));
     }
     if old_sidecar.exists() && new_sidecar.exists() {
-        return Err(AppError::Msg(format!(
-            "FILENAME_EXISTS: {trimmed}.json"
-        )));
+        return Err(AppError::Msg(format!("FILENAME_EXISTS: {trimmed}.json")));
     }
     if old_thumb.exists() && new_thumb.exists() {
         return Err(AppError::Msg(format!(
@@ -242,7 +244,10 @@ fn version_stack_move_impl(
 ) -> AppResult<String> {
     let src_dir = PathBuf::from(&src_shot).join(&src_version);
     if !src_dir.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {}", as_str(&src_dir))));
+        return Err(AppError::Msg(format!(
+            "not a directory: {}",
+            as_str(&src_dir)
+        )));
     }
 
     let dst_root = PathBuf::from(&dst_shot);
@@ -301,7 +306,11 @@ fn version_stack_move_impl(
         }
     }
 
-    let mode = if copy { TransferMode::Copy } else { TransferMode::Move };
+    let mode = if copy {
+        TransferMode::Copy
+    } else {
+        TransferMode::Move
+    };
     for src in &moves {
         transfer_triple_to_dir(src, &dst_dir, mode, CollisionPolicy::Error)?;
     }
@@ -327,9 +336,140 @@ fn version_stack_move_impl(
     Ok(as_str(&dst_dir))
 }
 
+// ---------- SEL (Selects) ----------
+
+/// Copy an image (and its .json sidecar) into the shot's SEL folder.
+#[tauri::command]
+pub async fn image_copy_to_sel(shot_path: String, source_path: String) -> AppResult<String> {
+    run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Copy)).await
+}
+
+/// Move an image (and its .json sidecar) into the shot's SEL folder.
+#[tauri::command]
+pub async fn image_move_to_sel(shot_path: String, source_path: String) -> AppResult<String> {
+    run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Move)).await
+}
+
+fn sel_transfer_impl(
+    shot_path: String,
+    source_path: String,
+    mode: TransferMode,
+) -> AppResult<String> {
+    let src = PathBuf::from(&source_path);
+    if !src.is_file() {
+        return Err(AppError::Msg(format!("not a file: {}", as_str(&src))));
+    }
+    let shot = PathBuf::from(&shot_path);
+    let sel_dir = shot.join(SEL_DIR);
+    ensure_dir(&sel_dir)?;
+    let dest = transfer_triple_to_dir(&src, &sel_dir, mode, CollisionPolicy::Error)?;
+    if let Ok(root) = project_root_for(&dest) {
+        let src_rel = rel_of(&src, &root);
+        let dest_rel = rel_of(&dest, &root);
+        if let (Some(s), Some(d)) = (src_rel, dest_rel) {
+            visible_set_rekey_one(&root, mode, Some(s), Some(d))?;
+        }
+    }
+    Ok(as_str(&dest))
+}
+
+/// Export all SEL folders from the project to a destination directory.
+/// `mode`: "preserve" mirrors the project folder structure (dest/SEQ/SHOT/SEL/);
+/// "dump" flattens everything into one folder with "seq_shot_" filename prefix.
+#[tauri::command]
+pub async fn export_selects(
+    project_path: String,
+    dest_dir: String,
+    mode: String,
+) -> AppResult<u32> {
+    run_blocking(move || export_selects_impl(project_path, dest_dir, mode)).await
+}
+
+fn export_selects_impl(project_path: String, dest_dir: String, mode: String) -> AppResult<u32> {
+    let project = PathBuf::from(&project_path);
+    let dest = PathBuf::from(&dest_dir);
+    if !project.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    if !dest.is_dir() {
+        ensure_dir(&dest)?;
+    }
+
+    let preserve = mode == "preserve";
+    let mut copied: u32 = 0;
+
+    // Walk: project / sequence / shot / SEL
+    for seq_entry in std::fs::read_dir(&project)? {
+        let seq_entry = seq_entry?;
+        let seq_path = seq_entry.path();
+        if !seq_path.is_dir() {
+            continue;
+        }
+        let seq_name = match seq_path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if seq_name.starts_with('.') || seq_name.starts_with('$') || seq_name == SRC_DIR {
+            continue;
+        }
+
+        for shot_entry in std::fs::read_dir(&seq_path)? {
+            let shot_entry = shot_entry?;
+            let shot_path = shot_entry.path();
+            if !shot_path.is_dir() {
+                continue;
+            }
+            let shot_name = match shot_path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if shot_name.starts_with('.') || shot_name.starts_with('$') || shot_name == SRC_DIR {
+                continue;
+            }
+
+            let sel_path = shot_path.join(SEL_DIR);
+            if !sel_path.is_dir() {
+                continue;
+            }
+
+            // Found a SEL folder — copy its contents.
+            for file_entry in std::fs::read_dir(&sel_path)? {
+                let file_entry = file_entry?;
+                let src_file = file_entry.path();
+                if !src_file.is_file() {
+                    continue;
+                }
+                let fname = match src_file.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                if fname.ends_with(".thumb.png") {
+                    continue;
+                }
+                if !is_media_ext(&src_file) && !fname.ends_with(".json") {
+                    continue;
+                }
+
+                let dst_file = if preserve {
+                    let d = dest.join(&seq_name).join(&shot_name).join(SEL_DIR);
+                    ensure_dir(&d)?;
+                    d.join(&fname)
+                } else {
+                    dest.join(format!("{seq_name}_{shot_name}_{fname}"))
+                };
+
+                std::fs::copy(&src_file, &dst_file)?;
+                copied += 1;
+            }
+        }
+    }
+
+    Ok(copied)
+}
+
 #[tauri::command]
 pub fn save_png_base64(path: String, data_base64: String) -> AppResult<()> {
-    use base64::{Engine, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine};
     let bytes = STANDARD
         .decode(&data_base64)
         .map_err(|e| AppError::Msg(format!("base64 decode: {e}")))?;
@@ -343,11 +483,18 @@ pub fn save_png_base64(path: String, data_base64: String) -> AppResult<()> {
 
 #[tauri::command]
 pub fn reveal_in_explorer(path: String) -> AppResult<()> {
-    // Use explorer /select directly to avoid canonicalize() turning mapped
-    // drive letters (Z:\...) into \\?\UNC\... paths that Explorer rejects.
-    let native = path.replace('/', "\\");
+    let p = std::path::PathBuf::from(&path);
+    // Open the containing folder. For regular drives this navigates to the
+    // folder; for virtual/cloud filesystems (Google Drive, etc.) `/select`
+    // is not supported by Explorer, but opening the folder itself works.
+    let target = if p.is_dir() {
+        p
+    } else {
+        p.parent().map(|d| d.to_path_buf()).unwrap_or(p)
+    };
+    let native = target.to_string_lossy().replace('/', "\\");
     std::process::Command::new("explorer")
-        .arg(format!("/select,{native}"))
+        .arg(&native)
         .spawn()
         .map_err(|e| AppError::Msg(e.to_string()))?;
     Ok(())

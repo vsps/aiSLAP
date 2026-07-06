@@ -9,7 +9,7 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, list_dirs, next_version_name, sanitize, version_prefix_for, PROJECT_SIDECAR,
+    as_str, list_dirs, next_version_name, sanitize, version_prefix_for, PROJECT_SIDECAR, SEL_DIR,
     SEQUENCE_SIDECAR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::gallery::scan_shot_columns;
@@ -73,7 +73,7 @@ pub fn sequence_open(sequence_path: String) -> AppResult<SequenceOpenResult> {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n != SRC_DIR)
+                .map(|n| n != SRC_DIR && n != SEL_DIR)
                 .unwrap_or(false)
         })
         .map(|p| as_str(&p))
@@ -125,6 +125,7 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
     ensure_dir(&target)?;
     let prefix = version_prefix_for(&target);
     ensure_dir(&target.join(format!("{}001", prefix)))?;
+    ensure_dir(&target.join(SRC_DIR))?;
     let sidecar_path = target.join(SHOT_SIDECAR);
     if !sidecar_path.exists() {
         write_sidecar_atomic(
@@ -236,8 +237,7 @@ pub fn project_version_prefix_get(project_path: String) -> AppResult<String> {
     if !root.is_dir() {
         return Err(AppError::Msg(format!("not a directory: {project_path}")));
     }
-    let sidecar: ProjectSidecar =
-        read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    let sidecar: ProjectSidecar = read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
     Ok(if sidecar.version_prefix.is_empty() {
         "gen".into()
     } else {
@@ -265,8 +265,7 @@ pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppRe
             .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-');
     if !valid {
         return Err(AppError::Msg(
-            "Prefix must start with a letter and contain only letters, `_`, or `-`."
-                .into(),
+            "Prefix must start with a letter and contain only letters, `_`, or `-`.".into(),
         ));
     }
     let path = root.join(PROJECT_SIDECAR);

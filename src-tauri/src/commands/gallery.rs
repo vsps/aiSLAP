@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::commands::fsutil::{
     as_str, is_image_ext, is_model3d_ext, is_video_ext, list_dirs, project_root_for, relativize,
-    sidecar_path, thumb_path, SHOT_SIDECAR, SRC_DIR,
+    sidecar_path, thumb_path, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::visible::{load_visible_set, save_visible_set};
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
@@ -41,7 +41,23 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
         }
     }
 
-    // Scan all subdirectories as version columns (including any legacy SRC folders).
+    // Per-shot SRC — sits to the right of GLOBAL SRC, holds shot-level
+    // reference images copied in by the ref panel or drag-drop.
+    let shot_src = root.join(SRC_DIR);
+    if shot_src.is_dir() {
+        let images = scan_directory_images(&shot_src, project_root.as_deref(), &visible)?;
+        cols.push(GalleryColumn {
+            id: as_str(&shot_src),
+            version: "SHOT SRC".to_string(),
+            is_src: true,
+            images,
+            src_images: Vec::new(),
+            timestamp: None,
+            model_name: None,
+        });
+    }
+
+    // Scan all subdirectories as version columns (skip SRC — it's handled above).
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
         let p = entry.path();
@@ -52,22 +68,31 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
             Some(n) => n.to_string(),
             None => continue,
         };
-        if name.starts_with('.') || name.starts_with('$') {
+        if name.starts_with('.') || name.starts_with('$') || name == SRC_DIR || name == SEL_DIR {
             continue;
         }
         let images = scan_directory_images(&p, project_root.as_deref(), &visible)?;
-        let src_sub = p.join("SRC");
-        let src_images = if src_sub.is_dir() {
-            scan_directory_images(&src_sub, project_root.as_deref(), &visible)?
-        } else {
-            Vec::new()
-        };
         cols.push(GalleryColumn {
             id: name.clone(),
             version: name,
             is_src: false,
             images,
-            src_images,
+            src_images: Vec::new(),
+            timestamp: None,
+            model_name: None,
+        });
+    }
+
+    // SEL column — sits at the far right, contains user-selected keeps.
+    let shot_sel = root.join(SEL_DIR);
+    if shot_sel.is_dir() {
+        let images = scan_directory_images(&shot_sel, project_root.as_deref(), &visible)?;
+        cols.push(GalleryColumn {
+            id: as_str(&shot_sel),
+            version: SEL_DIR.to_string(),
+            is_src: true,
+            images,
+            src_images: Vec::new(),
             timestamp: None,
             model_name: None,
         });
@@ -78,6 +103,15 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
         (false, true) => std::cmp::Ordering::Greater,
         _ => a.version.cmp(&b.version),
     });
+
+    // SEL must always be the rightmost column, regardless of sort order.
+    if let Some(sel_idx) = cols.iter().position(|c| c.version == SEL_DIR) {
+        if sel_idx < cols.len() - 1 {
+            let sel_col = cols.remove(sel_idx);
+            cols.push(sel_col);
+        }
+    }
+
     Ok(cols)
 }
 
@@ -100,7 +134,11 @@ fn try_make_gallery_image(path: &Path, starred: Option<bool>) -> Option<GalleryI
     let meta_path = sidecar_path(path);
     let thumb_path = if is_video || is_model_3d {
         let t = thumb_path(path);
-        if t.exists() { Some(as_str(&t)) } else { None }
+        if t.exists() {
+            Some(as_str(&t))
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -213,7 +251,7 @@ fn sequence_stacks_scan_impl(sequence_path: String) -> AppResult<SequenceStacks>
             Some(n) => n.to_string(),
             None => continue,
         };
-        if shot_name == SRC_DIR {
+        if shot_name == SRC_DIR || shot_name == SEL_DIR {
             continue;
         }
 
@@ -225,7 +263,7 @@ fn sequence_stacks_scan_impl(sequence_path: String) -> AppResult<SequenceStacks>
                 Some(n) => n.to_string(),
                 None => continue,
             };
-            if vname == SRC_DIR {
+            if vname == SRC_DIR || vname == SEL_DIR {
                 continue;
             }
             let images = scan_directory_images(&v_dir, project_root.as_deref(), &visible)?;
@@ -311,7 +349,12 @@ fn project_starred_scan_impl(project_path: String) -> AppResult<Vec<SeqStarredGr
         }
         let seq = parts[0].to_string();
         let shot = parts[1].to_string();
-        by_seq.entry(seq).or_default().entry(shot).or_default().push(img);
+        by_seq
+            .entry(seq)
+            .or_default()
+            .entry(shot)
+            .or_default()
+            .push(img);
     }
 
     let out: Vec<SeqStarredGroup> = by_seq

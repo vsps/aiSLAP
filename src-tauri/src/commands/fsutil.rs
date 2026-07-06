@@ -12,6 +12,7 @@ pub(crate) const SEQUENCE_SIDECAR: &str = "sequence.json";
 pub(crate) const SHOT_SIDECAR: &str = "shot.json";
 pub(crate) const TIMELINE_SIDECAR: &str = "timeline.json";
 pub(crate) const SRC_DIR: &str = "SRC";
+pub(crate) const SEL_DIR: &str = "SEL";
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 const VIDEO_EXTS: &[&str] = &["mp4", "webm"];
@@ -133,7 +134,10 @@ pub(crate) fn project_root_for(path: &Path) -> AppResult<PathBuf> {
 /// Forward-slash path relative to project root. Returns None if `path` is not
 /// underneath `project_root`.
 pub(crate) fn relativize(path: &Path, project_root: &Path) -> Option<String> {
-    let p = path.canonicalize().ok().unwrap_or_else(|| path.to_path_buf());
+    let p = path
+        .canonicalize()
+        .ok()
+        .unwrap_or_else(|| path.to_path_buf());
     let r = project_root
         .canonicalize()
         .ok()
@@ -213,8 +217,8 @@ pub(crate) fn validate_filename_stem(stem: &str) -> AppResult<()> {
     }
     let upper = stem.to_ascii_uppercase();
     let reserved = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
-        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
     if reserved.contains(&upper.as_str()) {
         return Err(AppError::Msg(format!("reserved name: {stem}")));

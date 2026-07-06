@@ -3,6 +3,7 @@ import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import {
   selectCurrentModel,
+  selectRefImages,
   useGenerationStore,
 } from "../stores/generationStore";
 import type { ModelEntry } from "../lib/types";
@@ -62,6 +63,7 @@ export function ModelPicker() {
       ? (s.prices[currentModel.endpoint] ?? null)
       : null,
   );
+  const refImages = useGenerationStore(selectRefImages);
 
   const [provider, setProvider] = useState<Provider>(
     () => (currentModel?.provider ?? "fal") as Provider,
@@ -110,13 +112,23 @@ export function ModelPicker() {
   // Selecting a family (via the dropdown or a provider switch, which resets
   // the family to that provider's first) has no submodel of its own — always
   // land on the family's first submodel so a model is immediately active.
+  // When ref images are attached, prefer an edit/img2img variant so the user
+  // doesn't accidentally switch to a txt2img model that would ignore them.
   function selectFamilyAndFirstModel(
     list: ModelEntry[],
     family: string | null,
   ) {
     setManualFamily(family);
-    const first = list.find((e) => e.family === family);
-    if (first) selectModel(first.node);
+    const familyList = list.filter((e) => e.family === family);
+    if (familyList.length === 0) return;
+    let first = familyList[0];
+    if (refImages.length > 0) {
+      const editModel = familyList.find(
+        (e) => e.node.ref_roles && e.node.ref_roles.length > 0,
+      );
+      if (editModel) first = editModel;
+    }
+    selectModel(first.node);
   }
 
   return (

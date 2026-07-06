@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
-import { showMessage } from "../lib/dialog";
+import { showMessage, pickDirectory } from "../lib/dialog";
 import { useScriptStore } from "../stores/scriptStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { normalizeTitle, parseScript } from "../lib/script";
@@ -24,12 +24,15 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const [config, setConfig] = useState<Config | null>(null);
   const [script, setScript] = useState(scriptRaw);
   const [busy, setBusy] = useState(false);
-  const [versionPrefix, setVersionPrefix] = useState<string>(VERSION_PREFIX_DEFAULT);
-  const [versionPrefixOriginal, setVersionPrefixOriginal] =
-    useState<string>(VERSION_PREFIX_DEFAULT);
+  const [versionPrefix, setVersionPrefix] = useState<string>(
+    VERSION_PREFIX_DEFAULT,
+  );
+  const [versionPrefixOriginal, setVersionPrefixOriginal] = useState<string>(
+    VERSION_PREFIX_DEFAULT,
+  );
 
   type PendingShot = { name: string; isNew: boolean };
-  type PendingSeq  = { seq: string; isNew: boolean; shots: PendingShot[] };
+  type PendingSeq = { seq: string; isNew: boolean; shots: PendingShot[] };
   const [pendingDirs, setPendingDirs] = useState<PendingSeq[] | null>(null);
 
   const scriptCounts = useMemo(() => {
@@ -61,6 +64,39 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const versionPrefixValid = VERSION_PREFIX_RE.test(versionPrefix);
   const versionPrefixDirty = versionPrefix !== versionPrefixOriginal;
 
+  // Export selects
+  const [exportModal, setExportModal] = useState<{
+    destDir: string;
+    mode: "preserve" | "dump";
+  } | null>(null);
+
+  async function startExport() {
+    if (!projectPath) return;
+    const dir = await pickDirectory("Select destination for SEL exports");
+    if (!dir) return;
+    setExportModal({ destDir: dir, mode: "preserve" });
+  }
+
+  async function confirmExport() {
+    if (!projectPath || !exportModal) return;
+    setBusy(true);
+    try {
+      const count = await cmd.export_selects(
+        projectPath,
+        exportModal.destDir,
+        exportModal.mode,
+      );
+      setExportModal(null);
+      await showMessage(`Exported ${count} file(s) to ${exportModal.destDir}`, {
+        kind: "info",
+      });
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     const trimmed = scriptRaw.trimStart();
     const hasAssets = /^#\s+ASSETS\b/i.test(trimmed);
@@ -68,9 +104,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   }, [scriptRaw]);
 
   function sanitizeName(name: string): string {
-    return [...name].map((c) =>
-      "/\\:*?\"<>|".includes(c) || c.charCodeAt(0) < 32 ? "_" : c
-    ).join("");
+    return [...name]
+      .map((c) => ('/\\:*?"<>|'.includes(c) || c.charCodeAt(0) < 32 ? "_" : c))
+      .join("");
   }
 
   async function promptCreateDirs() {
@@ -83,12 +119,20 @@ export function ProjectSettingsDialog({ onClose }: Props) {
 
       const shotEntries: { seqIdx: number; name: string; path: string }[] = [];
       for (let i = 0; i < parsed.sequences.length; i++) {
-        for (const s of parsed.shotsByParent.get(normalizeTitle(seqNames[i])) ?? []) {
-          shotEntries.push({ seqIdx: i, name: s.title, path: `${seqPaths[i]}/${sanitizeName(s.title)}` });
+        for (const s of parsed.shotsByParent.get(normalizeTitle(seqNames[i])) ??
+          []) {
+          shotEntries.push({
+            seqIdx: i,
+            name: s.title,
+            path: `${seqPaths[i]}/${sanitizeName(s.title)}`,
+          });
         }
       }
 
-      const exists = await cmd.dirs_exist([...seqPaths, ...shotEntries.map((e) => e.path)]);
+      const exists = await cmd.dirs_exist([
+        ...seqPaths,
+        ...shotEntries.map((e) => e.path),
+      ]);
       const seqExists = exists.slice(0, seqPaths.length);
       const shotExists = exists.slice(seqPaths.length);
 
@@ -130,7 +174,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
         const { shots } = await cmd.sequence_open(sequencePath);
         useSessionStore.setState({ shotsInSequence: shots });
       }
-      await showMessage(`Created ${newSeqs} sequence(s), ${newShots} shot(s)`, { kind: "info" });
+      await showMessage(`Created ${newSeqs} sequence(s), ${newShots} shot(s)`, {
+        kind: "info",
+      });
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
     } finally {
@@ -164,157 +210,241 @@ export function ProjectSettingsDialog({ onClose }: Props) {
       padded={false}
       panelClassName="relative max-w-[720px] w-full shadow-xl"
     >
-      <div className="px-4 py-2 bg-surface text-text text-sm">Project Settings</div>
+      <div className="px-4 py-2 bg-surface text-text text-sm">
+        Project Settings
+      </div>
 
-        <div className="p-4 flex flex-col gap-4 max-h-[75vh] overflow-y-auto thin-scroll">
-          <div className="flex flex-col gap-1">
-            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-              Filename template
-            </div>
-            <div className="flex gap-1">
-              <input
-                type="text"
-                value={config?.filenameTemplate ?? ""}
-                onChange={(e) => {
-                  const value = e.currentTarget.value;
-                  setConfig((c) =>
-                    c ? { ...c, filenameTemplate: value || undefined } : c,
-                  );
-                }}
-                disabled={!config}
-                className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
-                placeholder={FILENAME_TEMPLATE_DEFAULT}
-              />
-              <button
-                type="button"
-                className="px-2 bg-bg text-xs"
-                onClick={() =>
-                  setConfig((c) =>
-                    c ? { ...c, filenameTemplate: undefined } : c,
-                  )
-                }
-              >
-                reset
-              </button>
-            </div>
-            <div className="text-xs text-dim mt-1">
-              Tokens: <code>&lt;date&gt;</code> <code>&lt;time&gt;</code>{" "}
-              <code>&lt;sequence&gt;</code> <code>&lt;shot&gt;</code>{" "}
-              <code>&lt;model&gt;</code> <code>&lt;version&gt;</code>{" "}
-              <code>&lt;prompt&gt;</code> <code>&lt;iter&gt;</code>{" "}
-              <code>&lt;seed&gt;</code> <code>&lt;provider&gt;</code>
-            </div>
+      <div className="p-4 flex flex-col gap-4 max-h-[75vh] overflow-y-auto thin-scroll">
+        <div className="flex flex-col gap-1">
+          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+            Filename template
           </div>
-
-          <div className="flex flex-col gap-1">
-            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-              Version folder prefix
-            </div>
-            <div className="flex gap-1">
-              <input
-                type="text"
-                value={versionPrefix}
-                onChange={(e) => setVersionPrefix(e.currentTarget.value)}
-                disabled={!projectPath}
-                className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
-                placeholder={VERSION_PREFIX_DEFAULT}
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                className="px-2 bg-bg text-xs"
-                onClick={() => setVersionPrefix(VERSION_PREFIX_DEFAULT)}
-              >
-                reset
-              </button>
-            </div>
-            <div className="text-xs text-dim mt-1">
-              {versionPrefixValid ? (
-                <>
-                  Next folder:{" "}
-                  <code>
-                    {versionPrefix}
-                    001
-                  </code>
-                  . Letters only (<code>_</code> / <code>-</code> allowed); a
-                  3-digit number is appended automatically. Existing folders
-                  are not renamed.
-                </>
-              ) : (
-                <span className="text-red-500">
-                  Prefix must start with a letter; allowed chars: A–Z, a–z,{" "}
-                  <code>_</code>, <code>-</code>.
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-              Script (script.md)
-            </div>
-            <textarea
-              value={script}
-              onChange={(e) => setScript(e.currentTarget.value)}
-              disabled={!projectPath}
-              spellCheck={false}
-              className="min-h-[260px] max-h-[40vh] w-full resize-y bg-inset text-text p-prompt-panel outline-none font-mono text-xs thin-scroll"
-              placeholder="# Sequence 1&#10;&#10;## Shot 1&#10;..."
+          <div className="flex gap-1">
+            <input
+              type="text"
+              value={config?.filenameTemplate ?? ""}
+              onChange={(e) => {
+                const value = e.currentTarget.value;
+                setConfig((c) =>
+                  c ? { ...c, filenameTemplate: value || undefined } : c,
+                );
+              }}
+              disabled={!config}
+              className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
+              placeholder={FILENAME_TEMPLATE_DEFAULT}
             />
-            <div className="text-xs text-dim">
-              Detected: {scriptCounts.sequences} sequence(s), {scriptCounts.shots} shot(s).{" "}
-              <code>#</code> headings populate the SEQUENCE dropdown; <code>##</code>{" "}
-              under the current sequence populate the SHOT dropdown. Body text below
-              each heading appears above the matching prompt column.
-            </div>
+            <button
+              type="button"
+              className="px-2 bg-bg text-xs"
+              onClick={() =>
+                setConfig((c) =>
+                  c ? { ...c, filenameTemplate: undefined } : c,
+                )
+              }
+            >
+              reset
+            </button>
+          </div>
+          <div className="text-xs text-dim mt-1">
+            Tokens: <code>&lt;date&gt;</code> <code>&lt;time&gt;</code>{" "}
+            <code>&lt;sequence&gt;</code> <code>&lt;shot&gt;</code>{" "}
+            <code>&lt;model&gt;</code> <code>&lt;version&gt;</code>{" "}
+            <code>&lt;prompt&gt;</code> <code>&lt;iter&gt;</code>{" "}
+            <code>&lt;seed&gt;</code> <code>&lt;provider&gt;</code>
           </div>
         </div>
 
-        <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-          <button className="px-3 py-1 bg-bg text-xs" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="px-3 py-1 bg-bg text-xs disabled:opacity-50"
-            disabled={busy || !projectPath || scriptCounts.sequences === 0}
-            onClick={promptCreateDirs}
-          >
-            CREATE DIRS
-          </button>
-          <button
-            className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
-            disabled={busy || !config || !versionPrefixValid}
-            onClick={save}
-          >
-            Save
-          </button>
+        <div className="flex flex-col gap-1">
+          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+            Version folder prefix
+          </div>
+          <div className="flex gap-1">
+            <input
+              type="text"
+              value={versionPrefix}
+              onChange={(e) => setVersionPrefix(e.currentTarget.value)}
+              disabled={!projectPath}
+              className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
+              placeholder={VERSION_PREFIX_DEFAULT}
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="px-2 bg-bg text-xs"
+              onClick={() => setVersionPrefix(VERSION_PREFIX_DEFAULT)}
+            >
+              reset
+            </button>
+          </div>
+          <div className="text-xs text-dim mt-1">
+            {versionPrefixValid ? (
+              <>
+                Next folder:{" "}
+                <code>
+                  {versionPrefix}
+                  001
+                </code>
+                . Letters only (<code>_</code> / <code>-</code> allowed); a
+                3-digit number is appended automatically. Existing folders are
+                not renamed.
+              </>
+            ) : (
+              <span className="text-red-500">
+                Prefix must start with a letter; allowed chars: A–Z, a–z,{" "}
+                <code>_</code>, <code>-</code>.
+              </span>
+            )}
+          </div>
         </div>
 
-        {pendingDirs && (
-          <div className="absolute inset-0 bg-black/70 flex items-center justify-center p-6">
-            <div className="bg-panel border border-dim shadow-xl w-full max-w-sm flex flex-col">
-              <div className="px-4 py-2 bg-surface text-text text-sm">Create directories?</div>
-              <ul className="px-4 py-3 font-mono text-xs overflow-y-auto max-h-64 thin-scroll flex flex-col gap-0.5">
-                {pendingDirs.map(({ seq, isNew: seqIsNew, shots }) => (
-                  <li key={seq}>
-                    <span className={seqIsNew ? "text-accent" : "text-text"}>{seq}/</span>
-                    {shots.map(({ name, isNew: shotIsNew }) => (
-                      <div key={name} className={`pl-4 ${shotIsNew ? "text-accent" : "text-dim"}`}>{name}/</div>
-                    ))}
-                  </li>
-                ))}
-              </ul>
-              <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-                <button className="px-3 py-1 bg-bg text-xs" onClick={() => setPendingDirs(null)}>
-                  Cancel
-                </button>
-                <button className="px-3 py-1 bg-accent text-bg text-xs" onClick={confirmCreateDirs}>
-                  Create
-                </button>
+        <div className="flex flex-col gap-1">
+          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+            Script (script.md)
+          </div>
+          <textarea
+            value={script}
+            onChange={(e) => setScript(e.currentTarget.value)}
+            disabled={!projectPath}
+            spellCheck={false}
+            className="min-h-[260px] max-h-[40vh] w-full resize-y bg-inset text-text p-prompt-panel outline-none font-mono text-xs thin-scroll"
+            placeholder="# Sequence 1&#10;&#10;## Shot 1&#10;..."
+          />
+          <div className="text-xs text-dim">
+            Detected: {scriptCounts.sequences} sequence(s), {scriptCounts.shots}{" "}
+            shot(s). <code>#</code> headings populate the SEQUENCE dropdown;{" "}
+            <code>##</code> under the current sequence populate the SHOT
+            dropdown. Body text below each heading appears above the matching
+            prompt column.
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
+        <button className="px-3 py-1 bg-bg text-xs" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="px-3 py-1 bg-bg text-xs disabled:opacity-50"
+          disabled={busy || !projectPath || scriptCounts.sequences === 0}
+          onClick={promptCreateDirs}
+        >
+          CREATE DIRS
+        </button>
+        <button
+          className="px-3 py-1 bg-bg text-xs disabled:opacity-50"
+          disabled={busy || !projectPath}
+          onClick={startExport}
+        >
+          EXPORT SELECTS
+        </button>
+        <button
+          className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
+          disabled={busy || !config || !versionPrefixValid}
+          onClick={save}
+        >
+          Save
+        </button>
+      </div>
+
+      {exportModal && (
+        <div className="absolute inset-0 bg-black/70 flex items-center justify-center p-6">
+          <div className="bg-panel border border-dim shadow-xl w-full max-w-sm flex flex-col">
+            <div className="px-4 py-2 bg-surface text-text text-sm">
+              Export selects
+            </div>
+            <div className="px-4 py-3 flex flex-col gap-3 text-xs">
+              <div>
+                <div className="text-dim mb-1">Destination:</div>
+                <div className="font-mono truncate text-text">
+                  {exportModal.destDir}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="text-dim mb-1">Mode:</div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={exportModal.mode === "preserve"}
+                    onChange={() =>
+                      setExportModal({ ...exportModal, mode: "preserve" })
+                    }
+                  />
+                  <span>Preserve folders</span>
+                  <span className="text-dim">(dest/SEQ/SHOT/SEL)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={exportModal.mode === "dump"}
+                    onChange={() =>
+                      setExportModal({ ...exportModal, mode: "dump" })
+                    }
+                  />
+                  <span>Dump in one folder</span>
+                  <span className="text-dim">
+                    (files prefixed with seq_shot_)
+                  </span>
+                </label>
               </div>
             </div>
+            <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
+              <button
+                className="px-3 py-1 bg-bg text-xs"
+                onClick={() => setExportModal(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-1 bg-accent text-bg text-xs"
+                onClick={confirmExport}
+              >
+                Export
+              </button>
+            </div>
           </div>
-        )}
+        </div>
+      )}
+
+      {pendingDirs && (
+        <div className="absolute inset-0 bg-black/70 flex items-center justify-center p-6">
+          <div className="bg-panel border border-dim shadow-xl w-full max-w-sm flex flex-col">
+            <div className="px-4 py-2 bg-surface text-text text-sm">
+              Create directories?
+            </div>
+            <ul className="px-4 py-3 font-mono text-xs overflow-y-auto max-h-64 thin-scroll flex flex-col gap-0.5">
+              {pendingDirs.map(({ seq, isNew: seqIsNew, shots }) => (
+                <li key={seq}>
+                  <span className={seqIsNew ? "text-accent" : "text-text"}>
+                    {seq}/
+                  </span>
+                  {shots.map(({ name, isNew: shotIsNew }) => (
+                    <div
+                      key={name}
+                      className={`pl-4 ${shotIsNew ? "text-accent" : "text-dim"}`}
+                    >
+                      {name}/
+                    </div>
+                  ))}
+                </li>
+              ))}
+            </ul>
+            <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
+              <button
+                className="px-3 py-1 bg-bg text-xs"
+                onClick={() => setPendingDirs(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-1 bg-accent text-bg text-xs"
+                onClick={confirmCreateDirs}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </ModalDialog>
   );
 }
