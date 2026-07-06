@@ -7,6 +7,7 @@ import { DrawMode } from "./DrawMode";
 import { CropMode } from "./CropMode";
 import { useSessionStore } from "../stores/sessionStore";
 import { cmd } from "../lib/tauri";
+import { assemblePromptFromMetadata } from "../lib/actions";
 
 type Props = {
   image: GalleryImage;
@@ -27,6 +28,7 @@ export function ImageZoomModal({
 }: Props) {
   const [fit, setFit] = useState<"fit" | "one">("fit");
   const [meta, setMeta] = useState<ImageMetadata | null>(null);
+  const zoomPrompt = meta ? assemblePromptFromMetadata(meta) : "";
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [cropMode, setCropMode] = useState(false);
@@ -174,9 +176,9 @@ export function ImageZoomModal({
               {meta.timestamp}
             </div>
           )}
-          {meta?.shotPrompt || meta?.prompt ? (
-            <div className="text-xs truncate" title={meta.shotPrompt ?? meta.prompt ?? ""}>
-              {meta.shotPrompt ?? meta.prompt}
+          {meta && zoomPrompt ? (
+            <div className="text-xs truncate" title={zoomPrompt}>
+              {zoomPrompt}
             </div>
           ) : null}
         </div>

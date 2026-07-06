@@ -117,3 +117,18 @@ export function parseFalPrice(text: string): ParsedPrice | null {
 export function isPerItemUnit(unit: string): boolean {
   return /^(request|image|video|unit|generation)s?\b/.test(unit);
 }
+
+/** Per-output price for one fal endpoint, or null when the model isn't fal,
+ *  isn't priced yet, or is billed by time/size rather than per output. */
+export function perItemPrice(
+  provider: string | undefined,
+  endpoint: string,
+  prices: Record<string, string>,
+): number | null {
+  if ((provider ?? "fal") !== "fal") return null;
+  const text = prices[endpoint];
+  if (!text) return null;
+  const parsed = parseFalPrice(text);
+  if (!parsed || !isPerItemUnit(parsed.unit)) return null;
+  return parsed.amount;
+}

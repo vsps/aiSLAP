@@ -13,6 +13,7 @@ import { addImageToRefs, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
 import { confirmAction, showMessage } from "../lib/dialog";
+import { isFilenameExists } from "../lib/errors";
 import { fileSrc } from "../lib/assets";
 import { syntheticImage } from "../lib/media";
 
@@ -282,14 +283,13 @@ export function Gallery() {
       await rescanShot();
       setSelectedImage(newPath);
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("FILENAME_EXISTS")) {
+      if (isFilenameExists(e)) {
         await showMessage(
           `Skipped: ${basename(fromPath)} already exists at destination`,
           { kind: "warning" },
         );
       } else {
-        await showMessage(msg, { kind: "error" });
+        await showMessage(String(e), { kind: "error" });
       }
     }
   }
@@ -311,14 +311,13 @@ export function Gallery() {
       await rescanShot();
       if (useSessionStore.getState().viewMode === "starred") await rescanStarred();
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("FILENAME_EXISTS")) {
+      if (isFilenameExists(e)) {
         await showMessage(
           `Skipped: ${basename(fromPath)} already exists at destination`,
           { kind: "warning" },
         );
       } else {
-        await showMessage(msg, { kind: "error" });
+        await showMessage(String(e), { kind: "error" });
       }
     }
   }
@@ -377,14 +376,13 @@ export function Gallery() {
       await rescanShot();
       if (useSessionStore.getState().viewMode === "starred") await rescanStarred();
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("FILENAME_EXISTS")) {
+      if (isFilenameExists(e)) {
         await showMessage(
           `Skipped: ${basename(current.fromPath)} already exists at destination`,
           { kind: "warning" },
         );
       } else {
-        await showMessage(msg, { kind: "error" });
+        await showMessage(String(e), { kind: "error" });
       }
     }
   }

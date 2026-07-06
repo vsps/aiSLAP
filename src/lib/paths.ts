@@ -1,13 +1,17 @@
-export function basename(p: string | null | undefined): string {
+/** Forward slashes, no trailing slash. */
+export function normalizeDir(p: string | null | undefined): string {
   if (!p) return "";
-  const s = p.replaceAll("\\", "/").replace(/\/+$/, "");
+  return p.replaceAll("\\", "/").replace(/\/+$/, "");
+}
+
+export function basename(p: string | null | undefined): string {
+  const s = normalizeDir(p);
   const i = s.lastIndexOf("/");
   return i < 0 ? s : s.slice(i + 1);
 }
 
 export function dirname(p: string | null | undefined): string {
-  if (!p) return "";
-  const s = p.replaceAll("\\", "/").replace(/\/+$/, "");
+  const s = normalizeDir(p);
   const i = s.lastIndexOf("/");
   return i < 0 ? "" : s.slice(0, i);
 }
@@ -23,8 +27,7 @@ export function joinPath(...parts: (string | null | undefined)[]): string {
 }
 
 export function isChildOf(parent: string, child: string): boolean {
-  const norm = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "");
-  const p = norm(parent);
-  const c = norm(child);
+  const p = normalizeDir(parent);
+  const c = normalizeDir(child);
   return c === p || c.startsWith(p + "/");
 }

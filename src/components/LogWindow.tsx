@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLogStore } from "../stores/logStore";
+import { formatTime } from "../lib/format";
 
 const LEVEL_CLASS: Record<string, string> = {
   INFO: "text-dim",
@@ -89,10 +90,4 @@ export function LogWindow({
       )}
     </div>
   );
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }

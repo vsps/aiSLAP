@@ -1,4 +1,5 @@
 import type { GalleryImage } from "./types";
+import { basename } from "./paths";
 
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp"];
 export const VIDEO_EXTS = ["mp4", "webm", "mov", "mkv", "m4v", "avi"];
@@ -53,7 +54,7 @@ export function guessContentType(filename: string): string {
  *  (e.g. a starred image from another shot, or a ref added mid-session before
  *  the next rescan). Good enough to render — filename/video/3d flags only. */
 export function syntheticImage(path: string): GalleryImage {
-  const filename = path.replaceAll("\\", "/").split("/").pop() ?? path;
+  const filename = basename(path) || path;
   const ext = fileExt(filename);
   return {
     filename,

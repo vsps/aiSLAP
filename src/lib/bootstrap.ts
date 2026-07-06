@@ -1,5 +1,5 @@
 import { cmd } from "./tauri";
-import { basename, joinPath } from "./paths";
+import { basename, joinPath, normalizeDir } from "./paths";
 import { applyColors } from "./colors";
 import type {
   AppState,
@@ -192,9 +192,7 @@ export async function bootstrap(): Promise<() => void> {
 
 // Same normalization setProject() applies internally, so we can tell whether
 // the project we just restored is still the current one before proceeding.
-function normalizeProjectPath(p: string): string {
-  return p.replaceAll("\\", "/").replace(/\/+$/, "");
-}
+const normalizeProjectPath = normalizeDir;
 
 async function restoreSessionPaths(appState: AppState): Promise<void> {
   if (!appState.projectPath) return;

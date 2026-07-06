@@ -11,7 +11,7 @@ import { basename } from "../lib/paths";
 import { classifyMedia } from "../lib/media";
 import { cmd } from "../lib/tauri";
 import { showMessage } from "../lib/dialog";
-import { formatCost, isPerItemUnit, parseFalPrice } from "../lib/falPrices";
+import { formatCost, perItemPrice } from "../lib/falPrices";
 import { getImageMetadataCached } from "../lib/metadataCache";
 
 export type DragState = {
@@ -94,10 +94,8 @@ export function GalleryColumn({
       let total = 0;
       let unknown = 0;
       for (const m of metas) {
-        const text =
-          m && (m.provider ?? "fal") === "fal" ? prices[m.endpoint] : null;
-        const parsed = text ? parseFalPrice(text) : null;
-        if (parsed && isPerItemUnit(parsed.unit)) total += parsed.amount;
+        const amount = m ? perItemPrice(m.provider, m.endpoint, prices) : null;
+        if (amount != null) total += amount;
         else unknown += 1;
       }
       setColCost({ total, unknown });
@@ -134,6 +132,12 @@ export function GalleryColumn({
 
   // Stable maxAspect for grid mode — references stay equal between renders.
   const maxAspect = subCols > 1 ? 1 : undefined;
+  const gridClass =
+    subCols === 3
+      ? "grid grid-cols-3 gap-gallery-column-gap content-start"
+      : subCols === 2
+        ? "grid grid-cols-2 gap-gallery-column-gap content-start"
+        : "flex flex-col gap-gallery-column-gap";
 
   // OS file drag-drop onto a column → copy each file in, then rescan so it
   // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
@@ -330,7 +334,7 @@ export function GalleryColumn({
               </div>
               {!refsCollapsed && (
                 <div
-                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : `p-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}`}
+                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : `p-[3px] ${gridClass}`}`}
                 >
                   {column.srcImages.length === 0 ? (
                     <span className="text-[10px] text-dim/30 border border-dashed border-dim/20 px-2 py-px select-none">
@@ -357,7 +361,7 @@ export function GalleryColumn({
             </div>
           )}
           <div
-            className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}
+            className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${gridClass}`}
           >
             {column.images.map((img) => (
               <Thumbnail

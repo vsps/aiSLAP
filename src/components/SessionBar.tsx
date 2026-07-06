@@ -5,7 +5,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
 import { confirmAction, pickDirectory, showMessage } from "../lib/dialog";
 import { cmd } from "../lib/tauri";
-import { basename } from "../lib/paths";
+import { basename, normalizeDir } from "../lib/paths";
 import { normalizeTitle } from "../lib/script";
 
 type Props = {
@@ -46,7 +46,7 @@ export function SessionBar({
     if (!p) return;
     try {
       await setProject(p);
-      const normalized = p.replaceAll("\\", "/").replace(/\/+$/, "");
+      const normalized = normalizeDir(p);
       const [srcExists] = await cmd.dirs_exist([`${normalized}/SRC`]);
       if (!srcExists) {
         const ok = await confirmAction("No SRC folder found. Create it?", { title: "Global SRC" });

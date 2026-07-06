@@ -12,7 +12,7 @@ import { cmd } from "../lib/tauri";
 import { useTimelineStore } from "./timelineStore";
 import { useScriptStore } from "./scriptStore";
 import { useGenerationStore } from "./generationStore";
-import { basename } from "../lib/paths";
+import { basename, normalizeDir } from "../lib/paths";
 import { inFlightJobs } from "../lib/jobs";
 import { swallow } from "../lib/errors";
 import { rewriteScriptHeading } from "../lib/script";
@@ -175,7 +175,7 @@ export const useSessionStore = create<State & Actions>((set, get) => ({
   async setProject(projectPath) {
     // Rust's list_dirs returns forward-slash paths. Normalize the incoming path
     // the same way so the PROJECT/SEQUENCE/SHOT dropdowns string-match their options.
-    const normalized = projectPath.replaceAll("\\", "/").replace(/\/+$/, "");
+    const normalized = normalizeDir(projectPath);
     const sequences = await cmd.project_open(normalized);
     set({
       projectPath: normalized,

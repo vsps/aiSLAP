@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { cmd } from "../lib/tauri";
 import type { ImageMetadata } from "../lib/types";
 import { basename } from "../lib/paths";
+import { assemblePromptFromMetadata } from "../lib/actions";
 
 type Props = {
   path: string;
@@ -23,12 +24,7 @@ export function ImageInfoModal({ path, onClose }: Props) {
     return () => window.removeEventListener("keydown", esc);
   }, []);
 
-  const prompt = meta && meta !== "loading"
-    ? (meta.combinedPrompt ||
-       [meta.sequencePrompt, ...(meta.shotPrompts ?? (meta.shotPrompt ? [meta.shotPrompt] : [meta.prompt ?? ""]))]
-         .filter(Boolean)
-         .join(" "))
-    : null;
+  const prompt = meta && meta !== "loading" ? assemblePromptFromMetadata(meta) : null;
 
   return (
     <div

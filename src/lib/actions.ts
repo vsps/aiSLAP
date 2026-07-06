@@ -1,7 +1,7 @@
 // High-level action helpers that span stores + Tauri commands.
 
 import { cmd } from "./tauri";
-import { basename } from "./paths";
+import { basename, isChildOf } from "./paths";
 import { confirmAction, showMessage } from "./dialog";
 import { classifyMedia, guessContentType } from "./media";
 import { makeChainLink, useGenerationStore } from "../stores/generationStore";
@@ -122,6 +122,20 @@ export async function restoreChainFromMetadata(
   return { missingModels, skippedRefs };
 }
 
+/** Combined display prompt for a sidecar, preferring the stored combined string
+ *  and falling back through seq+shot prompts to the legacy single `prompt` field. */
+export function assemblePromptFromMetadata(meta: ImageMetadata): string {
+  return (
+    meta.combinedPrompt ||
+    [
+      meta.sequencePrompt,
+      ...(meta.shotPrompts ?? (meta.shotPrompt ? [meta.shotPrompt] : [meta.prompt ?? ""])),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
 /** Apply only the prompt fields from a sidecar (shot prompt gets the value). */
 export function copyPromptFromMetadata(meta: ImageMetadata): void {
   const gen = useGenerationStore.getState();
@@ -177,9 +191,7 @@ export async function replaceImageRef(imagePath: string): Promise<void> {
 export async function addImageToRefs(imagePath: string): Promise<string> {
   const { shotPath, projectPath } = useSessionStore.getState();
   if (!shotPath) throw new Error("no shot open");
-  const normalizedImg = imagePath.replaceAll("\\", "/");
-  const normalizedProject = (projectPath ?? "").replaceAll("\\", "/").replace(/\/+$/, "");
-  const insideProject = normalizedProject && normalizedImg.startsWith(normalizedProject + "/");
+  const insideProject = !!projectPath && isChildOf(projectPath, imagePath);
   let finalPath = imagePath;
   if (!insideProject) {
     finalPath = await cmd.ref_copy_to_global_src(shotPath, imagePath);

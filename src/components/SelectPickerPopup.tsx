@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { Icon } from "../lib/icon";
+import { startThresholdDrag } from "../lib/dragThreshold";
 
 type Props = {
   anchor: { x: number; y: number };
@@ -90,26 +91,10 @@ export function SelectPickerPopup({
               style={{ width: THUMB, height: THUMB }}
               onPointerDown={(e) => {
                 if (!onDragStart || e.button !== 0) return;
-                const startX = e.clientX;
-                const startY = e.clientY;
-                const onMove = (ev: PointerEvent) => {
-                  const dx = ev.clientX - startX;
-                  const dy = ev.clientY - startY;
-                  if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
-                    cleanup();
-                    onClose();
-                    onDragStart({ fromPath: img.path, pointerEvent: e });
-                  }
-                };
-                const onUp = () => cleanup();
-                const cleanup = () => {
-                  window.removeEventListener("pointermove", onMove);
-                  window.removeEventListener("pointerup", onUp);
-                  window.removeEventListener("pointercancel", onUp);
-                };
-                window.addEventListener("pointermove", onMove);
-                window.addEventListener("pointerup", onUp);
-                window.addEventListener("pointercancel", onUp);
+                startThresholdDrag(e, DRAG_THRESHOLD_PX, () => {
+                  onClose();
+                  onDragStart({ fromPath: img.path, pointerEvent: e });
+                });
               }}
               onClick={(e) => {
                 e.stopPropagation();

@@ -5,6 +5,8 @@ import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
 import { cmd } from "../lib/tauri";
 import { basename, dirname } from "../lib/paths";
+import { assemblePromptFromMetadata } from "../lib/actions";
+import { startThresholdDrag } from "../lib/dragThreshold";
 
 type Props = {
   image: GalleryImage;
@@ -97,29 +99,13 @@ export const Thumbnail = memo(function Thumbnail({
     if (dragDisabled) return;
     const tgt = e.target as HTMLElement;
     if (tgt.closest("button")) return;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const onMove = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
-        cleanup();
-        onDragStart({
-          fromPath: image.path,
-          fromColumnVersion: columnVersion,
-          pointerEvent: e,
-        });
-      }
-    };
-    const onUp = () => cleanup();
-    const cleanup = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    startThresholdDrag(e, DRAG_THRESHOLD_PX, () =>
+      onDragStart({
+        fromPath: image.path,
+        fromColumnVersion: columnVersion,
+        pointerEvent: e,
+      }),
+    );
   }
 
   function onMouseEnter(e: React.MouseEvent) {
@@ -182,18 +168,7 @@ export const Thumbnail = memo(function Thumbnail({
       : `${dims.w}x${dims.h}`
     : null;
 
-  const tooltipPrompt = tooltipMeta
-    ? tooltipMeta.combinedPrompt ||
-      [
-        tooltipMeta.sequencePrompt,
-        ...(tooltipMeta.shotPrompts ??
-          (tooltipMeta.shotPrompt
-            ? [tooltipMeta.shotPrompt]
-            : [tooltipMeta.prompt ?? ""])),
-      ]
-        .filter(Boolean)
-        .join(" ")
-    : null;
+  const tooltipPrompt = tooltipMeta ? assemblePromptFromMetadata(tooltipMeta) : null;
 
   // Path layout is <project>/<sequence>/<shot>/<version>/<filename>. GLOBAL SRC
   // sits directly under <project>, so it has no sequence/shot to show.
