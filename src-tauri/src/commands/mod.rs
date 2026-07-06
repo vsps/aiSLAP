@@ -7,6 +7,8 @@ pub mod media;
 pub mod metadata;
 pub mod models;
 pub mod pending;
+pub mod prompt_history;
+pub mod rename;
 pub mod session;
 pub mod timeline;
 pub mod visible;
