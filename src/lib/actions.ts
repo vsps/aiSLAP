@@ -4,10 +4,14 @@ import { cmd } from "./tauri";
 import { basename, isChildOf } from "./paths";
 import { confirmAction, showMessage } from "./dialog";
 import { classifyMedia, guessContentType } from "./media";
+import { swallow } from "./errors";
+import { inFlightJobs } from "./jobs";
+import { rewriteScriptHeading } from "./script";
 import { makeChainLink, useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
+import { useScriptStore } from "../stores/scriptStore";
 import type {
   ChainLink,
   ImageMetadata,
@@ -196,6 +200,107 @@ export async function addImageToRefs(imagePath: string): Promise<string> {
   }
   useGenerationStore.getState().addRefs([finalPath]);
   return finalPath;
+}
+
+/** Rename the current sequence: renames on disk, keeps the timeline/refs/
+ *  script mirrors coherent, and re-navigates to the renamed sequence (and
+ *  the shot the user was on, if it survived). */
+export async function renameSequence(newName: string): Promise<void> {
+  const session = useSessionStore.getState();
+  const { projectPath, sequencePath, shotPath } = session;
+  if (!projectPath) throw new Error("no project");
+  if (!sequencePath) throw new Error("no sequence to rename");
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("name cannot be empty");
+
+  const oldSeqPath = sequencePath;
+  const oldShotPath = shotPath;
+  const oldSeqBase = basename(oldSeqPath);
+
+  // Job-safety guard. Refuse if any non-terminal job targets this sequence.
+  const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldSeqPath);
+  if (inFlight.length > 0) {
+    throw new Error(
+      `Cannot rename — ${inFlight.length} job${
+        inFlight.length > 1 ? "s are" : " is"
+      } running in this sequence.`,
+    );
+  }
+
+  const newSeqPath = await cmd.sequence_rename(oldSeqPath, trimmed);
+  if (newSeqPath === oldSeqPath) return;
+
+  // Keep in-memory mirrors coherent before re-rendering.
+  useTimelineStore.getState().renameShotPathPrefix(oldSeqPath, newSeqPath);
+  useGenerationStore.getState().rewriteRefImagePaths(oldSeqPath, newSeqPath);
+
+  const sequences = await cmd.project_open(projectPath);
+  useSessionStore.getState().setSequencesInProject(sequences);
+  await useSessionStore.getState().setSequence(newSeqPath);
+
+  // setSequence auto-opens the last shot. Navigate back to the user's shot
+  // if it survived the rename (same basename, new parent).
+  if (oldShotPath) {
+    const targetShotPath = `${newSeqPath}/${basename(oldShotPath)}`;
+    const after = useSessionStore.getState();
+    if (
+      after.shotsInSequence.includes(targetShotPath) &&
+      after.shotPath !== targetShotPath
+    ) {
+      await after.setShot(targetShotPath);
+    }
+  }
+
+  // script.md heading rewrite (silent no-op when no matching # heading).
+  const scriptState = useScriptStore.getState();
+  const nextRaw = rewriteScriptHeading(scriptState.raw, 1, oldSeqBase, trimmed);
+  if (nextRaw !== scriptState.raw) {
+    await scriptState
+      .save(projectPath, nextRaw)
+      .catch(swallow("script heading rewrite"));
+  }
+}
+
+/** Rename the current shot: renames on disk, keeps the timeline/refs/script
+ *  mirrors coherent, and re-navigates to the renamed shot. */
+export async function renameShot(newName: string): Promise<void> {
+  const session = useSessionStore.getState();
+  const { projectPath, sequencePath, shotPath } = session;
+  if (!projectPath) throw new Error("no project");
+  if (!sequencePath) throw new Error("no sequence");
+  if (!shotPath) throw new Error("no shot to rename");
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("name cannot be empty");
+
+  const oldShotPath = shotPath;
+  const oldShotBase = basename(oldShotPath);
+
+  const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldShotPath);
+  if (inFlight.length > 0) {
+    throw new Error(
+      `Cannot rename — ${inFlight.length} job${
+        inFlight.length > 1 ? "s are" : " is"
+      } running in this shot.`,
+    );
+  }
+
+  const newShotPath = await cmd.shot_rename(oldShotPath, trimmed);
+  if (newShotPath === oldShotPath) return;
+
+  useTimelineStore.getState().renameShotPathPrefix(oldShotPath, newShotPath);
+  useGenerationStore.getState().rewriteRefImagePaths(oldShotPath, newShotPath);
+
+  const { shots } = await cmd.sequence_open(sequencePath);
+  useSessionStore.getState().setShotsInSequence(shots);
+  await useSessionStore.getState().setShot(newShotPath);
+
+  const scriptState = useScriptStore.getState();
+  const nextRaw = rewriteScriptHeading(scriptState.raw, 2, oldShotBase, trimmed);
+  if (nextRaw !== scriptState.raw) {
+    await scriptState
+      .save(projectPath, nextRaw)
+      .catch(swallow("script heading rewrite"));
+  }
 }
 
 export function roleAssignmentLabel(a: RoleAssignment | null): string {

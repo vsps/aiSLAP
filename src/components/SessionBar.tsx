@@ -7,6 +7,7 @@ import { confirmAction, pickDirectory, showMessage } from "../lib/dialog";
 import { cmd } from "../lib/tauri";
 import { basename, normalizeDir } from "../lib/paths";
 import { normalizeTitle } from "../lib/script";
+import { renameSequence, renameShot } from "../lib/actions";
 
 type Props = {
   onOpenSettings?: () => void;
@@ -27,8 +28,6 @@ export function SessionBar({
   const setShot = useSessionStore((s) => s.setShot);
   const createSequence = useSessionStore((s) => s.createSequence);
   const createShot = useSessionStore((s) => s.createShot);
-  const renameSequence = useSessionStore((s) => s.renameSequence);
-  const renameShot = useSessionStore((s) => s.renameShot);
 
   const [creating, setCreating] = useState<
     null | "sequence" | "shot" | "rename-sequence" | "rename-shot"
