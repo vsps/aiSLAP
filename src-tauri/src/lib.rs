@@ -44,7 +44,6 @@ pub fn run() {
             commands::image::save_png_base64,
             commands::image::reveal_in_explorer,
             commands::session::sequence_prompt_append,
-            commands::session::shot_prompt_append,
             commands::session::shot_prompts_append,
             commands::session::script_read,
             commands::session::script_write,

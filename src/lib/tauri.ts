@@ -99,11 +99,6 @@ export const cmd = {
     prompt: string,
   ): Promise<SequenceSidecar> =>
     rawInvoke("sequence_prompt_append", { sequencePath, prompt }),
-  shot_prompt_append: (
-    shotPath: string,
-    prompt: string,
-  ): Promise<ShotSidecar> =>
-    rawInvoke("shot_prompt_append", { shotPath, prompt }),
   shot_prompts_append: (
     shotPath: string,
     prompts: string[],

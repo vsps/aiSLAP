@@ -32,8 +32,10 @@ function emptyAppState(): AppState {
     refImages: [],
     iterations: 1,
     galleryHeight: 400,
-    thumbColWidth: 120,
+    thumbColWidth: 80,
     logHeight: 78,
+    timelineHeight: 45,
+    queueWidth: 400,
   };
 }
 
@@ -96,6 +98,8 @@ function currentAppState(): AppState {
     galleryHeight: s.galleryHeight,
     thumbColWidth: s.thumbColWidth,
     logHeight: s.logHeight,
+    timelineHeight: s.timelineHeight,
+    queueWidth: s.queueWidth,
     chainLinks: g.links.map(toPersisted),
     chainExpandedIdx: g.expandedIdx,
   };
@@ -176,6 +180,12 @@ export async function bootstrap(): Promise<() => void> {
   }
   if (typeof appState.logHeight === "number") {
     useSessionStore.getState().setLogHeight(appState.logHeight);
+  }
+  if (typeof appState.timelineHeight === "number") {
+    useSessionStore.getState().setTimelineHeight(appState.timelineHeight);
+  }
+  if (typeof appState.queueWidth === "number") {
+    useSessionStore.getState().setQueueWidth(appState.queueWidth);
   }
 
   // Restore session paths (project/sequence/shot) in the background — this

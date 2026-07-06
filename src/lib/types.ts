@@ -321,6 +321,8 @@ export type AppState = {
   galleryHeight: number;
   thumbColWidth: number;
   logHeight: number;
+  timelineHeight: number;
+  queueWidth: number;
   /** When present, supersedes the flat sequencePrompt/shotPrompts/settings/refImages
    *  fields (those are still written for back-compat with old loaders). */
   chainLinks?: ChainLinkPersisted[];
@@ -467,8 +469,6 @@ export type ImageMetadata = {
   providerResponse?: unknown;
   /** Legacy field; kept so old sidecars still parse. */
   falResponse?: unknown;
-  hueShift?: number;
-  sourceImage?: string;
   /** Chain provenance — present only when this media was produced as part
    *  of a multi-link chain submission. */
   chain?: ChainMetadataBlock;
