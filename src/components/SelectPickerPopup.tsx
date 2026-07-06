@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
+import { Icon } from "../lib/icon";
 
 type Props = {
   anchor: { x: number; y: number };
@@ -28,7 +29,10 @@ export function SelectPickerPopup({
   onDragStart,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number }>({ left: anchor.x, top: anchor.y });
+  const [pos, setPos] = useState<{ left: number; top: number }>({
+    left: anchor.x,
+    top: anchor.y,
+  });
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -113,11 +117,20 @@ export function SelectPickerPopup({
               }}
             >
               {src ? (
-                <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                <img
+                  src={src}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-dim">
                   {img.filename}
                 </div>
+              )}
+              {img.starred && (
+                <span className="absolute bottom-0.5 left-0.5 drop-shadow pointer-events-none">
+                  <Icon name="star" size={16} fill />
+                </span>
               )}
             </button>
           );

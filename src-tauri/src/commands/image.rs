@@ -247,9 +247,9 @@ pub fn image_rename(source_path: String, new_stem: String) -> AppResult<String> 
     Ok(as_str(&new_primary))
 }
 
-/// Move every image file (plus its sidecar/thumb) from `src_shot/src_version/`
-/// into `dst_shot/dst_version/`. When `dst_version` is None or empty, the
-/// next version on `dst_shot` is allocated.
+/// Move (or copy) every image file (plus its sidecar/thumb) from
+/// `src_shot/src_version/` into `dst_shot/dst_version/`. When `dst_version` is
+/// None or empty, the next version on `dst_shot` is allocated.
 /// Returns the destination version's absolute path.
 #[tauri::command]
 pub fn version_stack_move(
@@ -257,6 +257,7 @@ pub fn version_stack_move(
     src_version: String,
     dst_shot: String,
     dst_version: Option<String>,
+    copy: bool,
 ) -> AppResult<String> {
     let src_dir = PathBuf::from(&src_shot).join(&src_version);
     if !src_dir.is_dir() {
@@ -341,16 +342,22 @@ pub fn version_stack_move(
         }
     }
 
+    let mode = if copy { TransferMode::Copy } else { TransferMode::Move };
     for src in &moves {
-        transfer_triple_to_dir(src, &dst_dir, TransferMode::Move, CollisionPolicy::Error)?;
+        transfer_triple_to_dir(src, &dst_dir, mode, CollisionPolicy::Error)?;
     }
 
-    // Update visible set, re-keying any moved files that were marked visible.
+    // Update the visible set: a move re-keys src -> dst; a copy adds dst
+    // alongside src (the source file is still there and still visible).
     if let Some(root) = project_root.as_ref() {
         let mut set = load_visible_set(root)?;
         let mut changed = false;
         for (s, d) in &rel_pairs {
-            if set.remove(s) {
+            if copy {
+                if set.contains(s) && set.insert(d.clone()) {
+                    changed = true;
+                }
+            } else if set.remove(s) {
                 set.insert(d.clone());
                 changed = true;
             }
@@ -360,12 +367,15 @@ pub fn version_stack_move(
         }
     }
 
-    // Clear the source shot's pinned select for this version.
-    let src_sidecar_path = PathBuf::from(&src_shot).join(SHOT_SIDECAR);
-    if src_sidecar_path.exists() {
-        let mut sidecar: ShotSidecar = read_json_or_default(&src_sidecar_path)?;
-        if sidecar.version_selects.remove(&src_version).is_some() {
-            write_json_atomic(&src_sidecar_path, &sidecar)?;
+    // Clearing the source's pinned select only makes sense for a move — a
+    // copy leaves the source stack (and its select) untouched.
+    if !copy {
+        let src_sidecar_path = PathBuf::from(&src_shot).join(SHOT_SIDECAR);
+        if src_sidecar_path.exists() {
+            let mut sidecar: ShotSidecar = read_json_or_default(&src_sidecar_path)?;
+            if sidecar.version_selects.remove(&src_version).is_some() {
+                write_json_atomic(&src_sidecar_path, &sidecar)?;
+            }
         }
     }
 

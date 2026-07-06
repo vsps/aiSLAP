@@ -6,10 +6,13 @@ import { IconBtn } from "./IconBtn";
 import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
+import { usePricesStore } from "../stores/pricesStore";
 import { basename } from "../lib/paths";
 import { classifyMedia } from "../lib/media";
 import { cmd } from "../lib/tauri";
 import { showMessage } from "../lib/dialog";
+import { formatCost, isPerItemUnit, parseFalPrice } from "../lib/falPrices";
+import { getImageMetadataCached } from "../lib/metadataCache";
 
 export type DragState = {
   fromPath: string;
@@ -20,6 +23,9 @@ export type DragState = {
   fromVersionName?: string;
   overColumnVersion: string | null;
   shiftHeld: boolean;
+  /** Ctrl (or Cmd) held — in stacked-view drags, targets the whole stack
+   *  instead of just the dragged/selected image. */
+  ctrlHeld: boolean;
   pointerX: number;
   pointerY: number;
 } | null;
@@ -63,11 +69,43 @@ export function GalleryColumn({
     shotPath ? (s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null) : null,
   );
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
-  const comment = useSessionStore(
-    (s) => s.versionComments[column.version] ?? "",
-  );
-  const setVersionComment = useSessionStore((s) => s.setVersionComment);
-  const [editing, setEditing] = useState(false);
+
+  // Approximate total cost of this column's generations, from cached fal
+  // prices (Settings → fetch prices) matched against each image's sidecar
+  // metadata (endpoint). SRC/ref columns aren't generations, so skipped
+  // entirely. Time/size-billed and unpriced images are silently excluded from
+  // the total and surfaced only as an "unpriced" count in the tooltip.
+  const prices = usePricesStore((s) => s.prices);
+  const [colCost, setColCost] = useState<{
+    total: number;
+    unknown: number;
+  } | null>(null);
+  useEffect(() => {
+    if (column.isSrc || column.images.length === 0) {
+      setColCost(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const metas = await Promise.all(
+        column.images.map((img) => getImageMetadataCached(img.path)),
+      );
+      if (cancelled) return;
+      let total = 0;
+      let unknown = 0;
+      for (const m of metas) {
+        const text =
+          m && (m.provider ?? "fal") === "fal" ? prices[m.endpoint] : null;
+        const parsed = text ? parseFalPrice(text) : null;
+        if (parsed && isPerItemUnit(parsed.unit)) total += parsed.amount;
+        else unknown += 1;
+      }
+      setColCost({ total, unknown });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [column.isSrc, column.images, prices]);
 
   // Stable per-column callbacks so memo'd Thumbnails skip re-renders.
   const handleSelect = useCallback(
@@ -189,12 +227,6 @@ export function GalleryColumn({
       onToggleCollapsed();
       return;
     }
-    if (isTarget) {
-      // Second click on the active non-SRC column opens the inline comment
-      // editor (replaces the prior collapse-on-re-click).
-      setEditing(true);
-      return;
-    }
     setTargetVersion(column.version);
   }
 
@@ -216,55 +248,33 @@ export function GalleryColumn({
         <div
           className={`flex-1 min-h-0 flex items-center justify-center text-sm cursor-pointer ${headerClass}`}
           onClick={onHeaderClick}
-          title={
-            comment
-              ? `${column.version}: ${comment}`
-              : `Expand ${column.version}`
-          }
+          title={`Expand ${column.version}`}
         >
           <span className="font-mono" style={{ writingMode: "vertical-rl" }}>
             {column.version}
-            {comment ? ` · ${comment}` : ""}
           </span>
         </div>
       ) : (
         <>
           <div
             className={`flex items-center h-[25px] px-[5px] text-sm cursor-pointer shrink-0 ${headerClass}`}
-            onClick={onHeaderClick}
+            onClick={onToggleCollapsed}
           >
-            <IconBtn
-              name="unfold_less"
-              size={16}
-              title="Collapse column"
-              className="rotate-90 shrink-0 mr-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleCollapsed();
-              }}
-            />
-            {editing && !column.isSrc ? (
-              <VersionCommentInput
-                initial={comment}
-                onCommit={async (v) => {
-                  setEditing(false);
-                  try {
-                    await setVersionComment(column.version, v);
-                  } catch {
-                    /* logged in store */
-                  }
-                }}
-                onCancel={() => setEditing(false)}
-              />
-            ) : (
+            <span className="flex-1 truncate" title={column.version}>
+              {column.version}
+            </span>
+            {!column.isSrc && colCost && colCost.total > 0 && (
               <span
-                className="flex-1 truncate"
+                className="text-[10px] font-mono text-dim shrink-0 mr-1"
                 title={
-                  comment ? `${column.version}: ${comment}` : column.version
+                  colCost.unknown > 0
+                    ? `≈ $${formatCost(colCost.total)} total for this column (${colCost.unknown} image${
+                        colCost.unknown === 1 ? "" : "s"
+                      } unpriced)`
+                    : `≈ $${formatCost(colCost.total)} total for this column`
                 }
               >
-                {column.version}
-                {comment ? `: ${comment}` : ""}
+                ≈ ${formatCost(colCost.total)}
               </span>
             )}
             {column.isSrc && onRefresh && (
@@ -377,58 +387,5 @@ export function GalleryColumn({
         </>
       )}
     </div>
-  );
-}
-
-/**
- * Inline editor for a version's short comment. Auto-focuses + selects,
- * commits on Enter and blur (empty value clears), cancels on Escape.
- * Click inside the input does not bubble to the header click handler.
- */
-function VersionCommentInput({
-  initial,
-  onCommit,
-  onCancel,
-}: {
-  initial: string;
-  onCommit: (v: string) => void;
-  onCancel: () => void;
-}) {
-  const [value, setValue] = useState(initial);
-  const ref = useRef<HTMLInputElement>(null);
-  const committed = useRef(false);
-
-  useEffect(() => {
-    ref.current?.focus();
-    ref.current?.select();
-  }, []);
-
-  return (
-    <input
-      ref={ref}
-      type="text"
-      value={value}
-      placeholder="comment…"
-      className="flex-1 min-w-0 bg-bg text-text text-sm px-1 py-0 outline-none border border-accent"
-      onChange={(e) => setValue(e.currentTarget.value)}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          if (committed.current) return;
-          committed.current = true;
-          onCommit(value);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          committed.current = true;
-          onCancel();
-        }
-      }}
-      onBlur={() => {
-        if (committed.current) return;
-        committed.current = true;
-        onCommit(value);
-      }}
-    />
   );
 }

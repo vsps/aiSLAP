@@ -55,6 +55,10 @@ export function VersionStack({
       data-version-cell-version={stack.version}
       className="relative shrink-0"
       style={{ width: size + padTotal, height: size + padTotal }}
+      title={
+        "Drag: move image · Shift+drag: copy image · " +
+        "Ctrl+drag: move stack · Ctrl+Shift+drag: copy stack"
+      }
     >
       {/* Stack-edge backdrop cards. */}
       {Array.from({ length: visibleCards }).map((_, i) => {

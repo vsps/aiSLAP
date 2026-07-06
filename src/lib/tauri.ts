@@ -84,8 +84,9 @@ export const cmd = {
     srcVersion: string,
     dstShot: string,
     dstVersion: string | null,
+    copy: boolean,
   ): Promise<string> =>
-    rawInvoke("version_stack_move", { srcShot, srcVersion, dstShot, dstVersion }),
+    rawInvoke("version_stack_move", { srcShot, srcVersion, dstShot, dstVersion, copy }),
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),

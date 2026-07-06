@@ -103,6 +103,7 @@ export function Gallery() {
         fromVersionName: payload.fromVersionName,
         overColumnVersion: null,
         shiftHeld: payload.pointerEvent.shiftKey,
+        ctrlHeld: payload.pointerEvent.ctrlKey || payload.pointerEvent.metaKey,
         pointerX: payload.pointerEvent.clientX,
         pointerY: payload.pointerEvent.clientY,
       });
@@ -179,6 +180,7 @@ export function Gallery() {
               ...prev,
               overColumnVersion: hit?.version ?? null,
               shiftHeld: e.shiftKey,
+              ctrlHeld: e.ctrlKey || e.metaKey,
               pointerX: e.clientX,
               pointerY: e.clientY,
             }
@@ -195,11 +197,17 @@ export function Gallery() {
       if (e.key === "Shift") {
         setDragState((prev) => (prev ? { ...prev, shiftHeld: true } : prev));
       }
+      if (e.key === "Control" || e.key === "Meta") {
+        setDragState((prev) => (prev ? { ...prev, ctrlHeld: true } : prev));
+      }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === "Shift") {
         setDragState((prev) => (prev ? { ...prev, shiftHeld: false } : prev));
+      }
+      if (e.key === "Control" || e.key === "Meta") {
+        setDragState((prev) => (prev ? { ...prev, ctrlHeld: false } : prev));
       }
     };
 
@@ -224,7 +232,12 @@ export function Gallery() {
             void commitGlobalSrcDrop(current.fromPath, hitStacked.destDir, e.shiftKey);
           }
         } else {
-          void commitStackedDrop(current, hitStacked, e.shiftKey);
+          void commitStackedDrop(
+            current,
+            hitStacked,
+            e.shiftKey,
+            e.ctrlKey || e.metaKey,
+          );
         }
         return;
       }
@@ -316,13 +329,20 @@ export function Gallery() {
       | { kind: "cell"; shotPath: string; version: string }
       | { kind: "row"; shotPath: string },
     shift: boolean,
+    ctrl: boolean,
   ) {
     const fromShot = current.fromShotPath;
     const fromVersion = current.fromVersionName;
+    // Stacked-view drag/drop modifiers:
+    //   drag             move the single (dragged/selected) image
+    //   shift+drag       copy the single image
+    //   ctrl+drag        move the whole stack
+    //   shift+ctrl+drag  copy the whole stack
     // Whole-stack semantics only apply when the source knows its version slot
-    // (i.e. it came from a stacked-view drag). Favorite/trace sources are
-    // single images — shift-drag falls back to plain move.
-    const stackMove = shift && !!fromShot && !!fromVersion;
+    // (i.e. it came from a stacked-view drag) — favorite/trace sources are
+    // single images, so ctrl has no special meaning there.
+    const copy = shift;
+    const stackWhole = ctrl && !!fromShot && !!fromVersion;
 
     const sameCell =
       target.kind === "cell" &&
@@ -331,11 +351,17 @@ export function Gallery() {
     if (sameCell) return;
 
     try {
-      if (stackMove) {
+      if (stackWhole) {
         const dstVersion = target.kind === "cell" ? target.version : null;
-        await cmd.version_stack_move(fromShot!, fromVersion!, target.shotPath, dstVersion);
+        await cmd.version_stack_move(
+          fromShot!,
+          fromVersion!,
+          target.shotPath,
+          dstVersion,
+          copy,
+        );
       } else {
-        // Single-file move (the current select / dragged thumb).
+        // Single-file move/copy (the current select / dragged thumb).
         let destDir: string;
         if (target.kind === "cell") {
           destDir = `${target.shotPath}/${target.version}`;
@@ -344,7 +370,8 @@ export function Gallery() {
           const next = await cmd.version_create_next(target.shotPath);
           destDir = `${target.shotPath}/${next}`;
         }
-        await cmd.image_move_to_dir(current.fromPath, destDir);
+        const fn = copy ? cmd.image_copy_to_dir : cmd.image_move_to_dir;
+        await fn(current.fromPath, destDir);
       }
       await rescanSequenceStacks();
       await rescanShot();
@@ -576,29 +603,39 @@ export function Gallery() {
         </>
       )}
 
-      {dragState && (
-        <div
-          className="fixed pointer-events-none z-50 flex items-center gap-2"
-          style={{
-            left: dragState.pointerX + 12,
-            top: dragState.pointerY + 12,
-          }}
-        >
-          <img
-            src={fileSrc(dragState.fromPath)}
-            alt=""
-            draggable={false}
-            className="w-16 h-16 object-cover border border-accent shadow-lg bg-bg"
-          />
-          <span
-            className={`text-[10px] font-mono px-1 py-[1px] ${
-              dragState.shiftHeld ? "bg-accent text-text" : "bg-panel text-text"
-            }`}
+      {dragState && (() => {
+        const isStack = !!dragState.fromShotPath && !!dragState.fromVersionName;
+        const stackWhole = isStack && dragState.ctrlHeld;
+        const label = [
+          dragState.shiftHeld ? "COPY" : "MOVE",
+          stackWhole ? "STACK" : null,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          <div
+            className="fixed pointer-events-none z-50 flex items-center gap-2"
+            style={{
+              left: dragState.pointerX + 12,
+              top: dragState.pointerY + 12,
+            }}
           >
-            {dragState.shiftHeld ? "COPY" : "MOVE"}
-          </span>
-        </div>
-      )}
+            <img
+              src={fileSrc(dragState.fromPath)}
+              alt=""
+              draggable={false}
+              className="w-16 h-16 object-cover border border-accent shadow-lg bg-bg"
+            />
+            <span
+              className={`text-[10px] font-mono px-1 py-[1px] ${
+                dragState.shiftHeld ? "bg-accent text-text" : "bg-panel text-text"
+              }`}
+            >
+              {label}
+            </span>
+          </div>
+        );
+      })()}
 
       {zoomImage && (zoomImage.isModel3d ? (
         <ModelZoomModal

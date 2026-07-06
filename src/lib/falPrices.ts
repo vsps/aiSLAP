@@ -93,6 +93,11 @@ function cleanPriceText(raw: string | null | undefined): string | null {
   return text.length > 0 ? text : null;
 }
 
+// Sub-cent prices need more decimals than dollars-and-cents formatting gives.
+export function formatCost(n: number): string {
+  return n < 0.1 ? n.toFixed(3) : n.toFixed(2);
+}
+
 export type ParsedPrice = { amount: number; unit: string };
 
 /** Extract the first "$X per <unit>" from a price string. Returns null when

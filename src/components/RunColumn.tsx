@@ -16,7 +16,7 @@ import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
 import { basename } from "../lib/paths";
-import { isPerItemUnit, parseFalPrice } from "../lib/falPrices";
+import { formatCost, isPerItemUnit, parseFalPrice } from "../lib/falPrices";
 import { usePricesStore } from "../stores/pricesStore";
 import type { ChainLink } from "../lib/types";
 
@@ -35,11 +35,6 @@ function perRunCost(
   // Batch models produce N outputs per request but fal bills per output.
   const batch = model.batch_field ? Number(link.settings[model.batch_field]) : 1;
   return parsed.amount * (Number.isFinite(batch) && batch > 1 ? batch : 1);
-}
-
-// Sub-cent prices need more decimals than dollars-and-cents formatting gives.
-function formatCost(n: number): string {
-  return n < 0.1 ? n.toFixed(3) : n.toFixed(2);
 }
 
 export function RunColumn() {
