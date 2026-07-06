@@ -44,6 +44,29 @@ export function StackedView({ onDragStart }: Props) {
     if (sequencePath && !sequenceStacks) void rescanSequenceStacks();
   }, [sequencePath, sequenceStacks, rescanSequenceStacks]);
 
+  // Stable across renders — VersionStack instances forward this straight to
+  // memo'd Thumbnails, so a fresh identity per render would defeat the memo.
+  // Must stay above the early returns below (Rules of Hooks): this used to
+  // sit after them, so the hook count differed between the loading/empty
+  // renders and the full render, crashing React on the transition between
+  // them ("Rendered more hooks than during the previous render").
+  const handleVersionStackDragStart = useCallback(
+    (payload: {
+      fromPath: string;
+      fromShot: string;
+      fromVersion: string;
+      pointerEvent: React.PointerEvent;
+    }) =>
+      onDragStart({
+        fromPath: payload.fromPath,
+        fromColumnVersion: payload.fromVersion,
+        fromShotPath: payload.fromShot,
+        fromVersionName: payload.fromVersion,
+        pointerEvent: payload.pointerEvent,
+      }),
+    [onDragStart],
+  );
+
   if (!sequencePath) {
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-dim">
@@ -85,25 +108,6 @@ export function StackedView({ onDragStart }: Props) {
     void setShotClipMedia(shot, currentClip === imagePath ? null : imagePath);
     void rescanSequenceStacks();
   }
-
-  // Stable across renders — VersionStack instances forward this straight to
-  // memo'd Thumbnails, so a fresh identity per render would defeat the memo.
-  const handleVersionStackDragStart = useCallback(
-    (payload: {
-      fromPath: string;
-      fromShot: string;
-      fromVersion: string;
-      pointerEvent: React.PointerEvent;
-    }) =>
-      onDragStart({
-        fromPath: payload.fromPath,
-        fromColumnVersion: payload.fromVersion,
-        fromShotPath: payload.fromShot,
-        fromVersionName: payload.fromVersion,
-        pointerEvent: payload.pointerEvent,
-      }),
-    [onDragStart],
-  );
 
   return (
     <>
