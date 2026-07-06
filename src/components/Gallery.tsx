@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { GalleryColumn, type DragState } from "./GalleryColumn";
 import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
@@ -36,17 +36,18 @@ export function Gallery() {
   const setSelectedImage = useSessionStore((s) => s.setSelectedImage);
   const rescanShot = useSessionStore((s) => s.rescanShot);
   const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
-  const rescanStarred = useSessionStore((s) => s.rescanStarred);
   const createNextVersion = useSessionStore((s) => s.createNextVersion);
   const thumbnailsEnabled = useSessionStore((s) => s.thumbnailsEnabled);
   const enableThumbnails = useSessionStore((s) => s.enableThumbnails);
 
   const flatImages = columns.flatMap((c) => c.images);
   const zoomImage = zoomImagePath
-    ? flatImages.find((i) => i.path === zoomImagePath) ?? syntheticImage(zoomImagePath)
+    ? (flatImages.find((i) => i.path === zoomImagePath) ??
+      syntheticImage(zoomImagePath))
     : null;
   const renameImage = renameImagePath
-    ? flatImages.find((i) => i.path === renameImagePath) ?? syntheticImage(renameImagePath)
+    ? (flatImages.find((i) => i.path === renameImagePath) ??
+      syntheticImage(renameImagePath))
     : null;
 
   // Stable reference — performImageAction is module-level, so memo'd
@@ -54,6 +55,19 @@ export function Gallery() {
   const onImageAction = performImageAction;
 
   const [dragState, setDragState] = useState<DragState>(null);
+  // Raw pointer position during a drag lives outside React state — the ghost
+  // element mutates its own style directly so per-pixel pointermove doesn't
+  // re-render every column (only overColumnVersion/modifier changes do).
+  const pointerRef = useRef({ x: 0, y: 0 });
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  const setGhostPos = useCallback((x: number, y: number) => {
+    pointerRef.current = { x, y };
+    const el = ghostRef.current;
+    if (el) {
+      el.style.left = `${x + 12}px`;
+      el.style.top = `${y + 12}px`;
+    }
+  }, []);
 
   // Per-column collapse state. Ephemeral — reset whenever the shot changes.
   const [collapsedVersions, setCollapsedVersions] = useState<Set<string>>(
@@ -73,7 +87,8 @@ export function Gallery() {
   // Toolbar bulk toggle: collapse every column, or clear all individual
   // collapse state back to fully expanded.
   const allCollapsed =
-    columns.length > 0 && columns.every((c) => collapsedVersions.has(c.version));
+    columns.length > 0 &&
+    columns.every((c) => collapsedVersions.has(c.version));
   const toggleAllCollapsed = () => {
     setCollapsedVersions(
       allCollapsed ? new Set() : new Set(columns.map((c) => c.version)),
@@ -97,6 +112,7 @@ export function Gallery() {
       fromVersionName?: string;
       pointerEvent: React.PointerEvent;
     }) => {
+      setGhostPos(payload.pointerEvent.clientX, payload.pointerEvent.clientY);
       setDragState({
         fromPath: payload.fromPath,
         fromColumnVersion: payload.fromColumnVersion,
@@ -105,12 +121,10 @@ export function Gallery() {
         overColumnVersion: null,
         shiftHeld: payload.pointerEvent.shiftKey,
         ctrlHeld: payload.pointerEvent.ctrlKey || payload.pointerEvent.metaKey,
-        pointerX: payload.pointerEvent.clientX,
-        pointerY: payload.pointerEvent.clientY,
       });
       setImageDrag({ fromPath: payload.fromPath });
     },
-    [setImageDrag],
+    [setImageDrag, setGhostPos],
   );
 
   // Global drag handlers — installed only while dragging.
@@ -118,7 +132,10 @@ export function Gallery() {
     if (!dragState) return;
     const prevCursor = document.body.style.cursor;
 
-    function findColumnAt(x: number, y: number): {
+    function findColumnAt(
+      x: number,
+      y: number,
+    ): {
       version: string;
       destDir: string;
     } | null {
@@ -174,6 +191,7 @@ export function Gallery() {
     }
 
     const onMove = (e: PointerEvent) => {
+      setGhostPos(e.clientX, e.clientY);
       const hit = findColumnAt(e.clientX, e.clientY);
       setDragState((prev) =>
         prev
@@ -182,8 +200,6 @@ export function Gallery() {
               overColumnVersion: hit?.version ?? null,
               shiftHeld: e.shiftKey,
               ctrlHeld: e.ctrlKey || e.metaKey,
-              pointerX: e.clientX,
-              pointerY: e.clientY,
             }
           : prev,
       );
@@ -230,7 +246,11 @@ export function Gallery() {
       if (hitStacked) {
         if (hitStacked.kind === "global") {
           if (current.fromColumnVersion !== "GLOBAL SRC") {
-            void commitGlobalSrcDrop(current.fromPath, hitStacked.destDir, e.shiftKey);
+            void commitGlobalSrcDrop(
+              current.fromPath,
+              hitStacked.destDir,
+              e.shiftKey,
+            );
           }
         } else {
           void commitStackedDrop(
@@ -303,13 +323,16 @@ export function Gallery() {
     }
   }
 
-  async function commitGlobalSrcDrop(fromPath: string, destDir: string, copy: boolean) {
+  async function commitGlobalSrcDrop(
+    fromPath: string,
+    destDir: string,
+    copy: boolean,
+  ) {
     try {
       const fn = copy ? cmd.image_copy_to_dir : cmd.image_move_to_dir;
       await fn(fromPath, destDir);
       await rescanSequenceStacks();
       await rescanShot();
-      if (useSessionStore.getState().viewMode === "starred") await rescanStarred();
     } catch (e) {
       if (isFilenameExists(e)) {
         await showMessage(
@@ -374,7 +397,6 @@ export function Gallery() {
       }
       await rescanSequenceStacks();
       await rescanShot();
-      if (useSessionStore.getState().viewMode === "starred") await rescanStarred();
     } catch (e) {
       if (isFilenameExists(e)) {
         await showMessage(
@@ -402,7 +424,8 @@ export function Gallery() {
       if (zoomImagePath) return;
       const tgt = e.target as HTMLElement | null;
       const tag = tgt?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tgt?.isContentEditable) return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tgt?.isContentEditable)
+        return;
       if (columns.every((c) => c.images.length === 0)) return;
 
       e.preventDefault();
@@ -431,7 +454,12 @@ export function Gallery() {
         const dir = e.key === "ArrowLeft" ? -1 : 1;
         // Walk to the next non-empty column in the chosen direction.
         let nc = colIdx + dir;
-        while (nc >= 0 && nc < columns.length && columns[nc].images.length === 0) nc += dir;
+        while (
+          nc >= 0 &&
+          nc < columns.length &&
+          columns[nc].images.length === 0
+        )
+          nc += dir;
         if (nc < 0 || nc >= columns.length) return;
         colIdx = nc;
         rowIdx = Math.min(rowIdx, columns[colIdx].images.length - 1);
@@ -448,10 +476,13 @@ export function Gallery() {
     const col = columns.find((c) => c.version === version);
     if (!col || col.isSrc) return;
     if (!shotPath) return;
-    const ok = await confirmAction(`Delete version folder ${version} and all its images?`, {
-      title: "Delete column",
-      kind: "warning",
-    });
+    const ok = await confirmAction(
+      `Delete version folder ${version} and all its images?`,
+      {
+        title: "Delete column",
+        kind: "warning",
+      },
+    );
     if (!ok) return;
     try {
       await cmd.column_delete(`${shotPath}/${version}`);
@@ -486,7 +517,9 @@ export function Gallery() {
             viewMode === "starred" ? "bg-accent" : "accent-hover"
           } px-3 py-2 flex items-center justify-center`}
           title={viewMode === "starred" ? "Back to versions" : "Favorites"}
-          onClick={() => setViewMode(viewMode === "starred" ? "columns" : "starred")}
+          onClick={() =>
+            setViewMode(viewMode === "starred" ? "columns" : "starred")
+          }
         >
           <Icon name="star" size={22} fill={viewMode === "starred"} />
         </button>
@@ -497,7 +530,9 @@ export function Gallery() {
             viewMode === "stacked" ? "bg-accent" : "accent-hover"
           } px-3 py-2 flex items-center justify-center`}
           title={viewMode === "stacked" ? "Back to versions" : "Stacked view"}
-          onClick={() => setViewMode(viewMode === "stacked" ? "columns" : "stacked")}
+          onClick={() =>
+            setViewMode(viewMode === "stacked" ? "columns" : "stacked")
+          }
         >
           <Icon name="view_module" size={22} fill={viewMode === "stacked"} />
         </button>
@@ -508,7 +543,12 @@ export function Gallery() {
           title={allCollapsed ? "Expand all columns" : "Collapse all columns"}
           onClick={toggleAllCollapsed}
         >
-          <Icon name="unfold_less" size={22} fill={allCollapsed} className="rotate-90" />
+          <Icon
+            name="unfold_less"
+            size={22}
+            fill={allCollapsed}
+            className="rotate-90"
+          />
         </button>
       )}
       {selectedImagePath && (
@@ -577,7 +617,9 @@ export function Gallery() {
           {splitButtons}
           <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
             {columns.length === 0 ? (
-              <div className="text-sm text-dim p-4">Open a shot to see its versions.</div>
+              <div className="text-sm text-dim p-4">
+                Open a shot to see its versions.
+              </div>
             ) : (
               <>
                 {columns.map((c) => (
@@ -601,56 +643,66 @@ export function Gallery() {
         </>
       )}
 
-      {dragState && (() => {
-        const isStack = !!dragState.fromShotPath && !!dragState.fromVersionName;
-        const stackWhole = isStack && dragState.ctrlHeld;
-        const label = [
-          dragState.shiftHeld ? "COPY" : "MOVE",
-          stackWhole ? "STACK" : null,
-        ]
-          .filter(Boolean)
-          .join(" ");
-        return (
-          <div
-            className="fixed pointer-events-none z-50 flex items-center gap-2"
-            style={{
-              left: dragState.pointerX + 12,
-              top: dragState.pointerY + 12,
-            }}
-          >
-            <img
-              src={fileSrc(dragState.fromPath)}
-              alt=""
-              draggable={false}
-              className="w-16 h-16 object-cover border border-accent shadow-lg bg-bg"
-            />
-            <span
-              className={`text-[10px] font-mono px-1 py-[1px] ${
-                dragState.shiftHeld ? "bg-accent text-text" : "bg-panel text-text"
-              }`}
+      {dragState &&
+        (() => {
+          const isStack =
+            !!dragState.fromShotPath && !!dragState.fromVersionName;
+          const stackWhole = isStack && dragState.ctrlHeld;
+          const label = [
+            dragState.shiftHeld ? "COPY" : "MOVE",
+            stackWhole ? "STACK" : null,
+          ]
+            .filter(Boolean)
+            .join(" ");
+          return (
+            <div
+              ref={ghostRef}
+              className="fixed pointer-events-none z-50 flex items-center gap-2"
+              style={{
+                left: pointerRef.current.x + 12,
+                top: pointerRef.current.y + 12,
+              }}
             >
-              {label}
-            </span>
-          </div>
-        );
-      })()}
+              <img
+                src={fileSrc(dragState.fromPath)}
+                alt=""
+                draggable={false}
+                className="w-16 h-16 object-cover border border-accent shadow-lg bg-bg"
+              />
+              <span
+                className={`text-[10px] font-mono px-1 py-[1px] ${
+                  dragState.shiftHeld
+                    ? "bg-accent text-text"
+                    : "bg-panel text-text"
+                }`}
+              >
+                {label}
+              </span>
+            </div>
+          );
+        })()}
 
-      {zoomImage && (zoomImage.isModel3d ? (
-        <ModelZoomModal
-          image={zoomImage}
-          onClose={() => setZoomImage(null)}
-          onDelete={async () => onImageAction("delete", zoomImage.path)}
-        />
-      ) : (
-        <ImageZoomModal
-          image={zoomImage}
-          onClose={() => setZoomImage(null)}
-          onAddToRefs={async () => onImageAction("add_to_refs", zoomImage.path)}
-          onCopySettings={async () => onImageAction("copy_settings", zoomImage.path)}
-          onTrace={async () => onImageAction("trace", zoomImage.path)}
-          onDelete={async () => onImageAction("delete", zoomImage.path)}
-        />
-      ))}
+      {zoomImage &&
+        (zoomImage.isModel3d ? (
+          <ModelZoomModal
+            image={zoomImage}
+            onClose={() => setZoomImage(null)}
+            onDelete={async () => onImageAction("delete", zoomImage.path)}
+          />
+        ) : (
+          <ImageZoomModal
+            image={zoomImage}
+            onClose={() => setZoomImage(null)}
+            onAddToRefs={async () =>
+              onImageAction("add_to_refs", zoomImage.path)
+            }
+            onCopySettings={async () =>
+              onImageAction("copy_settings", zoomImage.path)
+            }
+            onTrace={async () => onImageAction("trace", zoomImage.path)}
+            onDelete={async () => onImageAction("delete", zoomImage.path)}
+          />
+        ))}
 
       {renameImage && (
         <RenameImageModal

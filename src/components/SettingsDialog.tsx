@@ -7,6 +7,7 @@ import { fetchFalPrices } from "../lib/falPrices";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
+import { invalidateConfigCache } from "../lib/metadataCache";
 import type { ColorOverrides, Config, FalLifecycle } from "../lib/types";
 
 const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
@@ -52,7 +53,9 @@ export function SettingsDialog({ onClose }: Props) {
   const [revealKey, setRevealKey] = useState(false);
   const [revealReplicate, setRevealReplicate] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT);
-  const [originalColors, setOriginalColors] = useState<ColorOverrides | undefined>(undefined);
+  const [originalColors, setOriginalColors] = useState<
+    ColorOverrides | undefined
+  >(undefined);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
   const [orphanStatus, setOrphanStatus] = useState<string | null>(null);
@@ -136,7 +139,11 @@ export function SettingsDialog({ onClose }: Props) {
       });
       usePricesStore.getState().setPrices(prices, fetchedAt);
       // Keep the dialog's copy in sync so a later Save doesn't revert them.
-      setConfig((c) => ({ ...c, falPrices: prices, falPricesFetchedAt: fetchedAt }));
+      setConfig((c) => ({
+        ...c,
+        falPrices: prices,
+        falPricesFetchedAt: fetchedAt,
+      }));
       setPricesStatus(
         `${Object.keys(prices).length} of ${unique.length} fal models priced.`,
       );
@@ -191,6 +198,7 @@ export function SettingsDialog({ onClose }: Props) {
       await cmd.provider_key_set("fal", falKey.trim());
       await cmd.provider_key_set("replicate", replicateKey.trim());
       await cmd.config_save(config);
+      invalidateConfigCache();
       setOriginalColors(config.colors);
       onClose();
     } catch (e) {
@@ -252,7 +260,8 @@ export function SettingsDialog({ onClose }: Props) {
               ))}
             </select>
             <div className="text-xs text-dim mt-1">
-              Sent as <code>x-fal-object-lifecycle-preference</code>. Controls how long fal retains generated objects.
+              Sent as <code>x-fal-object-lifecycle-preference</code>. Controls
+              how long fal retains generated objects.
             </div>
           </Field>
 

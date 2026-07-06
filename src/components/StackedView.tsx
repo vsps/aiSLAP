@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { cmd } from "../lib/tauri";
@@ -85,6 +85,25 @@ export function StackedView({ onDragStart }: Props) {
     void rescanSequenceStacks();
   }
 
+  // Stable across renders — VersionStack instances forward this straight to
+  // memo'd Thumbnails, so a fresh identity per render would defeat the memo.
+  const handleVersionStackDragStart = useCallback(
+    (payload: {
+      fromPath: string;
+      fromShot: string;
+      fromVersion: string;
+      pointerEvent: React.PointerEvent;
+    }) =>
+      onDragStart({
+        fromPath: payload.fromPath,
+        fromColumnVersion: payload.fromVersion,
+        fromShotPath: payload.fromShot,
+        fromVersionName: payload.fromVersion,
+        pointerEvent: payload.pointerEvent,
+      }),
+    [onDragStart],
+  );
+
   return (
     <>
       <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface p-gallery-column">
@@ -112,13 +131,7 @@ export function StackedView({ onDragStart }: Props) {
                     columnVersion="GLOBAL SRC"
                     onSelect={selectImagePath}
                     onToggleStar={toggleStarPath}
-                    onDragStart={(payload) =>
-                      onDragStart({
-                        fromPath: payload.fromPath,
-                        fromColumnVersion: payload.fromColumnVersion,
-                        pointerEvent: payload.pointerEvent,
-                      })
-                    }
+                    onDragStart={onDragStart}
                     maxAspect={1}
                   />
                 </div>
@@ -184,15 +197,7 @@ export function StackedView({ onDragStart }: Props) {
                               imgPath,
                             )
                           }
-                          onDragStart={(payload) =>
-                            onDragStart({
-                              fromPath: payload.fromPath,
-                              fromColumnVersion: payload.fromVersion,
-                              fromShotPath: payload.fromShot,
-                              fromVersionName: payload.fromVersion,
-                              pointerEvent: payload.pointerEvent,
-                            })
-                          }
+                          onDragStart={handleVersionStackDragStart}
                         />
                       );
                     })

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { selectImagePath, toggleStarPath } from "../lib/actions";
@@ -20,6 +20,25 @@ export function StarredView({ onDragStart }: Props) {
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
+
+  // One stable per-shot toggle callback (cached by shotPath), reading the
+  // current clip-media pick from the store at call time rather than closing
+  // over it — otherwise a fresh closure per image per render would defeat
+  // memo(Thumbnail).
+  const clipToggleHandlers = useRef(new Map<string, (path: string) => void>());
+  function getClipToggleHandler(shotPath: string): (path: string) => void {
+    let fn = clipToggleHandlers.current.get(shotPath);
+    if (!fn) {
+      fn = (path: string) => {
+        const current =
+          useTimelineStore.getState().shotsLatestMedia.get(shotPath)
+            ?.clipMediaPath ?? null;
+        void setShotClipMedia(shotPath, path === current ? null : path);
+      };
+      clipToggleHandlers.current.set(shotPath, fn);
+    }
+    return fn;
+  }
 
   useEffect(() => {
     if (projectPath) void rescanStarred();
@@ -53,8 +72,14 @@ export function StarredView({ onDragStart }: Props) {
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface">
       <div className="flex flex-col gap-gallery-column-gap p-gallery-column">
         {starredGroups.map((seq) => (
-          <div key={seq.seqPath} className="flex flex-col gap-gallery-column-gap">
-            <div className="w-full bg-src-bg border border-border px-2 py-1 text-sm font-semibold truncate" title={seq.seqPath}>
+          <div
+            key={seq.seqPath}
+            className="flex flex-col gap-gallery-column-gap"
+          >
+            <div
+              className="w-full bg-src-bg border border-border px-2 py-1 text-sm font-semibold truncate"
+              title={seq.seqPath}
+            >
               {seq.seqName}
             </div>
             {seq.shots.map((g) => {
@@ -74,7 +99,8 @@ export function StarredView({ onDragStart }: Props) {
                   </div>
                   <div className="flex-1 min-w-0 flex flex-wrap gap-gallery-column-gap">
                     {g.images.map((img) => {
-                      const clipSelected = knownShot && slm?.clipMediaPath === img.path;
+                      const clipSelected =
+                        knownShot && slm?.clipMediaPath === img.path;
                       return (
                         <div key={img.path} className="w-[120px] shrink-0">
                           <Thumbnail
@@ -87,11 +113,7 @@ export function StarredView({ onDragStart }: Props) {
                             clipMediaSelected={clipSelected}
                             onToggleClipMedia={
                               knownShot
-                                ? () =>
-                                    void setShotClipMedia(
-                                      g.shotPath,
-                                      clipSelected ? null : img.path,
-                                    )
+                                ? getClipToggleHandler(g.shotPath)
                                 : undefined
                             }
                           />

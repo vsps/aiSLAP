@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bootstrap } from "./lib/bootstrap";
 import { isJobTerminal } from "./lib/jobs";
 import { swallow } from "./lib/errors";
+import { installOsDragDropListener } from "./lib/osDragDrop";
 import { SessionBar } from "./components/SessionBar";
 import { Workbench } from "./components/Workbench";
 import { Timeline } from "./components/Timeline";
@@ -37,6 +38,10 @@ export default function App() {
   const setThumbColWidth = useSessionStore((s) => s.setThumbColWidth);
   const queueWidth = useSessionStore((s) => s.queueWidth);
   const setQueueWidth = useSessionStore((s) => s.setQueueWidth);
+
+  useEffect(() => {
+    installOsDragDropListener();
+  }, []);
 
   useEffect(() => {
     let dispose: (() => void) | null = null;
@@ -159,7 +164,8 @@ function StatusBar({
   ready: boolean;
   bootError: string | null;
 }) {
-  const { entries, loaded } = useModelsStore();
+  const entriesCount = useModelsStore((s) => s.entries.length);
+  const loaded = useModelsStore((s) => s.loaded);
   const jobs = useGenerationStore((s) => s.jobs);
   const traceActive = useSessionStore((s) => s.traceActive);
   const restoringLastSession = useSessionStore((s) => s.restoringLastSession);
@@ -172,7 +178,7 @@ function StatusBar({
   return (
     <div className="bg-panel text-dim px-2 py-1 text-xs font-mono whitespace-nowrap overflow-hidden flex items-center gap-4">
       <span>{ready ? "ready" : "booting..."}</span>
-      <span>models: {loaded ? entries.length : "…"}</span>
+      <span>models: {loaded ? entriesCount : "…"}</span>
       {bootError && <span className="text-bad">boot error: {bootError}</span>}
       {restoringLastSession && (
         <span title="Restoring the last-used project/sequence/shot in the background — pick a different project any time.">

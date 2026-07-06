@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 import type { VersionStack as VersionStackData } from "../lib/types";
 import { Thumbnail } from "./Thumbnail";
 import { performImageAction } from "../lib/actions";
@@ -48,6 +48,33 @@ export function VersionStack({
 
   const clipMediaSelected = !!selectImg && selectImg.path === shotClipMediaPath;
 
+  const selectImgPath = selectImg?.path;
+  const handleSelect = useCallback(() => {
+    if (!selectImgPath) return;
+    // Set global selection to the visible select for downstream
+    // actions (delete, trace, etc.), then open the version picker.
+    void performImageAction("select", selectImgPath);
+    if (rootRef.current) onOpenPicker(rootRef.current.getBoundingClientRect());
+  }, [selectImgPath, onOpenPicker]);
+  const handleToggleStar = useCallback(() => {
+    if (!selectImgPath) return;
+    void performImageAction("toggle_star", selectImgPath);
+  }, [selectImgPath]);
+  const handleToggleClipMedia = useCallback(() => {
+    if (!selectImgPath) return;
+    onToggleClipMedia(selectImgPath);
+  }, [selectImgPath, onToggleClipMedia]);
+  const handleThumbDragStart = useCallback(
+    (payload: { fromPath: string; pointerEvent: React.PointerEvent }) =>
+      onDragStart({
+        fromPath: payload.fromPath,
+        fromShot: shotPath,
+        fromVersion: stack.version,
+        pointerEvent: payload.pointerEvent,
+      }),
+    [onDragStart, shotPath, stack.version],
+  );
+
   return (
     <div
       ref={rootRef}
@@ -88,26 +115,11 @@ export function VersionStack({
               image={selectImg}
               selected={selectedGlobally}
               columnVersion={stack.version}
-              onSelect={() => {
-                // Set global selection to the visible select for downstream
-                // actions (delete, trace, etc.), then open the version picker.
-                void performImageAction("select", selectImg.path);
-                if (rootRef.current)
-                  onOpenPicker(rootRef.current.getBoundingClientRect());
-              }}
-              onToggleStar={() =>
-                void performImageAction("toggle_star", selectImg.path)
-              }
+              onSelect={handleSelect}
+              onToggleStar={handleToggleStar}
               clipMediaSelected={clipMediaSelected}
-              onToggleClipMedia={() => onToggleClipMedia(selectImg.path)}
-              onDragStart={(payload) =>
-                onDragStart({
-                  fromPath: payload.fromPath,
-                  fromShot: shotPath,
-                  fromVersion: stack.version,
-                  pointerEvent: payload.pointerEvent,
-                })
-              }
+              onToggleClipMedia={handleToggleClipMedia}
+              onDragStart={handleThumbDragStart}
               maxAspect={1}
             />
           </div>

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
 import type { ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
@@ -7,12 +6,9 @@ import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { usePricesStore } from "../stores/pricesStore";
-import { basename } from "../lib/paths";
-import { classifyMedia } from "../lib/media";
-import { cmd } from "../lib/tauri";
-import { showMessage } from "../lib/dialog";
-import { formatCost, perItemPrice } from "../lib/falPrices";
+import { perItemPrice, formatCost } from "../lib/falPrices";
 import { getImageMetadataCached } from "../lib/metadataCache";
+import { getOsDragTarget, subscribeOsDragTarget } from "../lib/osDragDrop";
 
 export type DragState = {
   fromPath: string;
@@ -26,8 +22,6 @@ export type DragState = {
   /** Ctrl (or Cmd) held — in stacked-view drags, targets the whole stack
    *  instead of just the dragged/selected image. */
   ctrlHeld: boolean;
-  pointerX: number;
-  pointerY: number;
 } | null;
 
 type Props = {
@@ -124,9 +118,17 @@ export function GalleryColumn({
     },
     [shotPath, setShotClipMedia],
   );
-  const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
+  const osDragHit = useSyncExternalStore(
+    subscribeOsDragTarget,
+    getOsDragTarget,
+  );
+  const osDragTarget: "src" | "main" | null =
+    osDragHit?.kind === "column" && osDragHit.version === column.version
+      ? osDragHit.isSrc
+        ? "main"
+        : "src"
+      : null;
   const [refsCollapsed, setRefsCollapsed] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   const subCols =
     !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
 
@@ -138,76 +140,6 @@ export function GalleryColumn({
       : subCols === 2
         ? "grid grid-cols-2 gap-gallery-column-gap content-start"
         : "flex flex-col gap-gallery-column-gap";
-
-  // OS file drag-drop onto a column → copy each file in, then rescan so it
-  // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
-  // overwrite-on-collision). A version (generation) column routes EVERY drop
-  // into its refs (SRC/) subfolder — dropped files are references, never loose
-  // generated outputs, so they never land in the version folder itself.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let disposed = false;
-    const hitEl = (el: HTMLElement | null, x: number, y: number): boolean => {
-      if (!el) return false;
-      const dpr = window.devicePixelRatio || 1;
-      const r = el.getBoundingClientRect();
-      const cx = x / dpr;
-      const cy = y / dpr;
-      return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
-    };
-    const ingest = async (paths: string[]) => {
-      const shot = useSessionStore.getState().shotPath;
-      if (!shot) {
-        await showMessage("Open a shot first", { kind: "warning" });
-        return;
-      }
-      const media = paths.filter((p) => classifyMedia(p) !== null);
-      if (media.length === 0) return;
-      let any = false;
-      for (const p of media) {
-        try {
-          if (column.isSrc) {
-            await cmd.ref_copy_to_global_src(shot, p);
-          } else {
-            const srcDir = `${destDir}/SRC`;
-            await cmd.dir_ensure(srcDir);
-            await cmd.image_copy_to_dir(p, srcDir);
-          }
-          any = true;
-        } catch (e) {
-          await showMessage(`Failed to add ${basename(p)}: ${e}`, {
-            kind: "error",
-          });
-        }
-      }
-      if (any) await useSessionStore.getState().rescanShot();
-    };
-    getCurrentWebview()
-      .onDragDropEvent(async (event) => {
-        const p = event.payload;
-        if (p.type === "enter" || p.type === "over") {
-          const inside = hitEl(panelRef.current, p.position.x, p.position.y);
-          // Version columns highlight their refs strip (drop destination);
-          // the GLOBAL SRC column highlights as a whole.
-          setOsDragTarget(inside ? (column.isSrc ? "main" : "src") : null);
-        } else if (p.type === "leave") {
-          setOsDragTarget(null);
-        } else if (p.type === "drop") {
-          const inside = hitEl(panelRef.current, p.position.x, p.position.y);
-          setOsDragTarget(null);
-          if (inside) await ingest(p.paths);
-        }
-      })
-      .then((fn) => {
-        if (disposed) fn();
-        else unlisten = fn;
-      })
-      .catch((e) => console.error("onDragDropEvent registration failed:", e));
-    return () => {
-      disposed = true;
-      if (unlisten) unlisten();
-    };
-  }, [column.isSrc, destDir]);
 
   const isTarget = targetVersion === column.version;
   const headerClass = isTarget
@@ -238,9 +170,9 @@ export function GalleryColumn({
 
   return (
     <div
-      ref={panelRef}
       data-column-version={column.version}
       data-column-dest={destDir}
+      data-column-is-src={column.isSrc ? "true" : undefined}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
         isDropTarget || osDragTarget != null
           ? "outline outline-2 outline-accent border-transparent"

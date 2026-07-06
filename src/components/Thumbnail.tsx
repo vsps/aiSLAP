@@ -7,6 +7,7 @@ import { cmd } from "../lib/tauri";
 import { basename, dirname } from "../lib/paths";
 import { assemblePromptFromMetadata } from "../lib/actions";
 import { startThresholdDrag } from "../lib/dragThreshold";
+import { getConfigCached, getImageMetadataCached } from "../lib/metadataCache";
 
 type Props = {
   image: GalleryImage;
@@ -63,10 +64,14 @@ export const Thumbnail = memo(function Thumbnail({
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null,
   );
-  const [videoInfo, setVideoInfo] = useState<{ fps: number | null; durationSec: number | null } | null>(null);
+  const [videoInfo, setVideoInfo] = useState<{
+    fps: number | null;
+    durationSec: number | null;
+  } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const metaCache = useRef<ImageMetadata | null | "loading">(null);
-  const videoInfoCache = useRef<{ fps: number | null; durationSec: number | null } | "loading" | null>(null);
+  const videoInfoCache = useRef<
+    { fps: number | null; durationSec: number | null } | "loading" | null
+  >(null);
 
   // When selection arrives via keyboard nav the thumb may be offscreen; scroll
   // it back into view. "nearest" avoids jumpy scrolls for already-visible rows.
@@ -111,12 +116,7 @@ export const Thumbnail = memo(function Thumbnail({
   function onMouseEnter(e: React.MouseEvent) {
     setTooltipPos({ x: e.clientX, y: e.clientY });
     hoverTimerRef.current = setTimeout(async () => {
-      let m = metaCache.current;
-      if (m === null || m === "loading") {
-        metaCache.current = "loading";
-        m = await cmd.image_metadata_read(image.path).catch(() => null);
-        metaCache.current = m;
-      }
+      const m = await getImageMetadataCached(image.path);
       setTooltipMeta(m);
 
       // Video-only: fps/duration aren't derivable from the thumbnail image
@@ -127,7 +127,7 @@ export const Thumbnail = memo(function Thumbnail({
         let v = videoInfoCache.current;
         if (v === null || v === "loading") {
           videoInfoCache.current = "loading";
-          const cfg = await cmd.config_load().catch(() => null);
+          const cfg = await getConfigCached();
           const ffmpegPath = (cfg?.ffmpegPath ?? "").trim();
           v = ffmpegPath
             ? await cmd
@@ -158,22 +158,31 @@ export const Thumbnail = memo(function Thumbnail({
     ? image.isVideo
       ? [
           `${dims.w}x${dims.h}`,
-          videoInfo?.fps != null ? `${Math.round(videoInfo.fps * 10) / 10}fps` : null,
-          videoInfo?.durationSec != null ? `${videoInfo.durationSec.toFixed(1)}s` : null,
+          videoInfo?.fps != null
+            ? `${Math.round(videoInfo.fps * 10) / 10}fps`
+            : null,
+          videoInfo?.durationSec != null
+            ? `${videoInfo.durationSec.toFixed(1)}s`
+            : null,
         ]
           .filter(Boolean)
           .join(" ")
       : `${dims.w}x${dims.h}`
     : null;
 
-  const tooltipPrompt = tooltipMeta ? assemblePromptFromMetadata(tooltipMeta) : null;
+  const tooltipPrompt = tooltipMeta
+    ? assemblePromptFromMetadata(tooltipMeta)
+    : null;
 
   // Path layout is <project>/<sequence>/<shot>/<version>/<filename>. GLOBAL SRC
   // sits directly under <project>, so it has no sequence/shot to show.
   const sequenceShotLabel =
     columnVersion === "GLOBAL SRC"
       ? "GLOBAL SRC"
-      : [basename(dirname(dirname(dirname(image.path)))), basename(dirname(dirname(image.path)))]
+      : [
+          basename(dirname(dirname(dirname(image.path)))),
+          basename(dirname(dirname(image.path))),
+        ]
           .filter(Boolean)
           .join(" / ");
 
@@ -304,9 +313,13 @@ export const Thumbnail = memo(function Thumbnail({
             transform: "translateY(-100%)",
           }}
         >
-          {tooltipMeta.provider && <div className="text-dim">{tooltipMeta.provider}</div>}
+          {tooltipMeta.provider && (
+            <div className="text-dim">{tooltipMeta.provider}</div>
+          )}
           {tooltipMeta.model && (
-            <div className="text-text font-semibold truncate">{tooltipMeta.model}</div>
+            <div className="text-text font-semibold truncate">
+              {tooltipMeta.model}
+            </div>
           )}
           <div className="text-dim truncate">{sequenceShotLabel}</div>
           <div className="font-mono text-text truncate">{image.filename}</div>
