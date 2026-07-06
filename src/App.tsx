@@ -19,6 +19,7 @@ import { ResizeBar } from "./components/ResizeBar";
 import { useGenerationStore } from "./stores/generationStore";
 import { useModelsStore } from "./stores/modelsStore";
 import { useSessionStore } from "./stores/sessionStore";
+import { useLayoutStore } from "./stores/layoutStore";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -28,16 +29,16 @@ export default function App() {
   const [version, setVersion] = useState<string>("");
   const traceActive = useSessionStore((s) => s.traceActive);
   const setTrace = useSessionStore((s) => s.setTrace);
-  const galleryHeight = useSessionStore((s) => s.galleryHeight);
-  const setGalleryHeight = useSessionStore((s) => s.setGalleryHeight);
-  const logHeight = useSessionStore((s) => s.logHeight);
-  const setLogHeight = useSessionStore((s) => s.setLogHeight);
-  const timelineHeight = useSessionStore((s) => s.timelineHeight);
-  const setTimelineHeight = useSessionStore((s) => s.setTimelineHeight);
-  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
-  const setThumbColWidth = useSessionStore((s) => s.setThumbColWidth);
-  const queueWidth = useSessionStore((s) => s.queueWidth);
-  const setQueueWidth = useSessionStore((s) => s.setQueueWidth);
+  const galleryHeight = useLayoutStore((s) => s.panelSizes.galleryHeight);
+  const setGalleryHeight = useLayoutStore((s) => s.setGalleryHeight);
+  const logHeight = useLayoutStore((s) => s.panelSizes.logHeight);
+  const setLogHeight = useLayoutStore((s) => s.setLogHeight);
+  const timelineHeight = useLayoutStore((s) => s.panelSizes.timelineHeight);
+  const setTimelineHeight = useLayoutStore((s) => s.setTimelineHeight);
+  const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
+  const setThumbColWidth = useLayoutStore((s) => s.setThumbColWidth);
+  const queueWidth = useLayoutStore((s) => s.panelSizes.queueWidth);
+  const setQueueWidth = useLayoutStore((s) => s.setQueueWidth);
 
   useEffect(() => {
     installOsDragDropListener();

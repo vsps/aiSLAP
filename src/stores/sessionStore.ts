@@ -57,12 +57,6 @@ type State = {
   sequenceStacks: SequenceStacks | null;
   sequenceStacksLoading: boolean;
 
-  galleryHeight: number;
-  thumbColWidth: number;
-  logHeight: number;
-  timelineHeight: number;
-  queueWidth: number;
-
   /** Gallery thumbnails render nothing (a "click to load" placeholder instead)
    *  until the user opts in — avoids flooding a slow/network project dir with
    *  reads the moment the app starts. Resets every launch (not persisted). */
@@ -105,28 +99,9 @@ type Actions = {
   /** Set or clear a per-version comment on the current shot; persists to shot.json. */
   setVersionComment: (version: string, comment: string) => Promise<void>;
 
-  setGalleryHeight: (n: number) => void;
-  setThumbColWidth: (n: number) => void;
-  setLogHeight: (n: number) => void;
-  setTimelineHeight: (n: number) => void;
-  setQueueWidth: (n: number) => void;
-
   enableThumbnails: () => void;
   setRestoringLastSession: (v: boolean) => void;
 };
-
-const GALLERY_H_MIN = 120;
-const GALLERY_H_MAX = 1200;
-const THUMB_W_MIN = 80;
-const THUMB_W_MAX = 500;
-const LOG_H_MIN = 24;
-const LOG_H_MAX = 600;
-const TIMELINE_H_MIN = 45;
-const TIMELINE_H_MAX = 400;
-const QUEUE_W_MIN = 120;
-const QUEUE_W_MAX = 1200;
-const clamp = (n: number, lo: number, hi: number) =>
-  Math.max(lo, Math.min(hi, Math.round(n)));
 
 const emptyChannel = (): PromptHistoryChannel => ({ entries: [], cursor: 0 });
 
@@ -185,12 +160,6 @@ export const useSessionStore = create<State & Actions>((set, get) => {
     starredLoading: false,
     sequenceStacks: null,
     sequenceStacksLoading: false,
-
-    galleryHeight: 400,
-    thumbColWidth: THUMB_W_MIN,
-    logHeight: 78,
-    timelineHeight: TIMELINE_H_MIN,
-    queueWidth: 400,
 
     thumbnailsEnabled: false,
     restoringLastSession: false,
@@ -547,22 +516,6 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         else delete next[version];
         return { versionComments: next };
       });
-    },
-
-    setGalleryHeight(n) {
-      set({ galleryHeight: clamp(n, GALLERY_H_MIN, GALLERY_H_MAX) });
-    },
-    setThumbColWidth(n) {
-      set({ thumbColWidth: clamp(n, THUMB_W_MIN, THUMB_W_MAX) });
-    },
-    setLogHeight(n) {
-      set({ logHeight: clamp(n, LOG_H_MIN, LOG_H_MAX) });
-    },
-    setTimelineHeight(n) {
-      set({ timelineHeight: clamp(n, TIMELINE_H_MIN, TIMELINE_H_MAX) });
-    },
-    setQueueWidth(n) {
-      set({ queueWidth: clamp(n, QUEUE_W_MIN, QUEUE_W_MAX) });
     },
 
     enableThumbnails() {

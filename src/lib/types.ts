@@ -318,11 +318,6 @@ export type AppState = {
   settings: Record<string, unknown>;
   refImages: RefImage[];
   iterations: number;
-  galleryHeight: number;
-  thumbColWidth: number;
-  logHeight: number;
-  timelineHeight: number;
-  queueWidth: number;
   /** When present, supersedes the flat sequencePrompt/shotPrompts/settings/refImages
    *  fields (those are still written for back-compat with old loaders). */
   chainLinks?: ChainLinkPersisted[];

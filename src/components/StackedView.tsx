@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSessionStore } from "../stores/sessionStore";
+import { useLayoutStore } from "../stores/layoutStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { cmd } from "../lib/tauri";
 import { selectImagePath, toggleStarPath } from "../lib/actions";
@@ -34,7 +35,7 @@ export function StackedView({ onDragStart }: Props) {
   const sequenceStacksLoading = useSessionStore((s) => s.sequenceStacksLoading);
   const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
   const setShot = useSessionStore((s) => s.setShot);
-  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
+  const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const [picker, setPicker] = useState<PickerState | null>(null);

@@ -9,6 +9,7 @@ import { StarredView } from "./StarredView";
 import { TraceView } from "./TraceView";
 import { Icon } from "../lib/icon";
 import { useSessionStore } from "../stores/sessionStore";
+import { useLayoutStore } from "../stores/layoutStore";
 import { addImageToRefs, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
@@ -21,7 +22,7 @@ export function Gallery() {
   const columns = useSessionStore((s) => s.columns);
   const traceActive = useSessionStore((s) => s.traceActive);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
-  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
+  const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
   const zoomImagePath = useSessionStore((s) => s.zoomImagePath);
   const setZoomImage = useSessionStore((s) => s.setZoomImage);
   const renameImagePath = useSessionStore((s) => s.renameImagePath);

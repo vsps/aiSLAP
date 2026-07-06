@@ -4,7 +4,7 @@ import {
   resolveClipMedia,
   useTimelineStore,
 } from "../stores/timelineStore";
-import { useSessionStore } from "../stores/sessionStore";
+import { useLayoutStore } from "../stores/layoutStore";
 import { fileSrc } from "../lib/assets";
 import { TimelineClip } from "./TimelineClip";
 import { TimelineTransport } from "./TimelineTransport";
@@ -21,7 +21,7 @@ export function Timeline() {
   const setPlayheadSec = useTimelineStore((s) => s.setPlayheadSec);
   const pause = useTimelineStore((s) => s.pause);
   const recordVideoDuration = useTimelineStore((s) => s.recordVideoDuration);
-  const timelineHeight = useSessionStore((s) => s.timelineHeight);
+  const timelineHeight = useLayoutStore((s) => s.panelSizes.timelineHeight);
 
   const stripRef = useRef<HTMLDivElement>(null);
   const [dropIdx, setDropIdx] = useState<number | null>(null);
