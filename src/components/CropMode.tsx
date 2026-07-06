@@ -5,6 +5,7 @@ import { cmd } from "../lib/tauri";
 import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
 import { dirname, basename } from "../lib/paths";
+import { FullscreenModal } from "./FullscreenModal";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Handle = "tl" | "tc" | "tr" | "ml" | "mr" | "bl" | "bc" | "br" | "move";
@@ -134,12 +135,6 @@ export function CropMode({ image, onSave, onCancel }: Props) {
     return () => window.removeEventListener("resize", updateBounds);
   }, [updateBounds]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
-
   function startDrag(e: React.PointerEvent, handle: Handle) {
     e.preventDefault();
     e.stopPropagation();
@@ -212,7 +207,7 @@ export function CropMode({ image, onSave, onCancel }: Props) {
   const ib = imgBounds;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <FullscreenModal onClose={onCancel} onClick={(e) => e.stopPropagation()}>
       <div className="flex-1 min-h-0 flex items-center justify-center relative overflow-hidden">
         <img
           ref={imgRef}
@@ -314,6 +309,6 @@ export function CropMode({ image, onSave, onCancel }: Props) {
           cancel
         </button>
       </div>
-    </div>
+    </FullscreenModal>
   );
 }

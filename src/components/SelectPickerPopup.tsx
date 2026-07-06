@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { Icon } from "../lib/icon";
 import { startThresholdDrag } from "../lib/dragThreshold";
+import { usePopupDismiss, useClampedPosition } from "../lib/popup";
 
 type Props = {
   anchor: { x: number; y: number };
@@ -30,35 +31,8 @@ export function SelectPickerPopup({
   onDragStart,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number }>({
-    left: anchor.x,
-    top: anchor.y,
-  });
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const pad = 4;
-    const left = Math.min(anchor.x, window.innerWidth - r.width - pad);
-    const top = Math.min(anchor.y, window.innerHeight - r.height - pad);
-    setPos({ left: Math.max(pad, left), top: Math.max(pad, top) });
-  }, [anchor.x, anchor.y]);
-
-  useEffect(() => {
-    const down = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("mousedown", down);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", down);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [onClose]);
+  const pos = useClampedPosition(ref, anchor.x, anchor.y);
+  usePopupDismiss(ref, onClose);
 
   const cols = Math.min(images.length, COLS_MAX);
 

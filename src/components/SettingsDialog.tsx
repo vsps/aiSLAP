@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
@@ -8,6 +8,7 @@ import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { invalidateConfigCache } from "../lib/metadataCache";
+import { ModalDialog } from "./ModalDialog";
 import {
   DEFAULT_CONFIG,
   DEFAULT_MAX_CONCURRENT_JOBS,
@@ -147,17 +148,6 @@ export function SettingsDialog({ onClose }: Props) {
     }
   }
 
-  const handleCloseRef = useRef(handleClose);
-  handleCloseRef.current = handleClose;
-
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleCloseRef.current();
-    };
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, []);
-
   // Live-preview color edits — only after config has loaded to avoid wiping current colors on mount.
   useEffect(() => {
     if (!loaded) return;
@@ -202,15 +192,12 @@ export function SettingsDialog({ onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-8"
-      onClick={handleClose}
+    <ModalDialog
+      onClose={handleClose}
+      padded={false}
+      panelClassName="max-w-[560px] w-full shadow-xl"
     >
-      <div
-        className="bg-panel text-text max-w-[560px] w-full border border-dim shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-4 py-2 bg-surface text-text text-sm">Settings</div>
+      <div className="px-4 py-2 bg-surface text-text text-sm">Settings</div>
 
         <div className="p-4 flex flex-col gap-4 max-h-[70vh] overflow-y-auto thin-scroll">
           <Field label="FAL_KEY">
@@ -398,8 +385,7 @@ export function SettingsDialog({ onClose }: Props) {
             Save
           </button>
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }
 

@@ -1,9 +1,10 @@
-import { Suspense, useEffect } from "react";
+import { Suspense } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useGLTF, Center, Environment } from "@react-three/drei";
 import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { performImageAction } from "../lib/actions";
+import { FullscreenModal } from "./FullscreenModal";
 
 type Props = {
   image: GalleryImage;
@@ -23,17 +24,11 @@ function Model({ url }: { url: string }) {
 export function ModelZoomModal({ image, onClose, onDelete }: Props) {
   const modelUrl = fileSrc(image.path);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
-    <div
-      className="fixed inset-0 z-40 flex flex-col bg-bg"
+    <FullscreenModal
+      onClose={onClose}
+      z={40}
+      backgroundClassName="bg-bg"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* toolbar */}
@@ -78,6 +73,6 @@ export function ModelZoomModal({ image, onClose, onDelete }: Props) {
       <div className="px-3 py-1 bg-panel text-xs text-dim shrink-0">
         drag to orbit · scroll to zoom · right-drag to pan
       </div>
-    </div>
+    </FullscreenModal>
   );
 }

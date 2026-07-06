@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { IconBtn } from "./IconBtn";
+import { FullscreenModal } from "./FullscreenModal";
 import { PathContextMenu } from "./PathContextMenu";
 import { DrawMode } from "./DrawMode";
 import { CropMode } from "./CropMode";
@@ -108,10 +109,7 @@ export function ImageZoomModal({
   const src = fileSrc(image.path);
 
   return (
-    <div
-      className="fixed inset-0 z-40 bg-black/90 flex flex-col"
-      onClick={onClose}
-    >
+    <FullscreenModal onClose={onClose} closeOnEscape={false} z={40} onClick={onClose}>
       <div className="flex-1 min-h-0 overflow-auto thin-scroll flex items-center justify-center relative">
         {image.isVideo ? (
           <video
@@ -240,6 +238,6 @@ export function ImageZoomModal({
           ]}
         />
       )}
-    </div>
+    </FullscreenModal>
   );
 }

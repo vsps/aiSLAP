@@ -4,6 +4,7 @@ import { basename } from "../lib/paths";
 import { guessContentType } from "../lib/media";
 import { showMessage } from "../lib/dialog";
 import { FalProvider } from "../lib/providers/fal";
+import { FullscreenModal } from "./FullscreenModal";
 import type { SamBox, SamPoint } from "../lib/types";
 
 type Props = {
@@ -240,7 +241,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
   const visibleBxs = isVideo ? bxs.filter((b) => (b.frame_index ?? 0) === frame) : bxs;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <FullscreenModal onClose={onClose} closeOnEscape={false} onClick={(e) => e.stopPropagation()}>
       <div className="flex flex-1 min-h-0">
         {/* Media + pick overlay */}
         <div className="flex-1 min-h-0 flex items-center justify-center relative overflow-hidden">
@@ -419,7 +420,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
         <button onClick={() => onSave(pts, bxs)} className="text-xs px-3 py-0.5 bg-accent text-text hover:opacity-80">save</button>
         <button onClick={onClose} className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text">cancel</button>
       </div>
-    </div>
+    </FullscreenModal>
   );
 }
 
