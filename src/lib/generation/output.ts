@@ -13,7 +13,6 @@ import type {
   UploadedRef,
 } from "../types";
 import type { ProviderOutput } from "../providers";
-import { nonEmptyTrimmed } from "./prompts";
 
 export const DEFAULT_FILENAME_TEMPLATE =
   "<date>_<time>_<sequence>_<shot>_<model>_<version>";
@@ -24,6 +23,10 @@ export type DownloadCtx = {
   sequencePrompt: string;
   shotPrompt: string;
   shotPrompts: string[];
+  /** The exact prompt string submitted to the provider — script segments and
+   *  inclusion flags already applied. Written verbatim to the sidecar so it
+   *  can't drift from what was actually sent. */
+  combinedPrompt: string;
   settings: Record<string, unknown>;
   /** Uploaded refs (live path). Empty in recovery — see `refSnapshots`. */
   refs: UploadedRef[];
@@ -129,7 +132,6 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number): ImageMet
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
   }
-  const combined = nonEmptyTrimmed([ctx.sequencePrompt, ctx.shotPrompt]).join("\n\n");
   return {
     provider: ctx.node.provider ?? "fal",
     model: ctx.node.name,
@@ -138,7 +140,7 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number): ImageMet
     sequencePrompt: ctx.sequencePrompt,
     shotPrompt: ctx.shotPrompt,
     shotPrompts: ctx.shotPrompts,
-    combinedPrompt: combined,
+    combinedPrompt: ctx.combinedPrompt,
     settings: cleaned,
     refs:
       ctx.refSnapshots ??

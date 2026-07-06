@@ -255,6 +255,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           sequencePrompt: spec.sequencePrompt,
           shotPrompt: spec.shotPrompt,
           shotPrompts: spec.shotPrompts,
+          combinedPrompt: spec.combinedPrompt,
           settings: spec.settings,
           refs: uploaded,
           refSnapshots: undefined,
