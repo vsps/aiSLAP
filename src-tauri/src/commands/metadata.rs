@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::commands::visible::visible_set_remove_path_or_prefix;
-use crate::error::{AppError, AppResult};
+use crate::error::{run_blocking, AppError, AppResult};
+use crate::fsjson::write_json_atomic;
 
 #[tauri::command]
 pub fn image_metadata_read(image_path: String) -> AppResult<Option<Value>> {
@@ -21,11 +22,7 @@ pub fn image_metadata_read(image_path: String) -> AppResult<Option<Value>> {
 pub fn image_metadata_write(image_path: String, metadata: Value) -> AppResult<()> {
     let p = PathBuf::from(&image_path);
     let meta = metadata_path_for(&p)?;
-    let tmp = meta.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(&metadata)?;
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, &meta)?;
-    Ok(())
+    write_json_atomic(&meta, &metadata)
 }
 
 #[tauri::command]
@@ -43,24 +40,31 @@ pub fn image_delete(image_path: String) -> AppResult<()> {
     }
     let sidecar = dir.join(format!("{stem}.json"));
     if sidecar.exists() {
-        let _ = std::fs::remove_file(&sidecar);
+        if let Err(e) = std::fs::remove_file(&sidecar) {
+            tracing::warn!("sidecar delete failed: {e}");
+        }
     }
     let thumb = dir.join(format!("{stem}.thumb.png"));
     if thumb.exists() {
-        let _ = std::fs::remove_file(&thumb);
+        if let Err(e) = std::fs::remove_file(&thumb) {
+            tracing::warn!("thumb delete failed: {e}");
+        }
     }
     visible_set_remove_path_or_prefix(&p, false)?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn column_delete(column_path: String) -> AppResult<()> {
-    let p = PathBuf::from(&column_path);
-    if p.is_dir() {
-        std::fs::remove_dir_all(&p)?;
-    }
-    visible_set_remove_path_or_prefix(&p, true)?;
-    Ok(())
+pub async fn column_delete(column_path: String) -> AppResult<()> {
+    run_blocking(move || {
+        let p = PathBuf::from(&column_path);
+        if p.is_dir() {
+            std::fs::remove_dir_all(&p)?;
+        }
+        visible_set_remove_path_or_prefix(&p, true)?;
+        Ok(())
+    })
+    .await
 }
 
 fn metadata_path_for(p: &PathBuf) -> AppResult<PathBuf> {

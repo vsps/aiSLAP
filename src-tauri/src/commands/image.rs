@@ -5,33 +5,18 @@
 use std::path::{Path, PathBuf};
 
 use crate::commands::fsutil::{
-    as_str, is_media_ext, project_root_for, relativize, sidecar_path, thumb_path,
-    validate_filename_stem, version_number, version_prefix_for, SHOT_SIDECAR, SRC_DIR,
+    as_str, is_media_ext, next_version_name, project_root_for, rel_of, relativize, sidecar_path,
+    thumb_path, validate_filename_stem, TransferMode, SHOT_SIDECAR, SRC_DIR,
 };
-use crate::commands::visible::{load_visible_set, save_visible_set};
+use crate::commands::visible::{visible_set_rekey, visible_set_rekey_one};
 use crate::domain::ShotSidecar;
-use crate::error::{AppError, AppResult};
+use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{ensure_dir, read_json_or_default, write_json_atomic};
 
 #[derive(Clone, Copy)]
 enum CollisionPolicy {
     Overwrite,
     Error,
-}
-
-#[derive(Clone, Copy)]
-enum TransferMode {
-    Copy,
-    Move,
-}
-
-impl TransferMode {
-    fn label(self) -> &'static str {
-        match self {
-            TransferMode::Copy => "copy",
-            TransferMode::Move => "move",
-        }
-    }
 }
 
 fn sibling_paths(p: &Path) -> AppResult<(String, String, PathBuf, PathBuf)> {
@@ -134,7 +119,11 @@ pub fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResu
 }
 
 #[tauri::command]
-pub fn image_copy_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
+pub async fn image_copy_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
+    run_blocking(move || image_copy_to_dir_impl(source_path, dest_dir)).await
+}
+
+fn image_copy_to_dir_impl(source_path: String, dest_dir: String) -> AppResult<String> {
     let src = PathBuf::from(&source_path);
     let dest = PathBuf::from(&dest_dir);
     let out = transfer_triple_to_dir(&src, &dest, TransferMode::Copy, CollisionPolicy::Error)?;
@@ -142,38 +131,27 @@ pub fn image_copy_to_dir(source_path: String, dest_dir: String) -> AppResult<Str
     if let Ok(root) = project_root_for(&src) {
         let src_rel = relativize(&src, &root);
         let dest_rel = relativize(&out, &root);
-        if let (Some(s), Some(d)) = (src_rel, dest_rel) {
-            let mut set = load_visible_set(&root)?;
-            if set.contains(&s) {
-                set.insert(d);
-                save_visible_set(&root, &set)?;
-            }
-        }
+        visible_set_rekey_one(&root, TransferMode::Copy, src_rel, dest_rel)?;
     }
     Ok(as_str(&out))
 }
 
 #[tauri::command]
-pub fn image_move_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
+pub async fn image_move_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
+    run_blocking(move || image_move_to_dir_impl(source_path, dest_dir)).await
+}
+
+fn image_move_to_dir_impl(source_path: String, dest_dir: String) -> AppResult<String> {
     let src = PathBuf::from(&source_path);
     let dest = PathBuf::from(&dest_dir);
     let out = transfer_triple_to_dir(&src, &dest, TransferMode::Move, CollisionPolicy::Error)?;
-    // Re-key the visible entry if the source was visible.
+    // Re-key the visible entry if the source was visible. src no longer
+    // exists on disk; rel_of falls back to a plain prefix strip of the
+    // pre-move path string.
     if let Ok(root) = project_root_for(&out) {
-        // src no longer exists; relativize against pre-move path string directly.
-        let src_rel = src
-            .strip_prefix(&root)
-            .ok()
-            .map(as_str)
-            .or_else(|| relativize(&src, &root));
-        let dest_rel = relativize(&out, &root);
-        if let (Some(s), Some(d)) = (src_rel, dest_rel) {
-            let mut set = load_visible_set(&root)?;
-            if set.remove(&s) {
-                set.insert(d);
-                save_visible_set(&root, &set)?;
-            }
-        }
+        let src_rel = rel_of(&src, &root);
+        let dest_rel = rel_of(&out, &root);
+        visible_set_rekey_one(&root, TransferMode::Move, src_rel, dest_rel)?;
     }
     Ok(as_str(&out))
 }
@@ -230,19 +208,9 @@ pub fn image_rename(source_path: String, new_stem: String) -> AppResult<String> 
     }
     // Re-key visible entry if present.
     if let Ok(root) = project_root_for(&new_primary) {
-        let old_rel = src
-            .strip_prefix(&root)
-            .ok()
-            .map(as_str)
-            .or_else(|| relativize(&src, &root));
-        let new_rel = relativize(&new_primary, &root);
-        if let (Some(o), Some(n)) = (old_rel, new_rel) {
-            let mut set = load_visible_set(&root)?;
-            if set.remove(&o) {
-                set.insert(n);
-                save_visible_set(&root, &set)?;
-            }
-        }
+        let old_rel = rel_of(&src, &root);
+        let new_rel = rel_of(&new_primary, &root);
+        visible_set_rekey_one(&root, TransferMode::Move, old_rel, new_rel)?;
     }
     Ok(as_str(&new_primary))
 }
@@ -252,7 +220,20 @@ pub fn image_rename(source_path: String, new_stem: String) -> AppResult<String> 
 /// None or empty, the next version on `dst_shot` is allocated.
 /// Returns the destination version's absolute path.
 #[tauri::command]
-pub fn version_stack_move(
+pub async fn version_stack_move(
+    src_shot: String,
+    src_version: String,
+    dst_shot: String,
+    dst_version: Option<String>,
+    copy: bool,
+) -> AppResult<String> {
+    run_blocking(move || {
+        version_stack_move_impl(src_shot, src_version, dst_shot, dst_version, copy)
+    })
+    .await
+}
+
+fn version_stack_move_impl(
     src_shot: String,
     src_version: String,
     dst_shot: String,
@@ -267,21 +248,7 @@ pub fn version_stack_move(
     let dst_root = PathBuf::from(&dst_shot);
     let dst_version_name = match dst_version {
         Some(v) if !v.is_empty() => v,
-        _ => {
-            let mut max_n = 0u32;
-            if let Ok(it) = std::fs::read_dir(&dst_root) {
-                for e in it.flatten() {
-                    if let Some(name) = e.file_name().to_str() {
-                        if let Some(n) = version_number(name) {
-                            if n > max_n {
-                                max_n = n;
-                            }
-                        }
-                    }
-                }
-            }
-            format!("{}{:03}", version_prefix_for(&dst_root), max_n + 1)
-        }
+        _ => next_version_name(&dst_root),
     };
     let dst_dir = dst_root.join(&dst_version_name);
     ensure_dir(&dst_dir)?;
@@ -325,17 +292,9 @@ pub fn version_stack_move(
                 Some(n) => n.to_string(),
                 None => continue,
             };
-            let src_rel = src
-                .strip_prefix(root)
-                .ok()
-                .map(as_str)
-                .or_else(|| relativize(src, root));
+            let src_rel = rel_of(src, root);
             let dst_abs = dst_dir.join(&filename);
-            let dst_rel = dst_abs
-                .strip_prefix(root)
-                .ok()
-                .map(as_str)
-                .or_else(|| relativize(&dst_abs, root));
+            let dst_rel = rel_of(&dst_abs, root);
             if let (Some(s), Some(d)) = (src_rel, dst_rel) {
                 rel_pairs.push((s, d));
             }
@@ -350,21 +309,7 @@ pub fn version_stack_move(
     // Update the visible set: a move re-keys src -> dst; a copy adds dst
     // alongside src (the source file is still there and still visible).
     if let Some(root) = project_root.as_ref() {
-        let mut set = load_visible_set(root)?;
-        let mut changed = false;
-        for (s, d) in &rel_pairs {
-            if copy {
-                if set.contains(s) && set.insert(d.clone()) {
-                    changed = true;
-                }
-            } else if set.remove(s) {
-                set.insert(d.clone());
-                changed = true;
-            }
-        }
-        if changed {
-            save_visible_set(root, &set)?;
-        }
+        visible_set_rekey(root, mode, &rel_pairs)?;
     }
 
     // Clearing the source's pinned select only makes sense for a move — a

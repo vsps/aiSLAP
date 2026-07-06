@@ -8,7 +8,7 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, list_dirs, sanitize, version_number, version_prefix_for, PROJECT_SIDECAR,
+    as_str, list_dirs, next_version_name, sanitize, version_prefix_for, PROJECT_SIDECAR,
     SEQUENCE_SIDECAR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::gallery::scan_shot_columns;
@@ -17,9 +17,10 @@ use crate::commands::fsutil::project_root_for;
 use crate::domain::{
     GalleryColumn, ProjectSidecar, PromptEntry, SequenceSidecar, ShotSidecar,
 };
-use crate::error::{AppError, AppResult};
+use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{
-    ensure_dir, read_json_or_default as read_sidecar, write_json_atomic as write_sidecar_atomic,
+    ensure_dir, read_json_or_default as read_sidecar, write_json_atomic,
+    write_json_atomic as write_sidecar_atomic,
 };
 
 // ---------- Project / sequence / shot open + create ----------
@@ -109,14 +110,17 @@ pub struct ShotOpenResult {
 }
 
 #[tauri::command]
-pub fn shot_open(shot_path: String) -> AppResult<ShotOpenResult> {
-    let root = PathBuf::from(&shot_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
-    }
-    let sidecar: ShotSidecar = read_sidecar(&root.join(SHOT_SIDECAR))?;
-    let columns = scan_shot_columns(&root)?;
-    Ok(ShotOpenResult { columns, sidecar })
+pub async fn shot_open(shot_path: String) -> AppResult<ShotOpenResult> {
+    run_blocking(move || {
+        let root = PathBuf::from(&shot_path);
+        if !root.is_dir() {
+            return Err(AppError::Msg(format!("not a directory: {shot_path}")));
+        }
+        let sidecar: ShotSidecar = read_sidecar(&root.join(SHOT_SIDECAR))?;
+        let columns = scan_shot_columns(&root)?;
+        Ok(ShotOpenResult { columns, sidecar })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -221,23 +225,20 @@ fn rewrite_path_strings_in_subtree(
             Err(_) => return Ok(()),
         };
         if rewrite_paths_in_value(&mut value, old_prefix, new_prefix) {
-            let bytes = serde_json::to_vec_pretty(&value)?;
-            let tmp = path.with_extension("json.tmp");
-            std::fs::write(&tmp, bytes)?;
-            std::fs::rename(&tmp, path)?;
+            write_json_atomic(path, &value)?;
         }
         Ok(())
     })
 }
 
 #[tauri::command]
-pub fn sequence_rename(sequence_path: String, new_name: String) -> AppResult<String> {
-    rename_subtree(&sequence_path, &new_name, /* is_sequence */ true)
+pub async fn sequence_rename(sequence_path: String, new_name: String) -> AppResult<String> {
+    run_blocking(move || rename_subtree(&sequence_path, &new_name, /* is_sequence */ true)).await
 }
 
 #[tauri::command]
-pub fn shot_rename(shot_path: String, new_name: String) -> AppResult<String> {
-    rename_subtree(&shot_path, &new_name, /* is_sequence */ false)
+pub async fn shot_rename(shot_path: String, new_name: String) -> AppResult<String> {
+    run_blocking(move || rename_subtree(&shot_path, &new_name, /* is_sequence */ false)).await
 }
 
 /// Rename a sequence or shot folder and keep every reference to it valid.
@@ -289,13 +290,17 @@ fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResul
         let sidecar_path = new_path.join(SEQUENCE_SIDECAR);
         if let Ok(mut sidecar) = read_sidecar::<SequenceSidecar>(&sidecar_path) {
             sidecar.name = trimmed.to_string();
-            let _ = write_sidecar_atomic(&sidecar_path, &sidecar);
+            if let Err(e) = write_sidecar_atomic(&sidecar_path, &sidecar) {
+                tracing::warn!("sequence sidecar name update failed: {e}");
+            }
         }
     } else {
         let sidecar_path = new_path.join(SHOT_SIDECAR);
         if let Ok(mut sidecar) = read_sidecar::<ShotSidecar>(&sidecar_path) {
             sidecar.name = trimmed.to_string();
-            let _ = write_sidecar_atomic(&sidecar_path, &sidecar);
+            if let Err(e) = write_sidecar_atomic(&sidecar_path, &sidecar) {
+                tracing::warn!("shot sidecar name update failed: {e}");
+            }
         }
     }
 
@@ -310,7 +315,9 @@ fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResul
             old.strip_prefix(&project_root).ok().map(as_str),
             new_path.strip_prefix(&project_root).ok().map(as_str),
         ) {
-            let _ = visible_set_rename_prefix(&project_root, &old_rel, &new_rel);
+            if let Err(e) = visible_set_rename_prefix(&project_root, &old_rel, &new_rel) {
+                tracing::warn!("visible-set prefix rename failed: {e}");
+            }
         }
     }
 
@@ -322,21 +329,27 @@ fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResul
 #[tauri::command]
 pub fn version_create_next(shot_path: String) -> AppResult<String> {
     let root = PathBuf::from(&shot_path);
-    let mut max_n = 0u32;
-    if let Ok(it) = std::fs::read_dir(&root) {
-        for e in it.flatten() {
-            if let Some(name) = e.file_name().to_str() {
-                if let Some(n) = version_number(name) {
-                    if n > max_n {
-                        max_n = n;
-                    }
-                }
-            }
-        }
-    }
-    let next = format!("{}{:03}", version_prefix_for(&root), max_n + 1);
+    let next = next_version_name(&root);
     ensure_dir(&root.join(&next))?;
     Ok(next)
+}
+
+/// Read-modify-write helper for the common shot-sidecar-field-update shape:
+/// validate the shot dir exists, load the sidecar, apply `mutate`, persist,
+/// and hand back the updated sidecar for callers that want it.
+fn with_shot_sidecar(
+    shot_path: &str,
+    mutate: impl FnOnce(&mut ShotSidecar),
+) -> AppResult<ShotSidecar> {
+    let root = PathBuf::from(shot_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
+    }
+    let path = root.join(SHOT_SIDECAR);
+    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
+    mutate(&mut sidecar);
+    write_sidecar_atomic(&path, &sidecar)?;
+    Ok(sidecar)
 }
 
 #[tauri::command]
@@ -345,19 +358,14 @@ pub fn shot_version_select_set(
     version: String,
     filename: Option<String>,
 ) -> AppResult<ShotSidecar> {
-    let root = PathBuf::from(&shot_path);
-    let sidecar_path = root.join(SHOT_SIDECAR);
-    let mut sidecar: ShotSidecar = read_sidecar(&sidecar_path)?;
-    match filename {
+    with_shot_sidecar(&shot_path, |sidecar| match filename {
         Some(f) if !f.is_empty() => {
             sidecar.version_selects.insert(version, f);
         }
         _ => {
             sidecar.version_selects.remove(&version);
         }
-    }
-    write_sidecar_atomic(&sidecar_path, &sidecar)?;
-    Ok(sidecar)
+    })
 }
 
 // ---------- Prompt history ----------
@@ -501,14 +509,10 @@ pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppRe
 
 #[tauri::command]
 pub fn shot_clip_media_set(shot_path: String, media_path: Option<String>) -> AppResult<()> {
-    let root = PathBuf::from(&shot_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
-    }
-    let path = root.join(SHOT_SIDECAR);
-    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
-    sidecar.clip_media_path = media_path;
-    write_sidecar_atomic(&path, &sidecar)
+    with_shot_sidecar(&shot_path, |sidecar| {
+        sidecar.clip_media_path = media_path;
+    })
+    .map(drop)
 }
 
 /// Set or clear the short comment associated with a version folder. Trimmed
@@ -519,17 +523,13 @@ pub fn shot_version_comment_set(
     version: String,
     comment: Option<String>,
 ) -> AppResult<()> {
-    let root = PathBuf::from(&shot_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
-    }
-    let path = root.join(SHOT_SIDECAR);
-    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
-    let trimmed = comment.unwrap_or_default().trim().to_string();
-    if trimmed.is_empty() {
-        sidecar.version_comments.remove(&version);
-    } else {
-        sidecar.version_comments.insert(version, trimmed);
-    }
-    write_sidecar_atomic(&path, &sidecar)
+    with_shot_sidecar(&shot_path, |sidecar| {
+        let trimmed = comment.unwrap_or_default().trim().to_string();
+        if trimmed.is_empty() {
+            sidecar.version_comments.remove(&version);
+        } else {
+            sidecar.version_comments.insert(version, trimmed);
+        }
+    })
+    .map(drop)
 }
