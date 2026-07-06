@@ -22,6 +22,7 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { getProvider } from "../providers";
 import { swallow } from "../errors";
 import { preflightChain } from "../chainValidation";
+import { isVideoPath } from "../media";
 import {
   buildCombinedForLink,
   buildPromptsForLink,
@@ -251,7 +252,7 @@ function persistLink(l: ChainLink): ChainLinkPersisted {
  *  "source" role (args.ts's fallback then routes it as an element/source). */
 function chainPrevRole(model: ModelNode, prevPath: string): RoleAssignment | null {
   const roles = model.ref_roles ?? [];
-  const isVideo = /\.(mp4|webm|mov|mkv|m4v|avi)$/i.test(prevPath);
+  const isVideo = isVideoPath(prevPath);
   // Video → prefer source (img2img / vid2vid).
   // Image → prefer start (img → video), else source.
   if (isVideo && roles.some((r) => r.role === "source")) return { kind: "source" };

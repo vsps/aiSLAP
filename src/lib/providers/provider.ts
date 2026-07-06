@@ -1,5 +1,7 @@
 // Provider abstraction. Hides SDK differences so runJob stays single-purpose.
 
+import { isVideoExt } from "../media";
+
 export type ProviderProgress =
   | { kind: "queued"; position?: number }
   | { kind: "running" }
@@ -48,14 +50,12 @@ export type ProviderRunHooks = {
 
 export type ProviderName = "fal" | "replicate";
 
-const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv"]);
-
 export function isVideoUrl(url: string): boolean {
   try {
     const u = new URL(url);
     const m = u.pathname.match(/\.([a-zA-Z0-9]{2,5})(?:$|\?)/);
     if (!m) return false;
-    return VIDEO_EXTS.has(m[1].toLowerCase());
+    return isVideoExt(m[1]);
   } catch {
     return false;
   }

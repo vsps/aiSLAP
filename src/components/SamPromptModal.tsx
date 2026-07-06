@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fileSrc } from "../lib/assets";
 import { basename } from "../lib/paths";
-import { guessContentType } from "../lib/args";
+import { guessContentType } from "../lib/media";
 import { showMessage } from "../lib/dialog";
 import { FalProvider } from "../lib/providers/fal";
 import type { SamBox, SamPoint } from "../lib/types";

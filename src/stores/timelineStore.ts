@@ -5,16 +5,10 @@ import type {
   TimelineClip,
 } from "../lib/types";
 import { cmd } from "../lib/tauri";
+import { isVideoPath } from "../lib/media";
 
 const DEFAULT_CLIP_DURATION_SEC = 5;
 const SAVE_DEBOUNCE_MS = 500;
-
-const VIDEO_EXTS = ["mp4", "webm", "mov", "mkv"] as const;
-
-export function isVideoPath(p: string): boolean {
-  const ext = p.split(".").pop()?.toLowerCase() ?? "";
-  return (VIDEO_EXTS as readonly string[]).includes(ext);
-}
 
 type State = {
   seqPath: string | null;

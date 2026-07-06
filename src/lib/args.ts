@@ -280,16 +280,3 @@ function buildImageArray(
   return max ? urls.slice(0, max) : urls;
 }
 
-export function guessContentType(filename: string): string {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  const map: Record<string, string> = {
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    webp: "image/webp",
-    gif: "image/gif",
-    mp4: "video/mp4",
-    webm: "video/webm",
-  };
-  return map[ext ?? ""] ?? "application/octet-stream";
-}

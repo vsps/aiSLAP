@@ -19,8 +19,8 @@ import { performImageAction } from "../lib/actions";
 import type { ModelNode, RefImage, RoleAssignment } from "../lib/types";
 import {
   MEDIA_EXTS,
-  VIDEO_EXTS,
   classifyMedia,
+  isVideoPath,
   type MediaKind,
 } from "../lib/media";
 
@@ -450,11 +450,6 @@ export function RefImagesColumn() {
       )}
     </>
   );
-}
-
-function isVideoPath(path: string): boolean {
-  const ext = path.toLowerCase().split(".").pop();
-  return !!ext && VIDEO_EXTS.includes(ext);
 }
 
 function isAudioPath(path: string): boolean {

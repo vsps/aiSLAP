@@ -1,3 +1,4 @@
+import { classifyMedia } from "./media";
 import type { ChainLink, ModelInput, ModelNode } from "./types";
 
 export type ProblemSeverity = "error" | "warn";
@@ -137,14 +138,10 @@ export function preflightChain(links: ChainLink[]): LinkProblem[] {
   return problems;
 }
 
-const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp"]);
-
 function extToType(path: string): "IMAGE" | "VIDEO" | null {
-  const ext = path.toLowerCase().split(".").pop();
-  if (!ext) return null;
-  if (VIDEO_EXTS.has(ext)) return "VIDEO";
-  if (IMAGE_EXTS.has(ext)) return "IMAGE";
+  const kind = classifyMedia(path);
+  if (kind === "video") return "VIDEO";
+  if (kind === "image") return "IMAGE";
   return null;
 }
 

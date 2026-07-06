@@ -3,6 +3,7 @@
 import { cmd } from "./tauri";
 import { basename } from "./paths";
 import { confirmAction, showMessage } from "./dialog";
+import { classifyMedia, guessContentType } from "./media";
 import { makeChainLink, useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
@@ -217,14 +218,11 @@ export type ImageAction =
   | "restore_chain"
   | "show_info";
 
-const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
-
 // Transcode an on-disk image to PNG bytes and push to the system clipboard.
 // Canvas handles jpeg/webp/etc. so the clipboard receives something every OS
 // paste target can accept. Videos aren't supported (no "image" to copy).
 async function copyImageToClipboard(path: string): Promise<void> {
-  const ext = (path.split(".").pop() ?? "").toLowerCase();
-  if (VIDEO_EXTS.has(ext)) {
+  if (classifyMedia(path) === "video") {
     await showMessage("Copy image not supported for video files", {
       kind: "warning",
     });
@@ -232,12 +230,7 @@ async function copyImageToClipboard(path: string): Promise<void> {
   }
   try {
     const { readFile } = await import("@tauri-apps/plugin-fs");
-    const mime =
-      ext === "jpg" || ext === "jpeg"
-        ? "image/jpeg"
-        : ext === "webp"
-          ? "image/webp"
-          : "image/png";
+    const mime = guessContentType(path);
     const bytes = await readFile(path);
     const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
     const img = new Image();
