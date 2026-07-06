@@ -134,22 +134,32 @@ let installed = false;
 export function installOsDragDropListener(): void {
   if (installed) return;
   installed = true;
-  getCurrentWebview()
-    .onDragDropEvent(async (event) => {
-      const p = event.payload;
-      if (p.type === "enter" || p.type === "over") {
-        setTarget(resolveTarget(p.position.x, p.position.y));
-      } else if (p.type === "leave") {
-        setTarget(null);
-      } else if (p.type === "drop") {
-        const hit = resolveTarget(p.position.x, p.position.y);
-        setTarget(null);
-        if (hit?.kind === "ref") {
-          await ingestIntoRefPanel(p.paths);
-        } else if (hit?.kind === "column") {
-          await ingestIntoColumn(p.paths, hit.destDir, hit.isSrc);
+  // getCurrentWebview() reads window.__TAURI_INTERNALS__ synchronously — if
+  // that isn't injected yet (e.g. a dev-mode Vite full-reload racing the
+  // Tauri preload script), it throws. This runs directly in App's mount
+  // effect with no error boundary above it, so an uncaught throw here blanks
+  // the entire app; never let it propagate.
+  try {
+    getCurrentWebview()
+      .onDragDropEvent(async (event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          setTarget(resolveTarget(p.position.x, p.position.y));
+        } else if (p.type === "leave") {
+          setTarget(null);
+        } else if (p.type === "drop") {
+          const hit = resolveTarget(p.position.x, p.position.y);
+          setTarget(null);
+          if (hit?.kind === "ref") {
+            await ingestIntoRefPanel(p.paths);
+          } else if (hit?.kind === "column") {
+            await ingestIntoColumn(p.paths, hit.destDir, hit.isSrc);
+          }
         }
-      }
-    })
-    .catch((e) => console.error("onDragDropEvent registration failed:", e));
+      })
+      .catch((e) => console.error("onDragDropEvent registration failed:", e));
+  } catch (e) {
+    installed = false;
+    console.error("installOsDragDropListener failed:", e);
+  }
 }
