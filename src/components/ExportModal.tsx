@@ -7,7 +7,6 @@ import {
   useTimelineStore,
 } from "../stores/timelineStore";
 import type {
-  Config,
   ExportSegment,
   TimelineClip,
   ShotLatestMedia,
@@ -79,7 +78,7 @@ export function ExportModal({ onClose }: Props) {
     setBusy(true);
     setErr(null);
     try {
-      const cfg = (await cmd.config_load().catch(() => null)) as Config | null;
+      const cfg = await cmd.config_load().catch(() => null);
       const ffmpegPath = (cfg?.ffmpegPath ?? "").trim();
       if (!ffmpegPath) {
         setErr("ffmpeg path is not configured (open Settings).");

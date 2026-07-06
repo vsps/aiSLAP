@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import type { Config, GalleryImage, ImageMetadata } from "../lib/types";
+import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
@@ -114,9 +114,7 @@ export const Thumbnail = memo(function Thumbnail({
       let m = metaCache.current;
       if (m === null || m === "loading") {
         metaCache.current = "loading";
-        m = (await cmd
-          .image_metadata_read(image.path)
-          .catch(() => null)) as ImageMetadata | null;
+        m = await cmd.image_metadata_read(image.path).catch(() => null);
         metaCache.current = m;
       }
       setTooltipMeta(m);
@@ -129,7 +127,7 @@ export const Thumbnail = memo(function Thumbnail({
         let v = videoInfoCache.current;
         if (v === null || v === "loading") {
           videoInfoCache.current = "loading";
-          const cfg = (await cmd.config_load().catch(() => null)) as Config | null;
+          const cfg = await cmd.config_load().catch(() => null);
           const ffmpegPath = (cfg?.ffmpegPath ?? "").trim();
           v = ffmpegPath
             ? await cmd

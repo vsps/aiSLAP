@@ -137,7 +137,7 @@ export const cmd = {
     rawInvoke("image_metadata_read", { imagePath }),
   image_metadata_write: (
     imagePath: string,
-    metadata: ImageMetadata | Record<string, unknown>,
+    metadata: ImageMetadata,
   ): Promise<void> =>
     rawInvoke("image_metadata_write", { imagePath, metadata }),
   image_delete: (imagePath: string): Promise<void> =>

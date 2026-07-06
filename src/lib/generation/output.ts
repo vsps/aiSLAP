@@ -63,7 +63,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const target = joinPath(ctx.versionDir, filename);
     await cmd.write_text_file(target, firstInline.inlineText ?? "");
     const meta = buildMetadataRecord(ctx, ctx.iterationBase);
-    await cmd.image_metadata_write(target, meta as unknown as ImageMetadata);
+    await cmd.image_metadata_write(target, meta);
     written.push(target);
     return written;
   }
@@ -79,7 +79,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       await cmd.download_to_path(firstModel3d.thumbUrl, thumbPath).catch(() => {});
     }
     const meta = buildMetadataRecord(ctx, ctx.iterationBase);
-    await cmd.image_metadata_write(target, meta as unknown as ImageMetadata);
+    await cmd.image_metadata_write(target, meta);
     written.push(target);
     return written;
   }
@@ -97,7 +97,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
         .catch(() => false);
     }
     const meta = buildMetadataRecord(ctx, ctx.iterationBase);
-    await cmd.image_metadata_write(target, meta as unknown as ImageMetadata);
+    await cmd.image_metadata_write(target, meta);
     written.push(target);
     return written;
   }
@@ -116,13 +116,13 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       ? Math.min(ctx.iterationBase + i, ctx.iterationTotal)
       : ctx.iterationBase;
     const meta = buildMetadataRecord(ctx, iterIdx);
-    await cmd.image_metadata_write(target, meta as unknown as ImageMetadata);
+    await cmd.image_metadata_write(target, meta);
     written.push(target);
   }
   return written;
 }
 
-function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number) {
+function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number): ImageMetadata {
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(ctx.settings)) {
     if (k === "seed" && v === -1) continue;

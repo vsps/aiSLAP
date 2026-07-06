@@ -41,7 +41,7 @@ export { cancelAllGenerations } from "./runner";
 
 /** Load Config over IPC, swallowing errors (returns null if unavailable). */
 async function loadConfigSafely(): Promise<Config | null> {
-  return (await cmd.config_load().catch(() => null)) as Config | null;
+  return await cmd.config_load().catch(() => null);
 }
 
 /** Append sequence + shot prompt history to their sidecars and hydrate the
@@ -411,9 +411,7 @@ async function appendChainNextMediaPaths(
   prevMediaPath: string,
   newOutputs: string[],
 ): Promise<void> {
-  const meta = (await cmd
-    .image_metadata_read(prevMediaPath)
-    .catch(() => null)) as ImageMetadata | null;
+  const meta = await cmd.image_metadata_read(prevMediaPath).catch(() => null);
   if (!meta || !meta.chain) return;
   const existing = meta.chain.nextMediaPaths ?? [];
   const merged = [...existing];

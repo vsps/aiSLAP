@@ -3,7 +3,7 @@ import type { QueueStatus } from "@fal-ai/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
-import type { Config, FalLifecycle } from "../types";
+import type { FalLifecycle } from "../types";
 import {
   isVideoUrl,
   type Provider,
@@ -23,7 +23,7 @@ export class FalProvider implements Provider {
     ]);
     if (!key) throw new Error("FAL_KEY not configured — open Settings.");
     fal.config({ credentials: key, fetch: tauriFetch as unknown as typeof fetch });
-    this.lifecycle = (cfg as Config | null)?.falLifecycle;
+    this.lifecycle = cfg?.falLifecycle;
   }
 
   async uploadFile(file: File, _signal: AbortSignal): Promise<string> {

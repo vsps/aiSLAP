@@ -40,7 +40,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const c = (await cmd.config_load().catch(() => null)) as Config | null;
+      const c = await cmd.config_load().catch(() => null);
       setConfig(c);
     })();
   }, []);

@@ -165,9 +165,7 @@ export async function computeTraceSet(imagePath: string): Promise<TraceResult> {
     const p = queue.shift()!;
     if (nodes.has(p)) continue;
     nodes.add(p);
-    const meta = (await cmd
-      .image_metadata_read(p)
-      .catch(() => null)) as ImageMetadata | null;
+    const meta = await cmd.image_metadata_read(p).catch(() => null);
     if (!meta) continue;
     const refs = normalizeRefs(meta.refs);
     if (refs.length > 0) parents.set(p, refs);
@@ -344,9 +342,7 @@ export async function performImageAction(
       return;
     }
     case "copy_settings": {
-      const meta = (await cmd
-        .image_metadata_read(path)
-        .catch(() => null)) as ImageMetadata | null;
+      const meta = await cmd.image_metadata_read(path).catch(() => null);
       if (!meta) {
         await showMessage("No metadata for this image", { kind: "warning" });
         return;
@@ -366,9 +362,7 @@ export async function performImageAction(
       return;
     }
     case "restore_chain": {
-      const meta = (await cmd
-        .image_metadata_read(path)
-        .catch(() => null)) as ImageMetadata | null;
+      const meta = await cmd.image_metadata_read(path).catch(() => null);
       if (!meta?.chain) {
         await showMessage("No chain metadata for this image", { kind: "warning" });
         return;
@@ -392,9 +386,7 @@ export async function performImageAction(
       return;
     }
     case "copy_prompt": {
-      const meta = (await cmd
-        .image_metadata_read(path)
-        .catch(() => null)) as ImageMetadata | null;
+      const meta = await cmd.image_metadata_read(path).catch(() => null);
       if (!meta) {
         await showMessage("No metadata for this image", { kind: "warning" });
         return;

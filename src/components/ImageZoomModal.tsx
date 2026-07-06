@@ -95,7 +95,7 @@ export function ImageZoomModal({
     cmd
       .image_metadata_read(image.path)
       .then((m) => {
-        if (!cancelled) setMeta(m as ImageMetadata | null);
+        if (!cancelled) setMeta(m);
       })
       .catch(() => {
         if (!cancelled) setMeta(null);

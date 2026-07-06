@@ -128,8 +128,7 @@ export function SettingsDialog({ onClose }: Props) {
       // Persist immediately into the on-disk config (merged into a fresh
       // load, NOT the dialog's edited copy — Cancel must not lose prices,
       // and fetching must not silently commit unsaved dialog edits).
-      const onDisk = ((await cmd.config_load().catch(() => null)) ??
-        DEFAULT) as Config;
+      const onDisk = (await cmd.config_load().catch(() => null)) ?? DEFAULT;
       await cmd.config_save({
         ...onDisk,
         falPrices: prices,
