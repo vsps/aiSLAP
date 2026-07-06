@@ -255,6 +255,21 @@ export type Config = {
   falPricesFetchedAt?: string;
 };
 
+export const DEFAULT_MAX_CONCURRENT_JOBS = 3;
+
+export const DEFAULT_CONFIG: Config = {
+  windowBounds: { width: 1600, height: 1000 },
+  projectPath: "",
+  lastSequence: "",
+  lastShot: "",
+  lastModel: "",
+  ffmpegPath: "",
+  maxConcurrentJobs: DEFAULT_MAX_CONCURRENT_JOBS,
+  filenameTemplate: undefined,
+  colors: undefined,
+  falLifecycle: undefined,
+};
+
 // ---------- Submission queue ----------
 
 export type JobStatus =

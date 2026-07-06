@@ -8,7 +8,13 @@ import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { invalidateConfigCache } from "../lib/metadataCache";
-import type { ColorOverrides, Config, FalLifecycle } from "../lib/types";
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_MAX_CONCURRENT_JOBS,
+  type ColorOverrides,
+  type Config,
+  type FalLifecycle,
+} from "../lib/types";
 
 const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
   { value: "", label: "fal default (keep forever)" },
@@ -34,25 +40,12 @@ type Props = {
   onClose: () => void;
 };
 
-const DEFAULT: Config = {
-  windowBounds: { width: 1600, height: 1000 },
-  projectPath: "",
-  lastSequence: "",
-  lastShot: "",
-  lastModel: "",
-  ffmpegPath: "",
-  maxConcurrentJobs: 3,
-  filenameTemplate: undefined,
-  colors: undefined,
-  falLifecycle: undefined,
-};
-
 export function SettingsDialog({ onClose }: Props) {
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const [revealReplicate, setRevealReplicate] = useState(false);
-  const [config, setConfig] = useState<Config>(DEFAULT);
+  const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [originalColors, setOriginalColors] = useState<
     ColorOverrides | undefined
   >(undefined);
@@ -131,7 +124,7 @@ export function SettingsDialog({ onClose }: Props) {
       // Persist immediately into the on-disk config (merged into a fresh
       // load, NOT the dialog's edited copy — Cancel must not lose prices,
       // and fetching must not silently commit unsaved dialog edits).
-      const onDisk = (await cmd.config_load().catch(() => null)) ?? DEFAULT;
+      const onDisk = (await cmd.config_load().catch(() => null)) ?? DEFAULT_CONFIG;
       await cmd.config_save({
         ...onDisk,
         falPrices: prices,
@@ -306,14 +299,14 @@ export function SettingsDialog({ onClose }: Props) {
               type="number"
               min={1}
               max={10}
-              value={config.maxConcurrentJobs ?? 3}
+              value={config.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS}
               onChange={(e) => {
                 const n = parseInt(e.currentTarget.value, 10);
                 setConfig((c) => ({
                   ...c,
                   maxConcurrentJobs: Number.isFinite(n)
                     ? Math.max(1, Math.min(10, n))
-                    : 3,
+                    : DEFAULT_MAX_CONCURRENT_JOBS,
                 }));
               }}
               className="bg-inset px-2 py-1 text-xs font-mono w-20"

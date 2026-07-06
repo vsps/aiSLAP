@@ -4,15 +4,16 @@
 import { cmd } from "../tauri";
 import { confirmAction } from "../dialog";
 import { pushLog } from "../../stores/logStore";
-import type {
-  ChainLink,
-  ChainLinkPersisted,
-  Config,
-  ImageMetadata,
-  Job,
-  ModelNode,
-  RefImage,
-  RoleAssignment,
+import {
+  DEFAULT_MAX_CONCURRENT_JOBS,
+  type ChainLink,
+  type ChainLinkPersisted,
+  type Config,
+  type ImageMetadata,
+  type Job,
+  type ModelNode,
+  type RefImage,
+  type RoleAssignment,
 } from "../types";
 import {
   selectActiveLink,
@@ -104,7 +105,7 @@ async function loadJobConfig(): Promise<{
   filenameTemplate: string;
 }> {
   const config = await loadConfigSafely();
-  setMaxConcurrentJobs(config?.maxConcurrentJobs ?? 3);
+  setMaxConcurrentJobs(config?.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS);
   return {
     ffmpegPath: config?.ffmpegPath ?? "",
     filenameTemplate: config?.filenameTemplate ?? "",
