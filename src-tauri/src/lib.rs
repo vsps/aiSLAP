@@ -70,6 +70,9 @@ pub fn run() {
             commands::gallery::sequence_stacks_scan,
             commands::session::shot_version_select_set,
             commands::image::version_stack_move,
+            commands::image::image_copy_to_sel,
+            commands::image::image_move_to_sel,
+            commands::image::export_selects,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

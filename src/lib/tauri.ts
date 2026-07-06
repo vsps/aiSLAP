@@ -86,7 +86,13 @@ export const cmd = {
     dstVersion: string | null,
     copy: boolean,
   ): Promise<string> =>
-    rawInvoke("version_stack_move", { srcShot, srcVersion, dstShot, dstVersion, copy }),
+    rawInvoke("version_stack_move", {
+      srcShot,
+      srcVersion,
+      dstShot,
+      dstVersion,
+      copy,
+    }),
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),
@@ -113,7 +119,10 @@ export const cmd = {
   version_create_next: (shotPath: string): Promise<string> =>
     rawInvoke("version_create_next", { shotPath }),
 
-  ref_copy_to_global_src: (shotPath: string, sourcePath: string): Promise<string> =>
+  ref_copy_to_global_src: (
+    shotPath: string,
+    sourcePath: string,
+  ): Promise<string> =>
     rawInvoke("ref_copy_to_global_src", { shotPath, sourcePath }),
 
   image_copy_to_dir: (sourcePath: string, destDir: string): Promise<string> =>
@@ -121,6 +130,19 @@ export const cmd = {
 
   image_move_to_dir: (sourcePath: string, destDir: string): Promise<string> =>
     rawInvoke("image_move_to_dir", { sourcePath, destDir }),
+
+  image_copy_to_sel: (shotPath: string, sourcePath: string): Promise<string> =>
+    rawInvoke("image_copy_to_sel", { shotPath, sourcePath }),
+
+  image_move_to_sel: (shotPath: string, sourcePath: string): Promise<string> =>
+    rawInvoke("image_move_to_sel", { shotPath, sourcePath }),
+
+  export_selects: (
+    projectPath: string,
+    destDir: string,
+    mode: string,
+  ): Promise<number> =>
+    rawInvoke("export_selects", { projectPath, destDir, mode }),
 
   image_rename: (sourcePath: string, newStem: string): Promise<string> =>
     rawInvoke("image_rename", { sourcePath, newStem }),
@@ -173,8 +195,7 @@ export const cmd = {
   shot_clip_media_set: (
     shotPath: string,
     mediaPath: string | null,
-  ): Promise<void> =>
-    rawInvoke("shot_clip_media_set", { shotPath, mediaPath }),
+  ): Promise<void> => rawInvoke("shot_clip_media_set", { shotPath, mediaPath }),
   shot_version_comment_set: (
     shotPath: string,
     version: string,

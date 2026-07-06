@@ -133,7 +133,8 @@ export function assemblePromptFromMetadata(meta: ImageMetadata): string {
     meta.combinedPrompt ||
     [
       meta.sequencePrompt,
-      ...(meta.shotPrompts ?? (meta.shotPrompt ? [meta.shotPrompt] : [meta.prompt ?? ""])),
+      ...(meta.shotPrompts ??
+        (meta.shotPrompt ? [meta.shotPrompt] : [meta.prompt ?? ""])),
     ]
       .filter(Boolean)
       .join(" ")
@@ -196,7 +197,9 @@ export async function addImageToRefs(imagePath: string): Promise<string> {
   const insideProject = !!projectPath && isChildOf(projectPath, imagePath);
   let finalPath = imagePath;
   if (!insideProject) {
-    finalPath = await cmd.ref_copy_to_global_src(shotPath, imagePath);
+    const destDir = `${shotPath}/SRC`;
+    await cmd.dir_ensure(destDir);
+    finalPath = await cmd.image_copy_to_dir(imagePath, destDir);
   }
   useGenerationStore.getState().addRefs([finalPath]);
   return finalPath;
@@ -275,7 +278,10 @@ export async function renameShot(newName: string): Promise<void> {
   const oldShotPath = shotPath;
   const oldShotBase = basename(oldShotPath);
 
-  const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldShotPath);
+  const inFlight = inFlightJobs(
+    useGenerationStore.getState().jobs,
+    oldShotPath,
+  );
   if (inFlight.length > 0) {
     throw new Error(
       `Cannot rename — ${inFlight.length} job${
@@ -295,7 +301,12 @@ export async function renameShot(newName: string): Promise<void> {
   await useSessionStore.getState().setShot(newShotPath);
 
   const scriptState = useScriptStore.getState();
-  const nextRaw = rewriteScriptHeading(scriptState.raw, 2, oldShotBase, trimmed);
+  const nextRaw = rewriteScriptHeading(
+    scriptState.raw,
+    2,
+    oldShotBase,
+    trimmed,
+  );
   if (nextRaw !== scriptState.raw) {
     await scriptState
       .save(projectPath, nextRaw)
@@ -321,6 +332,8 @@ export type ImageAction =
   | "copy_settings"
   | "copy_prompt"
   | "copy_to_global_src"
+  | "copy_to_sel"
+  | "move_to_sel"
   | "set_clip_media"
   | "trace"
   | "refresh"
@@ -431,6 +444,25 @@ export async function performImageAction(
       }
       return;
     }
+    case "copy_to_sel":
+    case "move_to_sel": {
+      const { shotPath } = session;
+      if (!shotPath) {
+        await showMessage("No shot open", { kind: "warning" });
+        return;
+      }
+      try {
+        const fn =
+          action === "copy_to_sel"
+            ? cmd.image_copy_to_sel
+            : cmd.image_move_to_sel;
+        await fn(shotPath, path);
+        await session.rescanShot();
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+      }
+      return;
+    }
     case "set_clip_media": {
       const { shotPath } = session;
       if (!shotPath) {
@@ -439,7 +471,8 @@ export async function performImageAction(
       }
       try {
         const tl = useTimelineStore.getState();
-        const current = tl.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null;
+        const current =
+          tl.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null;
         await tl.setShotClipMedia(shotPath, current === path ? null : path);
       } catch (e) {
         await showMessage(String(e), { kind: "error" });
@@ -457,9 +490,12 @@ export async function performImageAction(
         { title: "Reuse prompt", kind: "warning" },
       );
       if (!ok) return;
-      const { restoredRefs, skippedRefs } = await copySettingsFromMetadata(meta);
+      const { restoredRefs, skippedRefs } =
+        await copySettingsFromMetadata(meta);
       if (restoredRefs > 0 || skippedRefs > 0) {
-        const skip = skippedRefs ? `, ${skippedRefs} skipped (files missing)` : "";
+        const skip = skippedRefs
+          ? `, ${skippedRefs} skipped (files missing)`
+          : "";
         await showMessage(`Reused. Restored ${restoredRefs} ref(s)${skip}.`, {
           kind: "info",
         });
@@ -469,7 +505,9 @@ export async function performImageAction(
     case "restore_chain": {
       const meta = await cmd.image_metadata_read(path).catch(() => null);
       if (!meta?.chain) {
-        await showMessage("No chain metadata for this image", { kind: "warning" });
+        await showMessage("No chain metadata for this image", {
+          kind: "warning",
+        });
         return;
       }
       const ok = await confirmAction(
@@ -482,7 +520,8 @@ export async function performImageAction(
       const parts: string[] = [];
       if (missingModels)
         parts.push(`${missingModels} model(s) no longer in registry`);
-      if (skippedRefs) parts.push(`${skippedRefs} ref(s) skipped (missing files)`);
+      if (skippedRefs)
+        parts.push(`${skippedRefs} ref(s) skipped (missing files)`);
       if (parts.length > 0) {
         await showMessage(`Chain restored. ${parts.join(" · ")}.`, {
           kind: "info",

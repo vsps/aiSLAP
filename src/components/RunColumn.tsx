@@ -232,7 +232,7 @@ export function RunColumn() {
           className="text-[11px] font-mono text-dim text-center cursor-help"
           title={`${costLabel} — output-dependent, no fixed total. Fetched from fal.ai.`}
         >
-          {costLabel}
+          {costLabel.length > 40 ? "priced by output ⓘ" : costLabel}
         </span>
       )}
 

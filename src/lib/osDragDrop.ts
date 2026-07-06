@@ -51,13 +51,13 @@ function resolveTarget(x: number, y: number): OsDragTarget {
 
 // OS file drag-drop onto a column → copy each file in, then rescan so it
 // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
-// overwrite-on-collision). A version (generation) column routes EVERY drop
-// into its refs (SRC/) subfolder — dropped files are references, never loose
-// generated outputs, so they never land in the version folder itself.
+// overwrite-on-collision). The per-shot SRC and version columns copy directly
+// into their destDir.
 export async function ingestIntoColumn(
   paths: string[],
   destDir: string,
   isSrc: boolean,
+  version: string,
 ): Promise<void> {
   const shot = useSessionStore.getState().shotPath;
   if (!shot) {
@@ -69,12 +69,11 @@ export async function ingestIntoColumn(
   let any = false;
   for (const p of media) {
     try {
-      if (isSrc) {
+      if (isSrc && version === "GLOBAL SRC") {
         await cmd.ref_copy_to_global_src(shot, p);
       } else {
-        const srcDir = `${destDir}/SRC`;
-        await cmd.dir_ensure(srcDir);
-        await cmd.image_copy_to_dir(p, srcDir);
+        await cmd.dir_ensure(destDir);
+        await cmd.image_copy_to_dir(p, destDir);
       }
       any = true;
     } catch (e) {
@@ -88,26 +87,15 @@ export async function ingestIntoColumn(
 
 export async function ingestIntoRefPanel(paths: string[]): Promise<void> {
   const session = useSessionStore.getState();
-  const { shotPath, targetVersion, columns: sessionCols } = session;
+  const { shotPath } = session;
   if (!shotPath) {
     await showMessage("Open a shot first", { kind: "warning" });
     return;
   }
-  if (!targetVersion) {
-    await showMessage("Pick a target version first", { kind: "warning" });
-    return;
-  }
-  // Refs must not silently land in GLOBAL SRC — that path is now
-  // explicit-only (drop on the SRC column).
-  const targetCol = sessionCols.find((c) => c.version === targetVersion);
-  if (targetCol?.isSrc) {
-    await showMessage(
-      "Select a non-SRC version as target (drop on SRC explicitly to save there).",
-      { kind: "warning" },
-    );
-    return;
-  }
-  const destDir = `${shotPath}/${targetVersion}`;
+  const destDir = `${shotPath}/SRC`;
+  // Ensure the per-shot SRC folder exists (created at shot creation,
+  // but guard against legacy shots that don't have it yet).
+  await cmd.dir_ensure(destDir);
   const media = paths.filter((p) => classifyMedia(p) !== null);
   if (media.length === 0) return;
   const copied: string[] = [];
@@ -123,8 +111,6 @@ export async function ingestIntoRefPanel(paths: string[]): Promise<void> {
   }
   if (copied.length) {
     useGenerationStore.getState().addRefs(copied);
-    // Files now also live in the current gen folder — rescan so the
-    // version column reflects them too.
     await useSessionStore.getState().rescanShot();
   }
 }
@@ -153,7 +139,12 @@ export function installOsDragDropListener(): void {
           if (hit?.kind === "ref") {
             await ingestIntoRefPanel(p.paths);
           } else if (hit?.kind === "column") {
-            await ingestIntoColumn(p.paths, hit.destDir, hit.isSrc);
+            await ingestIntoColumn(
+              p.paths,
+              hit.destDir,
+              hit.isSrc,
+              hit.version,
+            );
           }
         }
       })

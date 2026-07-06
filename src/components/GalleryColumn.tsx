@@ -122,13 +122,8 @@ export function GalleryColumn({
     subscribeOsDragTarget,
     getOsDragTarget,
   );
-  const osDragTarget: "src" | "main" | null =
-    osDragHit?.kind === "column" && osDragHit.version === column.version
-      ? osDragHit.isSrc
-        ? "main"
-        : "src"
-      : null;
-  const [refsCollapsed, setRefsCollapsed] = useState(false);
+  const osDragTarget =
+    osDragHit?.kind === "column" && osDragHit.version === column.version;
   const subCols =
     !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
 
@@ -174,7 +169,7 @@ export function GalleryColumn({
       data-column-dest={destDir}
       data-column-is-src={column.isSrc ? "true" : undefined}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
-        isDropTarget || osDragTarget != null
+        isDropTarget || osDragTarget
           ? "outline outline-2 outline-accent border-transparent"
           : "border-border"
       } p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
@@ -182,10 +177,21 @@ export function GalleryColumn({
     >
       {collapsed ? (
         <div
-          className={`flex-1 min-h-0 flex items-center justify-center text-sm cursor-pointer ${headerClass}`}
-          onClick={onHeaderClick}
+          className={`flex-1 min-h-0 flex flex-col items-center justify-center text-sm cursor-pointer ${headerClass}`}
+          onClick={onToggleCollapsed}
           title={`Expand ${column.version}`}
         >
+          <button
+            className="text-dim hover:text-text leading-none mb-0.5"
+            title={`Expand ${column.version}`}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 14 }}
+            >
+              chevron_left
+            </span>
+          </button>
           <span className="font-mono" style={{ writingMode: "vertical-rl" }}>
             {column.version}
           </span>
@@ -193,10 +199,28 @@ export function GalleryColumn({
       ) : (
         <>
           <div
-            className={`flex items-center h-[25px] px-[5px] text-sm cursor-pointer shrink-0 ${headerClass}`}
-            onClick={onToggleCollapsed}
+            className={`flex items-center h-[25px] px-[5px] text-sm shrink-0 ${headerClass}`}
           >
-            <span className="flex-1 truncate" title={column.version}>
+            <button
+              className="shrink-0 mr-0.5 text-dim hover:text-text leading-none"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleCollapsed();
+              }}
+              title="Collapse column"
+            >
+              <span
+                className="material-symbols-outlined"
+                style={{ fontSize: 16 }}
+              >
+                chevron_right
+              </span>
+            </button>
+            <span
+              className="flex-1 truncate cursor-pointer"
+              title={column.version}
+              onClick={onHeaderClick}
+            >
               {column.version}
             </span>
             {!column.isSrc && colCost && colCost.total > 0 && (
@@ -236,62 +260,6 @@ export function GalleryColumn({
               />
             )}
           </div>
-          {!column.isSrc && (
-            <div className="shrink-0 border-b border-dim/50">
-              <div
-                className="flex items-center h-[18px] px-1 cursor-pointer select-none"
-                onClick={() => setRefsCollapsed((v) => !v)}
-              >
-                <span
-                  className={`text-[10px] font-mono flex-1 ${
-                    refsCollapsed && column.srcImages.length > 0
-                      ? "text-accent"
-                      : "text-dim/50"
-                  }`}
-                >
-                  refs
-                  {refsCollapsed && column.srcImages.length > 0
-                    ? ` (${column.srcImages.length})`
-                    : ""}
-                </span>
-                <span
-                  className="text-[10px] text-dim/40"
-                  style={{
-                    transform: refsCollapsed ? "rotate(-90deg)" : undefined,
-                    display: "inline-block",
-                  }}
-                >
-                  ▾
-                </span>
-              </div>
-              {!refsCollapsed && (
-                <div
-                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : `p-[3px] ${gridClass}`}`}
-                >
-                  {column.srcImages.length === 0 ? (
-                    <span className="text-[10px] text-dim/30 border border-dashed border-dim/20 px-2 py-px select-none">
-                      drop here
-                    </span>
-                  ) : (
-                    column.srcImages.map((img) => (
-                      <Thumbnail
-                        key={img.path}
-                        image={img}
-                        selected={selectedImagePath === img.path}
-                        columnVersion={column.version}
-                        isDragSource={dragState?.fromPath === img.path}
-                        onSelect={handleSelect}
-                        onToggleStar={handleToggleStar}
-                        onDragStart={onDragStart}
-                        clipMediaSelected={false}
-                        maxAspect={maxAspect}
-                      />
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          )}
           <div
             className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${gridClass}`}
           >
