@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { selectRefImages, useGenerationStore } from "../stores/generationStore";
+import { usePopupDismiss } from "../lib/popup";
 import type { ModelNode, RefImage, RoleAssignment } from "../lib/types";
 
 type Props = {
@@ -66,20 +67,7 @@ export function RoleMenu({ anchor, ref_, model, onAssign, onClose }: Props) {
     existingImageGroups.length ? Math.max(...existingImageGroups.map(Number)) + 1 : 1,
   );
 
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
-    };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [onClose]);
+  usePopupDismiss(menuRef, onClose);
 
   // Position near anchor.
   const rect = anchor?.getBoundingClientRect();

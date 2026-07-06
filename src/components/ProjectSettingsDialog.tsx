@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
 import { showMessage } from "../lib/dialog";
 import { useScriptStore } from "../stores/scriptStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { normalizeTitle, parseScript } from "../lib/script";
+import { ModalDialog } from "./ModalDialog";
 import type { Config } from "../lib/types";
 
 type Props = {
@@ -40,7 +41,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const c = (await cmd.config_load().catch(() => null)) as Config | null;
+      const c = await cmd.config_load().catch(() => null);
       setConfig(c);
     })();
   }, []);
@@ -65,16 +66,6 @@ export function ProjectSettingsDialog({ onClose }: Props) {
     const hasAssets = /^#\s+ASSETS\b/i.test(trimmed);
     setScript(hasAssets ? scriptRaw : "# ASSETS\n\n" + scriptRaw);
   }, [scriptRaw]);
-
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeRef.current();
-    };
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, []);
 
   function sanitizeName(name: string): string {
     return [...name].map((c) =>
@@ -168,15 +159,12 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-8"
-      onClick={onClose}
+    <ModalDialog
+      onClose={onClose}
+      padded={false}
+      panelClassName="relative max-w-[720px] w-full shadow-xl"
     >
-      <div
-        className="relative bg-panel text-text max-w-[720px] w-full border border-dim shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-4 py-2 bg-surface text-text text-sm">Project Settings</div>
+      <div className="px-4 py-2 bg-surface text-text text-sm">Project Settings</div>
 
         <div className="p-4 flex flex-col gap-4 max-h-[75vh] overflow-y-auto thin-scroll">
           <div className="flex flex-col gap-1">
@@ -327,7 +315,6 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </ModalDialog>
   );
 }

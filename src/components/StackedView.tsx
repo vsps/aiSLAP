@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSessionStore } from "../stores/sessionStore";
+import { useLayoutStore } from "../stores/layoutStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { cmd } from "../lib/tauri";
 import { selectImagePath, toggleStarPath } from "../lib/actions";
@@ -34,7 +35,7 @@ export function StackedView({ onDragStart }: Props) {
   const sequenceStacksLoading = useSessionStore((s) => s.sequenceStacksLoading);
   const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
   const setShot = useSessionStore((s) => s.setShot);
-  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
+  const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const [picker, setPicker] = useState<PickerState | null>(null);
@@ -42,6 +43,29 @@ export function StackedView({ onDragStart }: Props) {
   useEffect(() => {
     if (sequencePath && !sequenceStacks) void rescanSequenceStacks();
   }, [sequencePath, sequenceStacks, rescanSequenceStacks]);
+
+  // Stable across renders — VersionStack instances forward this straight to
+  // memo'd Thumbnails, so a fresh identity per render would defeat the memo.
+  // Must stay above the early returns below (Rules of Hooks): this used to
+  // sit after them, so the hook count differed between the loading/empty
+  // renders and the full render, crashing React on the transition between
+  // them ("Rendered more hooks than during the previous render").
+  const handleVersionStackDragStart = useCallback(
+    (payload: {
+      fromPath: string;
+      fromShot: string;
+      fromVersion: string;
+      pointerEvent: React.PointerEvent;
+    }) =>
+      onDragStart({
+        fromPath: payload.fromPath,
+        fromColumnVersion: payload.fromVersion,
+        fromShotPath: payload.fromShot,
+        fromVersionName: payload.fromVersion,
+        pointerEvent: payload.pointerEvent,
+      }),
+    [onDragStart],
+  );
 
   if (!sequencePath) {
     return (
@@ -112,13 +136,7 @@ export function StackedView({ onDragStart }: Props) {
                     columnVersion="GLOBAL SRC"
                     onSelect={selectImagePath}
                     onToggleStar={toggleStarPath}
-                    onDragStart={(payload) =>
-                      onDragStart({
-                        fromPath: payload.fromPath,
-                        fromColumnVersion: payload.fromColumnVersion,
-                        pointerEvent: payload.pointerEvent,
-                      })
-                    }
+                    onDragStart={onDragStart}
                     maxAspect={1}
                   />
                 </div>
@@ -184,15 +202,7 @@ export function StackedView({ onDragStart }: Props) {
                               imgPath,
                             )
                           }
-                          onDragStart={(payload) =>
-                            onDragStart({
-                              fromPath: payload.fromPath,
-                              fromColumnVersion: payload.fromVersion,
-                              fromShotPath: payload.fromShot,
-                              fromVersionName: payload.fromVersion,
-                              pointerEvent: payload.pointerEvent,
-                            })
-                          }
+                          onDragStart={handleVersionStackDragStart}
                         />
                       );
                     })

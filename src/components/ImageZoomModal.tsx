@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { IconBtn } from "./IconBtn";
+import { FullscreenModal } from "./FullscreenModal";
 import { PathContextMenu } from "./PathContextMenu";
 import { DrawMode } from "./DrawMode";
 import { CropMode } from "./CropMode";
 import { useSessionStore } from "../stores/sessionStore";
 import { cmd } from "../lib/tauri";
+import { assemblePromptFromMetadata } from "../lib/actions";
 
 type Props = {
   image: GalleryImage;
@@ -27,6 +29,7 @@ export function ImageZoomModal({
 }: Props) {
   const [fit, setFit] = useState<"fit" | "one">("fit");
   const [meta, setMeta] = useState<ImageMetadata | null>(null);
+  const zoomPrompt = meta ? assemblePromptFromMetadata(meta) : "";
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [cropMode, setCropMode] = useState(false);
@@ -93,7 +96,7 @@ export function ImageZoomModal({
     cmd
       .image_metadata_read(image.path)
       .then((m) => {
-        if (!cancelled) setMeta(m as ImageMetadata | null);
+        if (!cancelled) setMeta(m);
       })
       .catch(() => {
         if (!cancelled) setMeta(null);
@@ -106,10 +109,7 @@ export function ImageZoomModal({
   const src = fileSrc(image.path);
 
   return (
-    <div
-      className="fixed inset-0 z-40 bg-black/90 flex flex-col"
-      onClick={onClose}
-    >
+    <FullscreenModal onClose={onClose} closeOnEscape={false} z={40} onClick={onClose}>
       <div className="flex-1 min-h-0 overflow-auto thin-scroll flex items-center justify-center relative">
         {image.isVideo ? (
           <video
@@ -174,9 +174,9 @@ export function ImageZoomModal({
               {meta.timestamp}
             </div>
           )}
-          {meta?.shotPrompt || meta?.prompt ? (
-            <div className="text-xs truncate" title={meta.shotPrompt ?? meta.prompt ?? ""}>
-              {meta.shotPrompt ?? meta.prompt}
+          {meta && zoomPrompt ? (
+            <div className="text-xs truncate" title={zoomPrompt}>
+              {zoomPrompt}
             </div>
           ) : null}
         </div>
@@ -238,6 +238,6 @@ export function ImageZoomModal({
           ]}
         />
       )}
-    </div>
+    </FullscreenModal>
   );
 }

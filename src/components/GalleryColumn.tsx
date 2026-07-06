@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
 import type { ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
 import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
-import { basename } from "../lib/paths";
-import { classifyMedia } from "../lib/media";
-import { cmd } from "../lib/tauri";
-import { showMessage } from "../lib/dialog";
+import { usePricesStore } from "../stores/pricesStore";
+import { perItemPrice, formatCost } from "../lib/falPrices";
+import { getImageMetadataCached } from "../lib/metadataCache";
+import { getOsDragTarget, subscribeOsDragTarget } from "../lib/osDragDrop";
 
 export type DragState = {
   fromPath: string;
@@ -20,8 +19,9 @@ export type DragState = {
   fromVersionName?: string;
   overColumnVersion: string | null;
   shiftHeld: boolean;
-  pointerX: number;
-  pointerY: number;
+  /** Ctrl (or Cmd) held — in stacked-view drags, targets the whole stack
+   *  instead of just the dragged/selected image. */
+  ctrlHeld: boolean;
 } | null;
 
 type Props = {
@@ -63,11 +63,41 @@ export function GalleryColumn({
     shotPath ? (s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null) : null,
   );
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
-  const comment = useSessionStore(
-    (s) => s.versionComments[column.version] ?? "",
-  );
-  const setVersionComment = useSessionStore((s) => s.setVersionComment);
-  const [editing, setEditing] = useState(false);
+
+  // Approximate total cost of this column's generations, from cached fal
+  // prices (Settings → fetch prices) matched against each image's sidecar
+  // metadata (endpoint). SRC/ref columns aren't generations, so skipped
+  // entirely. Time/size-billed and unpriced images are silently excluded from
+  // the total and surfaced only as an "unpriced" count in the tooltip.
+  const prices = usePricesStore((s) => s.prices);
+  const [colCost, setColCost] = useState<{
+    total: number;
+    unknown: number;
+  } | null>(null);
+  useEffect(() => {
+    if (column.isSrc || column.images.length === 0) {
+      setColCost(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const metas = await Promise.all(
+        column.images.map((img) => getImageMetadataCached(img.path)),
+      );
+      if (cancelled) return;
+      let total = 0;
+      let unknown = 0;
+      for (const m of metas) {
+        const amount = m ? perItemPrice(m.provider, m.endpoint, prices) : null;
+        if (amount != null) total += amount;
+        else unknown += 1;
+      }
+      setColCost({ total, unknown });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [column.isSrc, column.images, prices]);
 
   // Stable per-column callbacks so memo'd Thumbnails skip re-renders.
   const handleSelect = useCallback(
@@ -88,84 +118,28 @@ export function GalleryColumn({
     },
     [shotPath, setShotClipMedia],
   );
-  const [osDragTarget, setOsDragTarget] = useState<"src" | "main" | null>(null);
+  const osDragHit = useSyncExternalStore(
+    subscribeOsDragTarget,
+    getOsDragTarget,
+  );
+  const osDragTarget: "src" | "main" | null =
+    osDragHit?.kind === "column" && osDragHit.version === column.version
+      ? osDragHit.isSrc
+        ? "main"
+        : "src"
+      : null;
   const [refsCollapsed, setRefsCollapsed] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   const subCols =
     !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
 
   // Stable maxAspect for grid mode — references stay equal between renders.
   const maxAspect = subCols > 1 ? 1 : undefined;
-
-  // OS file drag-drop onto a column → copy each file in, then rescan so it
-  // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
-  // overwrite-on-collision). A version (generation) column routes EVERY drop
-  // into its refs (SRC/) subfolder — dropped files are references, never loose
-  // generated outputs, so they never land in the version folder itself.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let disposed = false;
-    const hitEl = (el: HTMLElement | null, x: number, y: number): boolean => {
-      if (!el) return false;
-      const dpr = window.devicePixelRatio || 1;
-      const r = el.getBoundingClientRect();
-      const cx = x / dpr;
-      const cy = y / dpr;
-      return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
-    };
-    const ingest = async (paths: string[]) => {
-      const shot = useSessionStore.getState().shotPath;
-      if (!shot) {
-        await showMessage("Open a shot first", { kind: "warning" });
-        return;
-      }
-      const media = paths.filter((p) => classifyMedia(p) !== null);
-      if (media.length === 0) return;
-      let any = false;
-      for (const p of media) {
-        try {
-          if (column.isSrc) {
-            await cmd.ref_copy_to_global_src(shot, p);
-          } else {
-            const srcDir = `${destDir}/SRC`;
-            await cmd.dir_ensure(srcDir);
-            await cmd.image_copy_to_dir(p, srcDir);
-          }
-          any = true;
-        } catch (e) {
-          await showMessage(`Failed to add ${basename(p)}: ${e}`, {
-            kind: "error",
-          });
-        }
-      }
-      if (any) await useSessionStore.getState().rescanShot();
-    };
-    getCurrentWebview()
-      .onDragDropEvent(async (event) => {
-        const p = event.payload;
-        if (p.type === "enter" || p.type === "over") {
-          const inside = hitEl(panelRef.current, p.position.x, p.position.y);
-          // Version columns highlight their refs strip (drop destination);
-          // the GLOBAL SRC column highlights as a whole.
-          setOsDragTarget(inside ? (column.isSrc ? "main" : "src") : null);
-        } else if (p.type === "leave") {
-          setOsDragTarget(null);
-        } else if (p.type === "drop") {
-          const inside = hitEl(panelRef.current, p.position.x, p.position.y);
-          setOsDragTarget(null);
-          if (inside) await ingest(p.paths);
-        }
-      })
-      .then((fn) => {
-        if (disposed) fn();
-        else unlisten = fn;
-      })
-      .catch((e) => console.error("onDragDropEvent registration failed:", e));
-    return () => {
-      disposed = true;
-      if (unlisten) unlisten();
-    };
-  }, [column.isSrc, destDir]);
+  const gridClass =
+    subCols === 3
+      ? "grid grid-cols-3 gap-gallery-column-gap content-start"
+      : subCols === 2
+        ? "grid grid-cols-2 gap-gallery-column-gap content-start"
+        : "flex flex-col gap-gallery-column-gap";
 
   const isTarget = targetVersion === column.version;
   const headerClass = isTarget
@@ -189,12 +163,6 @@ export function GalleryColumn({
       onToggleCollapsed();
       return;
     }
-    if (isTarget) {
-      // Second click on the active non-SRC column opens the inline comment
-      // editor (replaces the prior collapse-on-re-click).
-      setEditing(true);
-      return;
-    }
     setTargetVersion(column.version);
   }
 
@@ -202,9 +170,9 @@ export function GalleryColumn({
 
   return (
     <div
-      ref={panelRef}
       data-column-version={column.version}
       data-column-dest={destDir}
+      data-column-is-src={column.isSrc ? "true" : undefined}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
         isDropTarget || osDragTarget != null
           ? "outline outline-2 outline-accent border-transparent"
@@ -216,55 +184,33 @@ export function GalleryColumn({
         <div
           className={`flex-1 min-h-0 flex items-center justify-center text-sm cursor-pointer ${headerClass}`}
           onClick={onHeaderClick}
-          title={
-            comment
-              ? `${column.version}: ${comment}`
-              : `Expand ${column.version}`
-          }
+          title={`Expand ${column.version}`}
         >
           <span className="font-mono" style={{ writingMode: "vertical-rl" }}>
             {column.version}
-            {comment ? ` · ${comment}` : ""}
           </span>
         </div>
       ) : (
         <>
           <div
             className={`flex items-center h-[25px] px-[5px] text-sm cursor-pointer shrink-0 ${headerClass}`}
-            onClick={onHeaderClick}
+            onClick={onToggleCollapsed}
           >
-            <IconBtn
-              name="unfold_less"
-              size={16}
-              title="Collapse column"
-              className="rotate-90 shrink-0 mr-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleCollapsed();
-              }}
-            />
-            {editing && !column.isSrc ? (
-              <VersionCommentInput
-                initial={comment}
-                onCommit={async (v) => {
-                  setEditing(false);
-                  try {
-                    await setVersionComment(column.version, v);
-                  } catch {
-                    /* logged in store */
-                  }
-                }}
-                onCancel={() => setEditing(false)}
-              />
-            ) : (
+            <span className="flex-1 truncate" title={column.version}>
+              {column.version}
+            </span>
+            {!column.isSrc && colCost && colCost.total > 0 && (
               <span
-                className="flex-1 truncate"
+                className="text-[10px] font-mono text-dim shrink-0 mr-1"
                 title={
-                  comment ? `${column.version}: ${comment}` : column.version
+                  colCost.unknown > 0
+                    ? `≈ $${formatCost(colCost.total)} total for this column (${colCost.unknown} image${
+                        colCost.unknown === 1 ? "" : "s"
+                      } unpriced)`
+                    : `≈ $${formatCost(colCost.total)} total for this column`
                 }
               >
-                {column.version}
-                {comment ? `: ${comment}` : ""}
+                ≈ ${formatCost(colCost.total)}
               </span>
             )}
             {column.isSrc && onRefresh && (
@@ -320,7 +266,7 @@ export function GalleryColumn({
               </div>
               {!refsCollapsed && (
                 <div
-                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : `p-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}`}
+                  className={`${osDragTarget === "src" ? "outline outline-2 outline-accent" : ""} ${column.srcImages.length === 0 ? "flex items-center justify-center min-h-[22px]" : `p-[3px] ${gridClass}`}`}
                 >
                   {column.srcImages.length === 0 ? (
                     <span className="text-[10px] text-dim/30 border border-dashed border-dim/20 px-2 py-px select-none">
@@ -347,7 +293,7 @@ export function GalleryColumn({
             </div>
           )}
           <div
-            className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${subCols === 3 ? "grid grid-cols-3 gap-gallery-column-gap content-start" : subCols === 2 ? "grid grid-cols-2 gap-gallery-column-gap content-start" : "flex flex-col gap-gallery-column-gap"}`}
+            className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${gridClass}`}
           >
             {column.images.map((img) => (
               <Thumbnail
@@ -377,58 +323,5 @@ export function GalleryColumn({
         </>
       )}
     </div>
-  );
-}
-
-/**
- * Inline editor for a version's short comment. Auto-focuses + selects,
- * commits on Enter and blur (empty value clears), cancels on Escape.
- * Click inside the input does not bubble to the header click handler.
- */
-function VersionCommentInput({
-  initial,
-  onCommit,
-  onCancel,
-}: {
-  initial: string;
-  onCommit: (v: string) => void;
-  onCancel: () => void;
-}) {
-  const [value, setValue] = useState(initial);
-  const ref = useRef<HTMLInputElement>(null);
-  const committed = useRef(false);
-
-  useEffect(() => {
-    ref.current?.focus();
-    ref.current?.select();
-  }, []);
-
-  return (
-    <input
-      ref={ref}
-      type="text"
-      value={value}
-      placeholder="comment…"
-      className="flex-1 min-w-0 bg-bg text-text text-sm px-1 py-0 outline-none border border-accent"
-      onChange={(e) => setValue(e.currentTarget.value)}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          if (committed.current) return;
-          committed.current = true;
-          onCommit(value);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          committed.current = true;
-          onCancel();
-        }
-      }}
-      onBlur={() => {
-        if (committed.current) return;
-        committed.current = true;
-        onCommit(value);
-      }}
-    />
   );
 }

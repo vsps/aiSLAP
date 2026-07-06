@@ -1,5 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { IconBtn } from "./IconBtn";
 import { RoleMenu } from "./RoleMenu";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
@@ -13,16 +12,20 @@ import {
 import { useSessionStore } from "../stores/sessionStore";
 import { fileSrc } from "../lib/assets";
 import { basename } from "../lib/paths";
-import { pickFile, showMessage } from "../lib/dialog";
-import { cmd } from "../lib/tauri";
+import { pickFile } from "../lib/dialog";
 import { performImageAction } from "../lib/actions";
 import type { ModelNode, RefImage, RoleAssignment } from "../lib/types";
 import {
   MEDIA_EXTS,
-  VIDEO_EXTS,
   classifyMedia,
+  isVideoPath,
   type MediaKind,
 } from "../lib/media";
+import {
+  getOsDragTarget,
+  ingestIntoRefPanel,
+  subscribeOsDragTarget,
+} from "../lib/osDragDrop";
 
 const GROUP_PALETTE = [
   "#e74c3c",
@@ -70,10 +73,6 @@ function showRow(
   return false;
 }
 
-function isMedia(path: string): boolean {
-  return classifyMedia(path) !== null;
-}
-
 const ROW_TITLE: Record<MediaKind, string> = {
   image: "REF IMAGES",
   video: "REF VIDEOS",
@@ -89,7 +88,6 @@ type DropTarget =
 export function RefImagesColumn() {
   const currentModel = useGenerationStore(selectCurrentModel);
   const refImages = useGenerationStore(selectRefImages);
-  const addRefs = useGenerationStore((s) => s.addRefs);
   const removeRef = useGenerationStore((s) => s.removeRef);
   const removeAllRefs = useGenerationStore((s) => s.removeAllRefs);
   const assignRole = useGenerationStore((s) => s.assignRole);
@@ -120,7 +118,11 @@ export function RefImagesColumn() {
     anchor: HTMLElement;
     ref: RefImage;
   } | null>(null);
-  const [dragOver, setDragOver] = useState(false);
+  const osDragHit = useSyncExternalStore(
+    subscribeOsDragTarget,
+    getOsDragTarget,
+  );
+  const dragOver = osDragHit?.kind === "ref";
   const [galleryDragOver, setGalleryDragOver] = useState(false);
   const [dragState, setDragState] = useState<{
     fromIdx: number;
@@ -152,94 +154,14 @@ export function RefImagesColumn() {
     return () => window.removeEventListener("pointermove", onMove);
   }, [imageDrag]);
 
-  async function ingestPaths(paths: string[]) {
-    const session = useSessionStore.getState();
-    const { shotPath, targetVersion, columns: sessionCols } = session;
-    if (!shotPath) {
-      await showMessage("Open a shot first", { kind: "warning" });
-      return;
-    }
-    if (!targetVersion) {
-      await showMessage("Pick a target version first", { kind: "warning" });
-      return;
-    }
-    // Refs must not silently land in GLOBAL SRC — that path is now
-    // explicit-only (drop on the SRC column).
-    const targetCol = sessionCols.find((c) => c.version === targetVersion);
-    if (targetCol?.isSrc) {
-      await showMessage(
-        "Select a non-SRC version as target (drop on SRC explicitly to save there).",
-        { kind: "warning" },
-      );
-      return;
-    }
-    const destDir = `${shotPath}/${targetVersion}`;
-    const media = paths.filter(isMedia);
-    if (media.length === 0) return;
-    const copied: string[] = [];
-    for (const p of media) {
-      try {
-        const dest = await cmd.image_copy_to_dir(p, destDir);
-        copied.push(dest);
-      } catch (e) {
-        await showMessage(`Failed to add ${basename(p)}: ${e}`, {
-          kind: "error",
-        });
-      }
-    }
-    if (copied.length) {
-      addRefs(copied);
-      // Files now also live in the current gen folder — rescan so the
-      // version column reflects them too.
-      await useSessionStore.getState().rescanShot();
-    }
-  }
-
   async function onAdd() {
     const paths = await pickFile("Pick reference media", {
       extensions: MEDIA_EXTS,
       multiple: true,
     });
     if (!paths) return;
-    await ingestPaths(paths);
+    await ingestIntoRefPanel(paths);
   }
-
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let disposed = false;
-    const hitTest = (x: number, y: number): boolean => {
-      const el = panelRef.current;
-      if (!el) return false;
-      const dpr = window.devicePixelRatio || 1;
-      const r = el.getBoundingClientRect();
-      const cx = x / dpr;
-      const cy = y / dpr;
-      return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
-    };
-    getCurrentWebview()
-      .onDragDropEvent(async (event) => {
-        const p = event.payload;
-        if (p.type === "enter" || p.type === "over") {
-          setDragOver(hitTest(p.position.x, p.position.y));
-        } else if (p.type === "leave") {
-          setDragOver(false);
-        } else if (p.type === "drop") {
-          const inside = hitTest(p.position.x, p.position.y);
-          setDragOver(false);
-          if (inside) await ingestPaths(p.paths);
-        }
-      })
-      .then((fn) => {
-        if (disposed) fn();
-        else unlisten = fn;
-      })
-      .catch((e) => console.error("onDragDropEvent registration failed:", e));
-    return () => {
-      disposed = true;
-      if (unlisten) unlisten();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   function beginHandleDrag(
     fromIdx: number,
@@ -450,11 +372,6 @@ export function RefImagesColumn() {
       )}
     </>
   );
-}
-
-function isVideoPath(path: string): boolean {
-  const ext = path.toLowerCase().split(".").pop();
-  return !!ext && VIDEO_EXTS.includes(ext);
 }
 
 function isAudioPath(path: string): boolean {

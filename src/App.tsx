@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bootstrap } from "./lib/bootstrap";
 import { isJobTerminal } from "./lib/jobs";
 import { swallow } from "./lib/errors";
+import { installOsDragDropListener } from "./lib/osDragDrop";
 import { SessionBar } from "./components/SessionBar";
 import { Workbench } from "./components/Workbench";
 import { Timeline } from "./components/Timeline";
@@ -18,6 +19,7 @@ import { ResizeBar } from "./components/ResizeBar";
 import { useGenerationStore } from "./stores/generationStore";
 import { useModelsStore } from "./stores/modelsStore";
 import { useSessionStore } from "./stores/sessionStore";
+import { useLayoutStore } from "./stores/layoutStore";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -27,16 +29,20 @@ export default function App() {
   const [version, setVersion] = useState<string>("");
   const traceActive = useSessionStore((s) => s.traceActive);
   const setTrace = useSessionStore((s) => s.setTrace);
-  const galleryHeight = useSessionStore((s) => s.galleryHeight);
-  const setGalleryHeight = useSessionStore((s) => s.setGalleryHeight);
-  const logHeight = useSessionStore((s) => s.logHeight);
-  const setLogHeight = useSessionStore((s) => s.setLogHeight);
-  const timelineHeight = useSessionStore((s) => s.timelineHeight);
-  const setTimelineHeight = useSessionStore((s) => s.setTimelineHeight);
-  const thumbColWidth = useSessionStore((s) => s.thumbColWidth);
-  const setThumbColWidth = useSessionStore((s) => s.setThumbColWidth);
-  const queueWidth = useSessionStore((s) => s.queueWidth);
-  const setQueueWidth = useSessionStore((s) => s.setQueueWidth);
+  const galleryHeight = useLayoutStore((s) => s.panelSizes.galleryHeight);
+  const setGalleryHeight = useLayoutStore((s) => s.setGalleryHeight);
+  const logHeight = useLayoutStore((s) => s.panelSizes.logHeight);
+  const setLogHeight = useLayoutStore((s) => s.setLogHeight);
+  const timelineHeight = useLayoutStore((s) => s.panelSizes.timelineHeight);
+  const setTimelineHeight = useLayoutStore((s) => s.setTimelineHeight);
+  const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
+  const setThumbColWidth = useLayoutStore((s) => s.setThumbColWidth);
+  const queueWidth = useLayoutStore((s) => s.panelSizes.queueWidth);
+  const setQueueWidth = useLayoutStore((s) => s.setQueueWidth);
+
+  useEffect(() => {
+    installOsDragDropListener();
+  }, []);
 
   useEffect(() => {
     let dispose: (() => void) | null = null;
@@ -159,7 +165,8 @@ function StatusBar({
   ready: boolean;
   bootError: string | null;
 }) {
-  const { entries, loaded } = useModelsStore();
+  const entriesCount = useModelsStore((s) => s.entries.length);
+  const loaded = useModelsStore((s) => s.loaded);
   const jobs = useGenerationStore((s) => s.jobs);
   const traceActive = useSessionStore((s) => s.traceActive);
   const restoringLastSession = useSessionStore((s) => s.restoringLastSession);
@@ -172,7 +179,7 @@ function StatusBar({
   return (
     <div className="bg-panel text-dim px-2 py-1 text-xs font-mono whitespace-nowrap overflow-hidden flex items-center gap-4">
       <span>{ready ? "ready" : "booting..."}</span>
-      <span>models: {loaded ? entries.length : "…"}</span>
+      <span>models: {loaded ? entriesCount : "…"}</span>
       {bootError && <span className="text-bad">boot error: {bootError}</span>}
       {restoringLastSession && (
         <span title="Restoring the last-used project/sequence/shot in the background — pick a different project any time.">

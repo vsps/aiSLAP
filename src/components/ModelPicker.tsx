@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
-import { selectCurrentModel, useGenerationStore } from "../stores/generationStore";
+import {
+  selectCurrentModel,
+  useGenerationStore,
+} from "../stores/generationStore";
 import type { ModelEntry } from "../lib/types";
 
 type Provider = "fal" | "replicate";
@@ -21,13 +24,24 @@ function effectiveGroup(e: ModelEntry): UiGroup {
 // Families grouped by UI group (Image, Video, Utility, 3D), deduped, in
 // first-seen order within each group.
 function familiesByGroupOf(list: ModelEntry[]): Record<UiGroup, string[]> {
-  const out: Record<UiGroup, string[]> = { image: [], video: [], utility: [], model3d: [] };
+  const out: Record<UiGroup, string[]> = {
+    image: [],
+    video: [],
+    utility: [],
+    model3d: [],
+  };
   const seen: Record<UiGroup, Set<string>> = {
-    image: new Set(), video: new Set(), utility: new Set(), model3d: new Set(),
+    image: new Set(),
+    video: new Set(),
+    utility: new Set(),
+    model3d: new Set(),
   };
   for (const e of list) {
     const g = effectiveGroup(e);
-    if (!seen[g].has(e.family)) { seen[g].add(e.family); out[g].push(e.family); }
+    if (!seen[g].has(e.family)) {
+      seen[g].add(e.family);
+      out[g].push(e.family);
+    }
   }
   return out;
 }
@@ -39,17 +53,18 @@ function orderedFamilies(list: ModelEntry[]): string[] {
 }
 
 export function ModelPicker() {
-  const { entries, loaded } = useModelsStore();
+  const entries = useModelsStore((s) => s.entries);
+  const loaded = useModelsStore((s) => s.loaded);
   const currentModel = useGenerationStore(selectCurrentModel);
   const selectModel = useGenerationStore((s) => s.selectModel);
   const currentPrice = usePricesStore((s) =>
     currentModel && (currentModel.provider ?? "fal") === "fal"
-      ? s.prices[currentModel.endpoint] ?? null
+      ? (s.prices[currentModel.endpoint] ?? null)
       : null,
   );
 
   const [provider, setProvider] = useState<Provider>(
-    () => ((currentModel?.provider ?? "fal") as Provider),
+    () => (currentModel?.provider ?? "fal") as Provider,
   );
   const [manualFamily, setManualFamily] = useState<string | null>(null);
 
@@ -58,7 +73,10 @@ export function ModelPicker() {
     [entries, provider],
   );
 
-  const familiesByGroup = useMemo(() => familiesByGroupOf(providerEntries), [providerEntries]);
+  const familiesByGroup = useMemo(
+    () => familiesByGroupOf(providerEntries),
+    [providerEntries],
+  );
 
   const imageFamilies = familiesByGroup.image;
   const videoFamilies = familiesByGroup.video;
@@ -66,7 +84,12 @@ export function ModelPicker() {
   const model3dFamilies = familiesByGroup.model3d;
 
   const families = useMemo(
-    () => [...imageFamilies, ...videoFamilies, ...utilityFamilies, ...model3dFamilies],
+    () => [
+      ...imageFamilies,
+      ...videoFamilies,
+      ...utilityFamilies,
+      ...model3dFamilies,
+    ],
     [imageFamilies, videoFamilies, utilityFamilies, model3dFamilies],
   );
 
@@ -87,7 +110,10 @@ export function ModelPicker() {
   // Selecting a family (via the dropdown or a provider switch, which resets
   // the family to that provider's first) has no submodel of its own — always
   // land on the family's first submodel so a model is immediately active.
-  function selectFamilyAndFirstModel(list: ModelEntry[], family: string | null) {
+  function selectFamilyAndFirstModel(
+    list: ModelEntry[],
+    family: string | null,
+  ) {
     setManualFamily(family);
     const first = list.find((e) => e.family === family);
     if (first) selectModel(first.node);
@@ -122,27 +148,46 @@ export function ModelPicker() {
         className="bg-bg text-text px-1 py-[2px] w-full"
         value={selectedFamily ?? ""}
         onChange={(e) =>
-          selectFamilyAndFirstModel(providerEntries, e.currentTarget.value || null)
+          selectFamilyAndFirstModel(
+            providerEntries,
+            e.currentTarget.value || null,
+          )
         }
       >
         {imageFamilies.length > 0 && (
           <optgroup label="Image">
-            {imageFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+            {imageFamilies.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
           </optgroup>
         )}
         {videoFamilies.length > 0 && (
           <optgroup label="Video">
-            {videoFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+            {videoFamilies.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
           </optgroup>
         )}
         {utilityFamilies.length > 0 && (
           <optgroup label="Utility">
-            {utilityFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+            {utilityFamilies.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
           </optgroup>
         )}
         {model3dFamilies.length > 0 && (
           <optgroup label="3D">
-            {model3dFamilies.map((f) => <option key={f} value={f}>{f}</option>)}
+            {model3dFamilies.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
           </optgroup>
         )}
       </select>

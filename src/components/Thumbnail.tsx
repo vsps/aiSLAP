@@ -1,10 +1,13 @@
 import { memo, useEffect, useRef, useState } from "react";
-import type { Config, GalleryImage, ImageMetadata } from "../lib/types";
+import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
 import { cmd } from "../lib/tauri";
 import { basename, dirname } from "../lib/paths";
+import { assemblePromptFromMetadata } from "../lib/actions";
+import { startThresholdDrag } from "../lib/dragThreshold";
+import { getConfigCached, getImageMetadataCached } from "../lib/metadataCache";
 
 type Props = {
   image: GalleryImage;
@@ -61,10 +64,14 @@ export const Thumbnail = memo(function Thumbnail({
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null,
   );
-  const [videoInfo, setVideoInfo] = useState<{ fps: number | null; durationSec: number | null } | null>(null);
+  const [videoInfo, setVideoInfo] = useState<{
+    fps: number | null;
+    durationSec: number | null;
+  } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const metaCache = useRef<ImageMetadata | null | "loading">(null);
-  const videoInfoCache = useRef<{ fps: number | null; durationSec: number | null } | "loading" | null>(null);
+  const videoInfoCache = useRef<
+    { fps: number | null; durationSec: number | null } | "loading" | null
+  >(null);
 
   // When selection arrives via keyboard nav the thumb may be offscreen; scroll
   // it back into view. "nearest" avoids jumpy scrolls for already-visible rows.
@@ -97,42 +104,19 @@ export const Thumbnail = memo(function Thumbnail({
     if (dragDisabled) return;
     const tgt = e.target as HTMLElement;
     if (tgt.closest("button")) return;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const onMove = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
-        cleanup();
-        onDragStart({
-          fromPath: image.path,
-          fromColumnVersion: columnVersion,
-          pointerEvent: e,
-        });
-      }
-    };
-    const onUp = () => cleanup();
-    const cleanup = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    startThresholdDrag(e, DRAG_THRESHOLD_PX, () =>
+      onDragStart({
+        fromPath: image.path,
+        fromColumnVersion: columnVersion,
+        pointerEvent: e,
+      }),
+    );
   }
 
   function onMouseEnter(e: React.MouseEvent) {
     setTooltipPos({ x: e.clientX, y: e.clientY });
     hoverTimerRef.current = setTimeout(async () => {
-      let m = metaCache.current;
-      if (m === null || m === "loading") {
-        metaCache.current = "loading";
-        m = (await cmd
-          .image_metadata_read(image.path)
-          .catch(() => null)) as ImageMetadata | null;
-        metaCache.current = m;
-      }
+      const m = await getImageMetadataCached(image.path);
       setTooltipMeta(m);
 
       // Video-only: fps/duration aren't derivable from the thumbnail image
@@ -143,7 +127,7 @@ export const Thumbnail = memo(function Thumbnail({
         let v = videoInfoCache.current;
         if (v === null || v === "loading") {
           videoInfoCache.current = "loading";
-          const cfg = (await cmd.config_load().catch(() => null)) as Config | null;
+          const cfg = await getConfigCached();
           const ffmpegPath = (cfg?.ffmpegPath ?? "").trim();
           v = ffmpegPath
             ? await cmd
@@ -174,8 +158,12 @@ export const Thumbnail = memo(function Thumbnail({
     ? image.isVideo
       ? [
           `${dims.w}x${dims.h}`,
-          videoInfo?.fps != null ? `${Math.round(videoInfo.fps * 10) / 10}fps` : null,
-          videoInfo?.durationSec != null ? `${videoInfo.durationSec.toFixed(1)}s` : null,
+          videoInfo?.fps != null
+            ? `${Math.round(videoInfo.fps * 10) / 10}fps`
+            : null,
+          videoInfo?.durationSec != null
+            ? `${videoInfo.durationSec.toFixed(1)}s`
+            : null,
         ]
           .filter(Boolean)
           .join(" ")
@@ -183,16 +171,7 @@ export const Thumbnail = memo(function Thumbnail({
     : null;
 
   const tooltipPrompt = tooltipMeta
-    ? tooltipMeta.combinedPrompt ||
-      [
-        tooltipMeta.sequencePrompt,
-        ...(tooltipMeta.shotPrompts ??
-          (tooltipMeta.shotPrompt
-            ? [tooltipMeta.shotPrompt]
-            : [tooltipMeta.prompt ?? ""])),
-      ]
-        .filter(Boolean)
-        .join(" ")
+    ? assemblePromptFromMetadata(tooltipMeta)
     : null;
 
   // Path layout is <project>/<sequence>/<shot>/<version>/<filename>. GLOBAL SRC
@@ -200,7 +179,10 @@ export const Thumbnail = memo(function Thumbnail({
   const sequenceShotLabel =
     columnVersion === "GLOBAL SRC"
       ? "GLOBAL SRC"
-      : [basename(dirname(dirname(dirname(image.path)))), basename(dirname(dirname(image.path)))]
+      : [
+          basename(dirname(dirname(dirname(image.path)))),
+          basename(dirname(dirname(image.path))),
+        ]
           .filter(Boolean)
           .join(" / ");
 
@@ -331,9 +313,13 @@ export const Thumbnail = memo(function Thumbnail({
             transform: "translateY(-100%)",
           }}
         >
-          {tooltipMeta.provider && <div className="text-dim">{tooltipMeta.provider}</div>}
+          {tooltipMeta.provider && (
+            <div className="text-dim">{tooltipMeta.provider}</div>
+          )}
           {tooltipMeta.model && (
-            <div className="text-text font-semibold truncate">{tooltipMeta.model}</div>
+            <div className="text-text font-semibold truncate">
+              {tooltipMeta.model}
+            </div>
           )}
           <div className="text-dim truncate">{sequenceShotLabel}</div>
           <div className="font-mono text-text truncate">{image.filename}</div>

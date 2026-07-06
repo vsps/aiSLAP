@@ -5,8 +5,9 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
 import { confirmAction, pickDirectory, showMessage } from "../lib/dialog";
 import { cmd } from "../lib/tauri";
-import { basename } from "../lib/paths";
+import { basename, normalizeDir } from "../lib/paths";
 import { normalizeTitle } from "../lib/script";
+import { renameSequence, renameShot } from "../lib/actions";
 
 type Props = {
   onOpenSettings?: () => void;
@@ -27,8 +28,6 @@ export function SessionBar({
   const setShot = useSessionStore((s) => s.setShot);
   const createSequence = useSessionStore((s) => s.createSequence);
   const createShot = useSessionStore((s) => s.createShot);
-  const renameSequence = useSessionStore((s) => s.renameSequence);
-  const renameShot = useSessionStore((s) => s.renameShot);
 
   const [creating, setCreating] = useState<
     null | "sequence" | "shot" | "rename-sequence" | "rename-shot"
@@ -46,7 +45,7 @@ export function SessionBar({
     if (!p) return;
     try {
       await setProject(p);
-      const normalized = p.replaceAll("\\", "/").replace(/\/+$/, "");
+      const normalized = normalizeDir(p);
       const [srcExists] = await cmd.dirs_exist([`${normalized}/SRC`]);
       if (!srcExists) {
         const ok = await confirmAction("No SRC folder found. Create it?", { title: "Global SRC" });

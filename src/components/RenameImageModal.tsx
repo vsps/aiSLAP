@@ -3,6 +3,7 @@ import type { GalleryImage } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
+import { isFilenameExists } from "../lib/errors";
 import { ModalDialog } from "./ModalDialog";
 
 type Props = {
@@ -63,11 +64,10 @@ export function RenameImageModal({ image, onClose }: Props) {
       session.setSelectedImage(newPath);
       onClose();
     } catch (e) {
-      const msg = String(e);
-      if (msg.includes("FILENAME_EXISTS")) {
+      if (isFilenameExists(e)) {
         setError("a file with that name already exists");
       } else {
-        await showMessage(msg, { kind: "error" });
+        await showMessage(String(e), { kind: "error" });
       }
       setBusy(false);
     }

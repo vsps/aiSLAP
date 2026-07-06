@@ -4,15 +4,16 @@
 import { cmd } from "../tauri";
 import { confirmAction } from "../dialog";
 import { pushLog } from "../../stores/logStore";
-import type {
-  ChainLink,
-  ChainLinkPersisted,
-  Config,
-  ImageMetadata,
-  Job,
-  ModelNode,
-  RefImage,
-  RoleAssignment,
+import {
+  DEFAULT_MAX_CONCURRENT_JOBS,
+  type ChainLink,
+  type ChainLinkPersisted,
+  type Config,
+  type ImageMetadata,
+  type Job,
+  type ModelNode,
+  type RefImage,
+  type RoleAssignment,
 } from "../types";
 import {
   selectActiveLink,
@@ -22,6 +23,7 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { getProvider } from "../providers";
 import { swallow } from "../errors";
 import { preflightChain } from "../chainValidation";
+import { isVideoPath } from "../media";
 import {
   buildCombinedForLink,
   buildPromptsForLink,
@@ -40,7 +42,7 @@ export { cancelAllGenerations } from "./runner";
 
 /** Load Config over IPC, swallowing errors (returns null if unavailable). */
 async function loadConfigSafely(): Promise<Config | null> {
-  return (await cmd.config_load().catch(() => null)) as Config | null;
+  return await cmd.config_load().catch(() => null);
 }
 
 /** Append sequence + shot prompt history to their sidecars and hydrate the
@@ -103,7 +105,7 @@ async function loadJobConfig(): Promise<{
   filenameTemplate: string;
 }> {
   const config = await loadConfigSafely();
-  setMaxConcurrentJobs(config?.maxConcurrentJobs ?? 3);
+  setMaxConcurrentJobs(config?.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS);
   return {
     ffmpegPath: config?.ffmpegPath ?? "",
     filenameTemplate: config?.filenameTemplate ?? "",
@@ -251,7 +253,7 @@ function persistLink(l: ChainLink): ChainLinkPersisted {
  *  "source" role (args.ts's fallback then routes it as an element/source). */
 function chainPrevRole(model: ModelNode, prevPath: string): RoleAssignment | null {
   const roles = model.ref_roles ?? [];
-  const isVideo = /\.(mp4|webm|mov|mkv|m4v|avi)$/i.test(prevPath);
+  const isVideo = isVideoPath(prevPath);
   // Video → prefer source (img2img / vid2vid).
   // Image → prefer start (img → video), else source.
   if (isVideo && roles.some((r) => r.role === "source")) return { kind: "source" };
@@ -410,9 +412,7 @@ async function appendChainNextMediaPaths(
   prevMediaPath: string,
   newOutputs: string[],
 ): Promise<void> {
-  const meta = (await cmd
-    .image_metadata_read(prevMediaPath)
-    .catch(() => null)) as ImageMetadata | null;
+  const meta = await cmd.image_metadata_read(prevMediaPath).catch(() => null);
   if (!meta || !meta.chain) return;
   const existing = meta.chain.nextMediaPaths ?? [];
   const merged = [...existing];

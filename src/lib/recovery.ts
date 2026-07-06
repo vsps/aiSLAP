@@ -123,6 +123,7 @@ async function pullDown(
     sequencePrompt: rec.sequencePrompt,
     shotPrompt: rec.shotPrompt,
     shotPrompts: rec.shotPrompts,
+    combinedPrompt: rec.combinedPrompt,
     settings: rec.settings,
     refs: [], // no upload URLs on recovery
     refSnapshots: rec.refs,

@@ -32,3 +32,16 @@ impl From<String> for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+/// Runs a blocking closure off the async runtime's worker pool, so
+/// `#[tauri::command] async fn` entry points don't tie up the main thread on
+/// filesystem/ffmpeg work. Command bodies stay unchanged — just moved inside.
+pub async fn run_blocking<T, F>(f: F) -> AppResult<T>
+where
+    F: FnOnce() -> AppResult<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| AppError::Msg(format!("background task failed: {e}")))?
+}

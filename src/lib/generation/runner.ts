@@ -20,7 +20,8 @@ import { getProvider } from "../providers";
 import type { ProviderProgress } from "../providers";
 import { extractErrorMessage, swallow } from "../errors";
 import { isJobTerminal } from "../jobs";
-import { buildArgs, guessContentType } from "../args";
+import { buildArgs } from "../args";
+import { guessContentType } from "../media";
 import { playSound } from "../audio";
 import { downloadAndWrite } from "./output";
 
@@ -254,6 +255,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           sequencePrompt: spec.sequencePrompt,
           shotPrompt: spec.shotPrompt,
           shotPrompts: spec.shotPrompts,
+          combinedPrompt: spec.combinedPrompt,
           settings: spec.settings,
           refs: uploaded,
           refSnapshots: undefined,

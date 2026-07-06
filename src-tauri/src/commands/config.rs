@@ -38,7 +38,10 @@ pub fn presets_load() -> AppResult<serde_json::Value> {
     let text = std::fs::read_to_string(&path)?;
     match serde_json::from_str::<serde_json::Value>(&text) {
         Ok(v) => Ok(v),
-        Err(_) => Ok(serde_json::json!({ "presets": [] })),
+        Err(e) => {
+            tracing::warn!("corrupt presets JSON at {}: {e} — using default", path.display());
+            Ok(serde_json::json!({ "presets": [] }))
+        }
     }
 }
 

@@ -17,6 +17,24 @@ const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 const VIDEO_EXTS: &[&str] = &["mp4", "webm"];
 const MODEL_3D_EXTS: &[&str] = &["glb", "gltf"];
 
+/// Whether a file transfer is a copy (source kept) or a move (source gone) —
+/// shared between the physical file transfer and the visible-set rekey that
+/// follows it, since the two must agree on whether the source entry survives.
+#[derive(Clone, Copy)]
+pub(crate) enum TransferMode {
+    Copy,
+    Move,
+}
+
+impl TransferMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            TransferMode::Copy => "copy",
+            TransferMode::Move => "move",
+        }
+    }
+}
+
 pub(crate) fn as_str(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
@@ -122,6 +140,36 @@ pub(crate) fn relativize(path: &Path, project_root: &Path) -> Option<String> {
         .unwrap_or_else(|| project_root.to_path_buf());
     let stripped = p.strip_prefix(&r).ok()?;
     Some(as_str(stripped))
+}
+
+/// Forward-slash path relative to `root`, preferring a plain (non-canonicalized)
+/// prefix strip and falling back to `relativize` (which canonicalizes both
+/// sides) when `path` no longer exists under `root` as given — e.g. after a
+/// move, where the source string still needs to resolve to its old location.
+pub(crate) fn rel_of(path: &Path, root: &Path) -> Option<String> {
+    path.strip_prefix(root)
+        .ok()
+        .map(as_str)
+        .or_else(|| relativize(path, root))
+}
+
+/// Next unused version-folder name under `root` (e.g. "gen004"), per the
+/// project's configured prefix. Does not create the directory — callers
+/// `ensure_dir` the result themselves.
+pub(crate) fn next_version_name(root: &Path) -> String {
+    let mut max_n = 0u32;
+    if let Ok(it) = std::fs::read_dir(root) {
+        for e in it.flatten() {
+            if let Some(name) = e.file_name().to_str() {
+                if let Some(n) = version_number(name) {
+                    if n > max_n {
+                        max_n = n;
+                    }
+                }
+            }
+        }
+    }
+    format!("{}{:03}", version_prefix_for(root), max_n + 1)
 }
 
 pub(crate) fn list_dirs(root: &Path) -> AppResult<Vec<PathBuf>> {

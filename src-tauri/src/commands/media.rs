@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, AppResult};
+use crate::error::{run_blocking, AppError, AppResult};
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,13 +17,18 @@ pub struct VideoInfo {
 /// configured for thumbnail/export). Fields are `None` — not an error — when
 /// ffmpeg is missing or the banner doesn't parse; callers show what they have.
 #[tauri::command]
-pub fn video_info_probe(video_path: String, ffmpeg_path: String) -> AppResult<VideoInfo> {
+pub async fn video_info_probe(video_path: String, ffmpeg_path: String) -> AppResult<VideoInfo> {
+    run_blocking(move || video_info_probe_impl(video_path, ffmpeg_path)).await
+}
+
+fn video_info_probe_impl(video_path: String, ffmpeg_path: String) -> AppResult<VideoInfo> {
     let exe = ffmpeg_path.trim();
     if exe.is_empty() {
         return Ok(VideoInfo::default());
     }
     let exe_path = PathBuf::from(exe);
     if !exe_path.is_file() {
+        tracing::warn!("configured ffmpeg path not found: {exe}");
         return Ok(VideoInfo::default());
     }
     // `-i` with no output makes ffmpeg print the input's stream info to
@@ -87,7 +92,15 @@ fn parse_duration(banner: &str) -> Option<f64> {
 /// Extract a frame from `video_path` into `thumb_path` using the provided ffmpeg binary.
 /// Returns `false` (not an error) when ffmpeg is missing or extraction fails — caller decides.
 #[tauri::command]
-pub fn video_thumbnail_extract(
+pub async fn video_thumbnail_extract(
+    video_path: String,
+    thumb_path: String,
+    ffmpeg_path: String,
+) -> AppResult<bool> {
+    run_blocking(move || video_thumbnail_extract_impl(video_path, thumb_path, ffmpeg_path)).await
+}
+
+fn video_thumbnail_extract_impl(
     video_path: String,
     thumb_path: String,
     ffmpeg_path: String,
@@ -98,6 +111,7 @@ pub fn video_thumbnail_extract(
     }
     let exe_path = PathBuf::from(exe);
     if !exe_path.is_file() {
+        tracing::warn!("configured ffmpeg path not found: {exe}");
         return Ok(false);
     }
     let thumb = PathBuf::from(&thumb_path);
@@ -121,7 +135,14 @@ pub fn video_thumbnail_extract(
         .status();
     match status {
         Ok(s) if s.success() => Ok(thumb.exists()),
-        _ => Ok(false),
+        Ok(s) => {
+            tracing::warn!("ffmpeg thumbnail extract exited with {s}");
+            Ok(false)
+        }
+        Err(e) => {
+            tracing::warn!("ffmpeg thumbnail extract spawn failed: {e}");
+            Ok(false)
+        }
     }
 }
 
@@ -162,7 +183,11 @@ pub struct TimelineExportParams {
 }
 
 #[tauri::command]
-pub fn timeline_export(params: TimelineExportParams) -> AppResult<()> {
+pub async fn timeline_export(params: TimelineExportParams) -> AppResult<()> {
+    run_blocking(move || timeline_export_impl(params)).await
+}
+
+fn timeline_export_impl(params: TimelineExportParams) -> AppResult<()> {
     if params.segments.is_empty() {
         return Err(AppError::Msg("no segments to export".into()));
     }

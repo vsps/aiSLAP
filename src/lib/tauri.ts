@@ -84,8 +84,9 @@ export const cmd = {
     srcVersion: string,
     dstShot: string,
     dstVersion: string | null,
+    copy: boolean,
   ): Promise<string> =>
-    rawInvoke("version_stack_move", { srcShot, srcVersion, dstShot, dstVersion }),
+    rawInvoke("version_stack_move", { srcShot, srcVersion, dstShot, dstVersion, copy }),
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),
@@ -98,11 +99,6 @@ export const cmd = {
     prompt: string,
   ): Promise<SequenceSidecar> =>
     rawInvoke("sequence_prompt_append", { sequencePath, prompt }),
-  shot_prompt_append: (
-    shotPath: string,
-    prompt: string,
-  ): Promise<ShotSidecar> =>
-    rawInvoke("shot_prompt_append", { shotPath, prompt }),
   shot_prompts_append: (
     shotPath: string,
     prompts: string[],
@@ -136,7 +132,7 @@ export const cmd = {
     rawInvoke("image_metadata_read", { imagePath }),
   image_metadata_write: (
     imagePath: string,
-    metadata: ImageMetadata | Record<string, unknown>,
+    metadata: ImageMetadata,
   ): Promise<void> =>
     rawInvoke("image_metadata_write", { imagePath, metadata }),
   image_delete: (imagePath: string): Promise<void> =>

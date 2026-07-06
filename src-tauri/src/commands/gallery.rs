@@ -12,7 +12,7 @@ use crate::commands::fsutil::{
 };
 use crate::commands::visible::{load_visible_set, save_visible_set};
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
-use crate::error::{AppError, AppResult};
+use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::read_json_or_default;
 
 pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
@@ -81,6 +81,40 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
     Ok(cols)
 }
 
+/// Classify a single file as a `GalleryImage`, or `None` if it's not a
+/// recognized media file (or is a `.thumb.png` adjunct). `starred` is passed
+/// in rather than computed here since callers differ on how they know it:
+/// a directory scan checks the visible set per-file, while a scan seeded from
+/// the visible set itself already knows the answer.
+fn try_make_gallery_image(path: &Path, starred: Option<bool>) -> Option<GalleryImage> {
+    let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
+    if filename.ends_with(".thumb.png") {
+        return None;
+    }
+    let is_image = is_image_ext(path);
+    let is_video = is_video_ext(path);
+    let is_model_3d = is_model3d_ext(path);
+    if !is_image && !is_video && !is_model_3d {
+        return None;
+    }
+    let meta_path = sidecar_path(path);
+    let thumb_path = if is_video || is_model_3d {
+        let t = thumb_path(path);
+        if t.exists() { Some(as_str(&t)) } else { None }
+    } else {
+        None
+    };
+    Some(GalleryImage {
+        filename,
+        path: as_str(path),
+        metadata_path: as_str(&meta_path),
+        is_video,
+        is_model_3d,
+        thumb_path,
+        starred,
+    })
+}
+
 fn scan_directory_images(
     dir: &Path,
     project_root: Option<&Path>,
@@ -93,52 +127,24 @@ fn scan_directory_images(
         if !path.is_file() {
             continue;
         }
-        let filename = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        // Skip `.thumb.png` — it's an adjunct of a video.
-        if filename.ends_with(".thumb.png") {
-            continue;
-        }
-        let is_image = is_image_ext(&path);
-        let is_video = is_video_ext(&path);
-        let is_model_3d = is_model3d_ext(&path);
-        if !is_image && !is_video && !is_model_3d {
-            continue;
-        }
-        let meta_path = sidecar_path(&path);
-        let thumb_path = if is_video || is_model_3d {
-            let t = thumb_path(&path);
-            if t.exists() {
-                Some(as_str(&t))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
         let starred = project_root
             .and_then(|r| relativize(&path, r))
             .map(|rel| visible.contains(&rel));
-        out.push(GalleryImage {
-            filename,
-            path: as_str(&path),
-            metadata_path: as_str(&meta_path),
-            is_video,
-            is_model_3d,
-            thumb_path,
-            starred,
-        });
+        if let Some(img) = try_make_gallery_image(&path, starred) {
+            out.push(img);
+        }
     }
     out.sort_by(|a, b| a.filename.cmp(&b.filename));
     Ok(out)
 }
 
 #[tauri::command]
-pub fn shot_rescan(shot_path: String) -> AppResult<Vec<GalleryColumn>> {
-    let root = PathBuf::from(&shot_path);
-    scan_shot_columns(&root)
+pub async fn shot_rescan(shot_path: String) -> AppResult<Vec<GalleryColumn>> {
+    run_blocking(move || {
+        let root = PathBuf::from(&shot_path);
+        scan_shot_columns(&root)
+    })
+    .await
 }
 
 // ---------- Stacked sequence view ----------
@@ -169,7 +175,11 @@ pub struct SequenceStacks {
 }
 
 #[tauri::command]
-pub fn sequence_stacks_scan(sequence_path: String) -> AppResult<SequenceStacks> {
+pub async fn sequence_stacks_scan(sequence_path: String) -> AppResult<SequenceStacks> {
+    run_blocking(move || sequence_stacks_scan_impl(sequence_path)).await
+}
+
+fn sequence_stacks_scan_impl(sequence_path: String) -> AppResult<SequenceStacks> {
     let seq_root = PathBuf::from(&sequence_path);
     if !seq_root.is_dir() {
         return Err(AppError::Msg(format!("not a directory: {sequence_path}")));
@@ -268,37 +278,12 @@ pub struct SeqStarredGroup {
     pub shots: Vec<ShotStarredGroup>,
 }
 
-fn make_gallery_image(abs_path: &Path) -> Option<GalleryImage> {
-    let filename = abs_path.file_name().and_then(|n| n.to_str())?.to_string();
-    if filename.ends_with(".thumb.png") {
-        return None;
-    }
-    let is_image = is_image_ext(abs_path);
-    let is_video = is_video_ext(abs_path);
-    let is_model_3d = is_model3d_ext(abs_path);
-    if !is_image && !is_video && !is_model_3d {
-        return None;
-    }
-    let meta_path = sidecar_path(abs_path);
-    let thumb_path = if is_video || is_model_3d {
-        let t = thumb_path(abs_path);
-        if t.exists() { Some(as_str(&t)) } else { None }
-    } else {
-        None
-    };
-    Some(GalleryImage {
-        filename,
-        path: as_str(abs_path),
-        metadata_path: as_str(&meta_path),
-        is_video,
-        is_model_3d,
-        thumb_path,
-        starred: Some(true),
-    })
+#[tauri::command]
+pub async fn project_starred_scan(project_path: String) -> AppResult<Vec<SeqStarredGroup>> {
+    run_blocking(move || project_starred_scan_impl(project_path)).await
 }
 
-#[tauri::command]
-pub fn project_starred_scan(project_path: String) -> AppResult<Vec<SeqStarredGroup>> {
+fn project_starred_scan_impl(project_path: String) -> AppResult<Vec<SeqStarredGroup>> {
     let root = PathBuf::from(&project_path);
     if !root.is_dir() {
         return Err(AppError::Msg(format!("not a directory: {project_path}")));
@@ -315,7 +300,7 @@ pub fn project_starred_scan(project_path: String) -> AppResult<Vec<SeqStarredGro
         if !abs.is_file() {
             continue;
         }
-        let img = match make_gallery_image(&abs) {
+        let img = match try_make_gallery_image(&abs, Some(true)) {
             Some(i) => i,
             None => continue,
         };

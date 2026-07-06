@@ -93,6 +93,11 @@ function cleanPriceText(raw: string | null | undefined): string | null {
   return text.length > 0 ? text : null;
 }
 
+// Sub-cent prices need more decimals than dollars-and-cents formatting gives.
+export function formatCost(n: number): string {
+  return n < 0.1 ? n.toFixed(3) : n.toFixed(2);
+}
+
 export type ParsedPrice = { amount: number; unit: string };
 
 /** Extract the first "$X per <unit>" from a price string. Returns null when
@@ -111,4 +116,19 @@ export function parseFalPrice(text: string): ParsedPrice | null {
  *  frames) depend on the output and only get a unit-price label. */
 export function isPerItemUnit(unit: string): boolean {
   return /^(request|image|video|unit|generation)s?\b/.test(unit);
+}
+
+/** Per-output price for one fal endpoint, or null when the model isn't fal,
+ *  isn't priced yet, or is billed by time/size rather than per output. */
+export function perItemPrice(
+  provider: string | undefined,
+  endpoint: string,
+  prices: Record<string, string>,
+): number | null {
+  if ((provider ?? "fal") !== "fal") return null;
+  const text = prices[endpoint];
+  if (!text) return null;
+  const parsed = parseFalPrice(text);
+  if (!parsed || !isPerItemUnit(parsed.unit)) return null;
+  return parsed.amount;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
@@ -7,7 +7,15 @@ import { fetchFalPrices } from "../lib/falPrices";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
-import type { ColorOverrides, Config, FalLifecycle } from "../lib/types";
+import { invalidateConfigCache } from "../lib/metadataCache";
+import { ModalDialog } from "./ModalDialog";
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_MAX_CONCURRENT_JOBS,
+  type ColorOverrides,
+  type Config,
+  type FalLifecycle,
+} from "../lib/types";
 
 const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
   { value: "", label: "fal default (keep forever)" },
@@ -33,26 +41,15 @@ type Props = {
   onClose: () => void;
 };
 
-const DEFAULT: Config = {
-  windowBounds: { width: 1600, height: 1000 },
-  projectPath: "",
-  lastSequence: "",
-  lastShot: "",
-  lastModel: "",
-  ffmpegPath: "",
-  maxConcurrentJobs: 3,
-  filenameTemplate: undefined,
-  colors: undefined,
-  falLifecycle: undefined,
-};
-
 export function SettingsDialog({ onClose }: Props) {
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const [revealReplicate, setRevealReplicate] = useState(false);
-  const [config, setConfig] = useState<Config>(DEFAULT);
-  const [originalColors, setOriginalColors] = useState<ColorOverrides | undefined>(undefined);
+  const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+  const [originalColors, setOriginalColors] = useState<
+    ColorOverrides | undefined
+  >(undefined);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
   const [orphanStatus, setOrphanStatus] = useState<string | null>(null);
@@ -128,8 +125,7 @@ export function SettingsDialog({ onClose }: Props) {
       // Persist immediately into the on-disk config (merged into a fresh
       // load, NOT the dialog's edited copy — Cancel must not lose prices,
       // and fetching must not silently commit unsaved dialog edits).
-      const onDisk = ((await cmd.config_load().catch(() => null)) ??
-        DEFAULT) as Config;
+      const onDisk = (await cmd.config_load().catch(() => null)) ?? DEFAULT_CONFIG;
       await cmd.config_save({
         ...onDisk,
         falPrices: prices,
@@ -137,7 +133,11 @@ export function SettingsDialog({ onClose }: Props) {
       });
       usePricesStore.getState().setPrices(prices, fetchedAt);
       // Keep the dialog's copy in sync so a later Save doesn't revert them.
-      setConfig((c) => ({ ...c, falPrices: prices, falPricesFetchedAt: fetchedAt }));
+      setConfig((c) => ({
+        ...c,
+        falPrices: prices,
+        falPricesFetchedAt: fetchedAt,
+      }));
       setPricesStatus(
         `${Object.keys(prices).length} of ${unique.length} fal models priced.`,
       );
@@ -147,17 +147,6 @@ export function SettingsDialog({ onClose }: Props) {
       setPricesBusy(false);
     }
   }
-
-  const handleCloseRef = useRef(handleClose);
-  handleCloseRef.current = handleClose;
-
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleCloseRef.current();
-    };
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, []);
 
   // Live-preview color edits — only after config has loaded to avoid wiping current colors on mount.
   useEffect(() => {
@@ -192,6 +181,7 @@ export function SettingsDialog({ onClose }: Props) {
       await cmd.provider_key_set("fal", falKey.trim());
       await cmd.provider_key_set("replicate", replicateKey.trim());
       await cmd.config_save(config);
+      invalidateConfigCache();
       setOriginalColors(config.colors);
       onClose();
     } catch (e) {
@@ -202,15 +192,12 @@ export function SettingsDialog({ onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-8"
-      onClick={handleClose}
+    <ModalDialog
+      onClose={handleClose}
+      padded={false}
+      panelClassName="max-w-[560px] w-full shadow-xl"
     >
-      <div
-        className="bg-panel text-text max-w-[560px] w-full border border-dim shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-4 py-2 bg-surface text-text text-sm">Settings</div>
+      <div className="px-4 py-2 bg-surface text-text text-sm">Settings</div>
 
         <div className="p-4 flex flex-col gap-4 max-h-[70vh] overflow-y-auto thin-scroll">
           <Field label="FAL_KEY">
@@ -253,7 +240,8 @@ export function SettingsDialog({ onClose }: Props) {
               ))}
             </select>
             <div className="text-xs text-dim mt-1">
-              Sent as <code>x-fal-object-lifecycle-preference</code>. Controls how long fal retains generated objects.
+              Sent as <code>x-fal-object-lifecycle-preference</code>. Controls
+              how long fal retains generated objects.
             </div>
           </Field>
 
@@ -298,14 +286,14 @@ export function SettingsDialog({ onClose }: Props) {
               type="number"
               min={1}
               max={10}
-              value={config.maxConcurrentJobs ?? 3}
+              value={config.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS}
               onChange={(e) => {
                 const n = parseInt(e.currentTarget.value, 10);
                 setConfig((c) => ({
                   ...c,
                   maxConcurrentJobs: Number.isFinite(n)
                     ? Math.max(1, Math.min(10, n))
-                    : 3,
+                    : DEFAULT_MAX_CONCURRENT_JOBS,
                 }));
               }}
               className="bg-inset px-2 py-1 text-xs font-mono w-20"
@@ -397,8 +385,7 @@ export function SettingsDialog({ onClose }: Props) {
             Save
           </button>
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }
 

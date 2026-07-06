@@ -11,7 +11,8 @@ import { useTimelineStore } from "../stores/timelineStore";
 import { selectImagePath as selectImageAction, toggleStarPath } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 import type { GalleryImage, RefImage } from "../lib/types";
-import { basename, dirname } from "../lib/paths";
+import { dirname } from "../lib/paths";
+import { syntheticImage } from "../lib/media";
 
 type Props = {
   onDragStart: (payload: {
@@ -21,17 +22,10 @@ type Props = {
   }) => void;
 };
 
-const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
 const NODE_WIDTH = 96;
 const COL_GAP = 72; // horizontal gap between columns — leaves room for edges
 const ROW_GAP = 8;
 const PAD = 16;
-
-function makeImage(path: string): GalleryImage {
-  const filename = basename(path);
-  const ext = filename.toLowerCase().split(".").pop() ?? "";
-  return { filename, path, metadataPath: "", isVideo: VIDEO_EXTS.has(ext) };
-}
 
 /** Last two segments of the parent path, e.g. ".../shot_03/v002" — used as a
  *  per-node title tooltip so the user can see which shot/version a node lives
@@ -226,7 +220,7 @@ export function TraceView({ onDragStart }: Props) {
   // paths outside the current shot's scan.
   const imageFor = (p: string): GalleryImage =>
     galleryColumns.flatMap((c) => c.images).find((i) => i.path === p) ??
-    makeImage(p);
+    syntheticImage(p);
 
   if (!traceActive || !layout || layout.columns.length === 0) {
     return (

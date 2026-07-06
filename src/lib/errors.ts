@@ -70,6 +70,12 @@ export function extractErrorMessage(e: unknown): string {
   return parts.join(" — ");
 }
 
+/** True when a Rust command rejected because the destination filename already
+ *  exists (`AppError::Msg("FILENAME_EXISTS: ...")`). */
+export function isFilenameExists(e: unknown): boolean {
+  return String(e).includes("FILENAME_EXISTS");
+}
+
 /** For fire-and-forget promises: log the failure at debug level instead of
  *  dropping it on the floor. Usage: `p.catch(swallow("history append"))`. */
 export function swallow(scope: string): (e: unknown) => void {

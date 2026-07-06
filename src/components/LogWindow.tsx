@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLogStore } from "../stores/logStore";
+import { formatTime } from "../lib/format";
+import { usePopupDismiss } from "../lib/popup";
 
 const LEVEL_CLASS: Record<string, string> = {
   INFO: "text-dim",
@@ -30,19 +32,6 @@ export function LogWindow({
     ref.current.scrollTop = ref.current.scrollHeight;
   }, [lines.length, height]);
 
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("contextmenu", close);
-    window.addEventListener("keydown", close);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("contextmenu", close);
-      window.removeEventListener("keydown", close);
-    };
-  }, [menu]);
-
   return (
     <div
       ref={ref}
@@ -70,29 +59,48 @@ export function LogWindow({
       )}
 
       {menu && (
-        <div
-          className="fixed z-50 bg-panel text-text border border-dim shadow-xl py-0.5 text-xs w-max min-w-[120px]"
-          style={{ left: menu.x, top: menu.y }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            className="w-full text-left px-1.5 py-[2px] hover:bg-accent"
-            onClick={() => {
-              void navigator.clipboard.writeText(menu.text).catch(() => {});
-              setMenu(null);
-            }}
-          >
-            Copy log line
-          </button>
-        </div>
+        <LogLineMenu
+          x={menu.x}
+          y={menu.y}
+          text={menu.text}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   );
 }
 
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+function LogLineMenu({
+  x,
+  y,
+  text,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  text: string;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  usePopupDismiss(ref, onClose, { dismissOnContextMenu: true });
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 bg-panel text-text border border-dim shadow-xl py-0.5 text-xs w-max min-w-[120px]"
+      style={{ left: x, top: y }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="w-full text-left px-1.5 py-[2px] hover:bg-accent"
+        onClick={() => {
+          void navigator.clipboard.writeText(text).catch(() => {});
+          onClose();
+        }}
+      >
+        Copy log line
+      </button>
+    </div>
+  );
 }

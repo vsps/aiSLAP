@@ -255,6 +255,21 @@ export type Config = {
   falPricesFetchedAt?: string;
 };
 
+export const DEFAULT_MAX_CONCURRENT_JOBS = 3;
+
+export const DEFAULT_CONFIG: Config = {
+  windowBounds: { width: 1600, height: 1000 },
+  projectPath: "",
+  lastSequence: "",
+  lastShot: "",
+  lastModel: "",
+  ffmpegPath: "",
+  maxConcurrentJobs: DEFAULT_MAX_CONCURRENT_JOBS,
+  filenameTemplate: undefined,
+  colors: undefined,
+  falLifecycle: undefined,
+};
+
 // ---------- Submission queue ----------
 
 export type JobStatus =
@@ -318,9 +333,6 @@ export type AppState = {
   settings: Record<string, unknown>;
   refImages: RefImage[];
   iterations: number;
-  galleryHeight: number;
-  thumbColWidth: number;
-  logHeight: number;
   /** When present, supersedes the flat sequencePrompt/shotPrompts/settings/refImages
    *  fields (those are still written for back-compat with old loaders). */
   chainLinks?: ChainLinkPersisted[];
@@ -467,8 +479,6 @@ export type ImageMetadata = {
   providerResponse?: unknown;
   /** Legacy field; kept so old sidecars still parse. */
   falResponse?: unknown;
-  hueShift?: number;
-  sourceImage?: string;
   /** Chain provenance — present only when this media was produced as part
    *  of a multi-link chain submission. */
   chain?: ChainMetadataBlock;

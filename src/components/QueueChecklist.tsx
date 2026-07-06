@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { useEffect, useRef } from "react";
 import { useGenerationStore } from "../stores/generationStore";
+import { formatTime } from "../lib/format";
 
 /**
  * Left half of the log surface — one row per submission iteration, ticked
@@ -75,10 +76,4 @@ export function QueueChecklist({
       )}
     </div>
   );
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }

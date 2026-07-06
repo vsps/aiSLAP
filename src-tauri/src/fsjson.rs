@@ -15,7 +15,10 @@ pub(crate) fn read_json_or_default<T: Default + serde::de::DeserializeOwned>(
     let text = std::fs::read_to_string(path)?;
     match serde_json::from_str::<T>(&text) {
         Ok(v) => Ok(v),
-        Err(_) => Ok(T::default()),
+        Err(e) => {
+            tracing::warn!("corrupt JSON at {}: {e} — using default", path.display());
+            Ok(T::default())
+        }
     }
 }
 

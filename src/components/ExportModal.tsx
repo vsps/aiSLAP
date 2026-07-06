@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
 import { pickSaveFile, showMessage } from "../lib/dialog";
 import {
@@ -7,13 +7,13 @@ import {
   useTimelineStore,
 } from "../stores/timelineStore";
 import type {
-  Config,
   ExportSegment,
   TimelineClip,
   ShotLatestMedia,
 } from "../lib/types";
 import { useSessionStore } from "../stores/sessionStore";
 import { basename } from "../lib/paths";
+import { ModalDialog } from "./ModalDialog";
 
 type Props = {
   onClose: () => void;
@@ -41,13 +41,9 @@ export function ExportModal({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
-    };
-    window.addEventListener("keydown", esc);
-    return () => window.removeEventListener("keydown", esc);
-  }, [onClose, busy]);
+  const closeUnlessBusy = () => {
+    if (!busy) onClose();
+  };
 
   const segments = useMemo(
     () =>
@@ -79,7 +75,7 @@ export function ExportModal({ onClose }: Props) {
     setBusy(true);
     setErr(null);
     try {
-      const cfg = (await cmd.config_load().catch(() => null)) as Config | null;
+      const cfg = await cmd.config_load().catch(() => null);
       const ffmpegPath = (cfg?.ffmpegPath ?? "").trim();
       if (!ffmpegPath) {
         setErr("ffmpeg path is not configured (open Settings).");
@@ -105,17 +101,14 @@ export function ExportModal({ onClose }: Props) {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-8"
-      onClick={() => !busy && onClose()}
+    <ModalDialog
+      onClose={closeUnlessBusy}
+      padded={false}
+      panelClassName="max-w-[460px] w-full shadow-xl"
     >
-      <div
-        className="bg-panel text-text max-w-[460px] w-full border border-dim shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-4 py-2 bg-accent text-text text-sm">
-          Export timeline
-        </div>
+      <div className="px-4 py-2 bg-accent text-text text-sm">
+        Export timeline
+      </div>
         <div className="p-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
           <label className="self-center text-dim">Width</label>
           <NumField value={width} setValue={setWidth} min={2} step={1} />
@@ -181,8 +174,7 @@ export function ExportModal({ onClose }: Props) {
             {busy ? "Exporting…" : "Export"}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }
 

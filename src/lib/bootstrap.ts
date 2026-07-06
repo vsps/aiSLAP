@@ -1,5 +1,5 @@
 import { cmd } from "./tauri";
-import { basename, joinPath } from "./paths";
+import { basename, joinPath, normalizeDir } from "./paths";
 import { applyColors } from "./colors";
 import type {
   AppState,
@@ -18,6 +18,7 @@ import { useModelsStore } from "../stores/modelsStore";
 import { usePresetsStore } from "../stores/presetsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { useLayoutStore } from "../stores/layoutStore";
 
 function emptyAppState(): AppState {
   return {
@@ -31,9 +32,6 @@ function emptyAppState(): AppState {
     settings: {},
     refImages: [],
     iterations: 1,
-    galleryHeight: 400,
-    thumbColWidth: 120,
-    logHeight: 78,
   };
 }
 
@@ -93,9 +91,6 @@ function currentAppState(): AppState {
     settings: active.settings,
     refImages: active.refImages,
     iterations: g.iterations,
-    galleryHeight: s.galleryHeight,
-    thumbColWidth: s.thumbColWidth,
-    logHeight: s.logHeight,
     chainLinks: g.links.map(toPersisted),
     chainExpandedIdx: g.expandedIdx,
   };
@@ -167,15 +162,18 @@ export async function bootstrap(): Promise<() => void> {
   }
   gen.setIterations(appState.iterations ?? 1);
 
-  // Restore UI layout prefs (clamped by store setters).
-  if (typeof appState.galleryHeight === "number") {
-    useSessionStore.getState().setGalleryHeight(appState.galleryHeight);
-  }
-  if (typeof appState.thumbColWidth === "number") {
-    useSessionStore.getState().setThumbColWidth(appState.thumbColWidth);
-  }
-  if (typeof appState.logHeight === "number") {
-    useSessionStore.getState().setLogHeight(appState.logHeight);
+  // One-time migration: these used to round-trip through Rust app_state.json;
+  // now they live in layoutStore/localStorage. No-ops once localStorage has
+  // ever been written (see migrateLegacyPanelSizes).
+  if (isRecord(appStateRaw)) {
+    const raw = appStateRaw as Record<string, unknown>;
+    useLayoutStore.getState().migrateLegacyPanelSizes({
+      galleryHeight:
+        typeof raw.galleryHeight === "number" ? raw.galleryHeight : undefined,
+      thumbColWidth:
+        typeof raw.thumbColWidth === "number" ? raw.thumbColWidth : undefined,
+      logHeight: typeof raw.logHeight === "number" ? raw.logHeight : undefined,
+    });
   }
 
   // Restore session paths (project/sequence/shot) in the background — this
@@ -192,9 +190,7 @@ export async function bootstrap(): Promise<() => void> {
 
 // Same normalization setProject() applies internally, so we can tell whether
 // the project we just restored is still the current one before proceeding.
-function normalizeProjectPath(p: string): string {
-  return p.replaceAll("\\", "/").replace(/\/+$/, "");
-}
+const normalizeProjectPath = normalizeDir;
 
 async function restoreSessionPaths(appState: AppState): Promise<void> {
   if (!appState.projectPath) return;

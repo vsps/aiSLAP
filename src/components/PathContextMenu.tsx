@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { performImageAction, type ImageAction } from "../lib/actions";
+import { usePopupDismiss, useClampedPosition } from "../lib/popup";
 
 type AvailableAction = Exclude<ImageAction, "select">;
 type MenuItem = AvailableAction | "---";
@@ -69,37 +70,8 @@ export function PathContextMenu({
   items = DEFAULT_ITEMS,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number }>({
-    left: x,
-    top: y,
-  });
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const pad = 4;
-    const left = Math.min(x, window.innerWidth - r.width - pad);
-    const top = Math.min(y, window.innerHeight - r.height - pad);
-    setPos({ left: Math.max(pad, left), top: Math.max(pad, top) });
-  }, [x, y]);
-
-  useEffect(() => {
-    const down = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("mousedown", down);
-    window.addEventListener("contextmenu", down);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", down);
-      window.removeEventListener("contextmenu", down);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [onClose]);
+  const pos = useClampedPosition(ref, x, y);
+  usePopupDismiss(ref, onClose, { dismissOnContextMenu: true });
 
   const run = (action: AvailableAction) => async (e: React.MouseEvent) => {
     e.stopPropagation();

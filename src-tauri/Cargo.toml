@@ -1,13 +1,19 @@
 [package]
 name = "aislap"
-version = "0.2.17"
-description = "aiSLAP Ã¢â‚¬â€ AI desktop pipeline"
+version = "0.2.20"
+description = "aiSLAP - AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
 
 [lib]
 name = "aislap_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -21,14 +27,10 @@ tauri-plugin-window-state = "2"
 tauri-plugin-http = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
-tokio-util = "0.7"
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
-uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 thiserror = "1"
-futures-util = "0.3"
 base64 = "0.22"

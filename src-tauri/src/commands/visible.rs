@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::commands::fsutil::{as_str, project_root_for, relativize, PROJECT_SIDECAR};
+use crate::commands::fsutil::{project_root_for, rel_of, TransferMode, PROJECT_SIDECAR};
 use crate::domain::ProjectSidecar;
 use crate::error::AppResult;
 use crate::fsjson::{read_json_or_default, write_json_atomic};
@@ -21,6 +21,56 @@ pub(crate) fn save_visible_set(project_root: &Path, visible: &HashSet<String>) -
     v.sort();
     sidecar.visible = v;
     write_json_atomic(&path, &sidecar)
+}
+
+/// Re-key one or more visible-set entries after a copy/move: for a copy, a
+/// visible source gains a visible destination alongside it; for a move, the
+/// source entry (if visible) is replaced by the destination. Single save at
+/// the end regardless of how many pairs changed.
+pub(crate) fn visible_set_rekey(
+    root: &Path,
+    mode: TransferMode,
+    pairs: &[(String, String)],
+) -> AppResult<()> {
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    let mut set = load_visible_set(root)?;
+    let mut changed = false;
+    for (s, d) in pairs {
+        match mode {
+            TransferMode::Copy => {
+                if set.contains(s) {
+                    set.insert(d.clone());
+                    changed = true;
+                }
+            }
+            TransferMode::Move => {
+                if set.remove(s) {
+                    set.insert(d.clone());
+                    changed = true;
+                }
+            }
+        }
+    }
+    if changed {
+        save_visible_set(root, &set)?;
+    }
+    Ok(())
+}
+
+/// Convenience wrapper for the single-file transfer case, where the rel paths
+/// may fail to resolve (e.g. outside any project) — a no-op rather than an error.
+pub(crate) fn visible_set_rekey_one(
+    root: &Path,
+    mode: TransferMode,
+    src_rel: Option<String>,
+    dst_rel: Option<String>,
+) -> AppResult<()> {
+    match (src_rel, dst_rel) {
+        (Some(s), Some(d)) => visible_set_rekey(root, mode, &[(s, d)]),
+        _ => Ok(()),
+    }
 }
 
 /// Rewrite the prefix of every entry in the project's visible set. Entries
@@ -60,17 +110,12 @@ pub(crate) fn visible_set_rename_prefix(
 
 /// Remove an image (or all images under a directory) from the project's visible
 /// set. Best-effort: silently skips if the path is outside any project.
-pub fn visible_set_remove_path_or_prefix(path: &Path, is_dir_prefix: bool) -> AppResult<()> {
+pub(crate) fn visible_set_remove_path_or_prefix(path: &Path, is_dir_prefix: bool) -> AppResult<()> {
     let root = match project_root_for(path) {
         Ok(r) => r,
         Err(_) => return Ok(()),
     };
-    let target = match path
-        .strip_prefix(&root)
-        .ok()
-        .map(as_str)
-        .or_else(|| relativize(path, &root))
-    {
+    let target = match rel_of(path, &root) {
         Some(t) => t,
         None => return Ok(()),
     };

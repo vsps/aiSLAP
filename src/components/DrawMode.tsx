@@ -5,6 +5,7 @@ import { cmd } from "../lib/tauri";
 import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
 import { dirname, basename } from "../lib/paths";
+import { FullscreenModal } from "./FullscreenModal";
 
 type Tool = "brush" | "line";
 
@@ -332,8 +333,9 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
   const src = fileSrc(image.path);
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/90 flex flex-col"
+    <FullscreenModal
+      onClose={onCancel}
+      closeOnEscape={false}
       onMouseUp={onMouseUp}
       onClick={(e) => e.stopPropagation()}
     >
@@ -504,6 +506,6 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
           cancel
         </button>
       </div>
-    </div>
+    </FullscreenModal>
   );
 }

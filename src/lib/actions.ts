@@ -1,12 +1,17 @@
 // High-level action helpers that span stores + Tauri commands.
 
 import { cmd } from "./tauri";
-import { basename } from "./paths";
+import { basename, isChildOf } from "./paths";
 import { confirmAction, showMessage } from "./dialog";
+import { classifyMedia, guessContentType } from "./media";
+import { swallow } from "./errors";
+import { inFlightJobs } from "./jobs";
+import { rewriteScriptHeading } from "./script";
 import { makeChainLink, useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
+import { useScriptStore } from "../stores/scriptStore";
 import type {
   ChainLink,
   ImageMetadata,
@@ -121,6 +126,20 @@ export async function restoreChainFromMetadata(
   return { missingModels, skippedRefs };
 }
 
+/** Combined display prompt for a sidecar, preferring the stored combined string
+ *  and falling back through seq+shot prompts to the legacy single `prompt` field. */
+export function assemblePromptFromMetadata(meta: ImageMetadata): string {
+  return (
+    meta.combinedPrompt ||
+    [
+      meta.sequencePrompt,
+      ...(meta.shotPrompts ?? (meta.shotPrompt ? [meta.shotPrompt] : [meta.prompt ?? ""])),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
 /** Apply only the prompt fields from a sidecar (shot prompt gets the value). */
 export function copyPromptFromMetadata(meta: ImageMetadata): void {
   const gen = useGenerationStore.getState();
@@ -150,9 +169,7 @@ export async function computeTraceSet(imagePath: string): Promise<TraceResult> {
     const p = queue.shift()!;
     if (nodes.has(p)) continue;
     nodes.add(p);
-    const meta = (await cmd
-      .image_metadata_read(p)
-      .catch(() => null)) as ImageMetadata | null;
+    const meta = await cmd.image_metadata_read(p).catch(() => null);
     if (!meta) continue;
     const refs = normalizeRefs(meta.refs);
     if (refs.length > 0) parents.set(p, refs);
@@ -176,15 +193,114 @@ export async function replaceImageRef(imagePath: string): Promise<void> {
 export async function addImageToRefs(imagePath: string): Promise<string> {
   const { shotPath, projectPath } = useSessionStore.getState();
   if (!shotPath) throw new Error("no shot open");
-  const normalizedImg = imagePath.replaceAll("\\", "/");
-  const normalizedProject = (projectPath ?? "").replaceAll("\\", "/").replace(/\/+$/, "");
-  const insideProject = normalizedProject && normalizedImg.startsWith(normalizedProject + "/");
+  const insideProject = !!projectPath && isChildOf(projectPath, imagePath);
   let finalPath = imagePath;
   if (!insideProject) {
     finalPath = await cmd.ref_copy_to_global_src(shotPath, imagePath);
   }
   useGenerationStore.getState().addRefs([finalPath]);
   return finalPath;
+}
+
+/** Rename the current sequence: renames on disk, keeps the timeline/refs/
+ *  script mirrors coherent, and re-navigates to the renamed sequence (and
+ *  the shot the user was on, if it survived). */
+export async function renameSequence(newName: string): Promise<void> {
+  const session = useSessionStore.getState();
+  const { projectPath, sequencePath, shotPath } = session;
+  if (!projectPath) throw new Error("no project");
+  if (!sequencePath) throw new Error("no sequence to rename");
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("name cannot be empty");
+
+  const oldSeqPath = sequencePath;
+  const oldShotPath = shotPath;
+  const oldSeqBase = basename(oldSeqPath);
+
+  // Job-safety guard. Refuse if any non-terminal job targets this sequence.
+  const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldSeqPath);
+  if (inFlight.length > 0) {
+    throw new Error(
+      `Cannot rename — ${inFlight.length} job${
+        inFlight.length > 1 ? "s are" : " is"
+      } running in this sequence.`,
+    );
+  }
+
+  const newSeqPath = await cmd.sequence_rename(oldSeqPath, trimmed);
+  if (newSeqPath === oldSeqPath) return;
+
+  // Keep in-memory mirrors coherent before re-rendering.
+  useTimelineStore.getState().renameShotPathPrefix(oldSeqPath, newSeqPath);
+  useGenerationStore.getState().rewriteRefImagePaths(oldSeqPath, newSeqPath);
+
+  const sequences = await cmd.project_open(projectPath);
+  useSessionStore.getState().setSequencesInProject(sequences);
+  await useSessionStore.getState().setSequence(newSeqPath);
+
+  // setSequence auto-opens the last shot. Navigate back to the user's shot
+  // if it survived the rename (same basename, new parent).
+  if (oldShotPath) {
+    const targetShotPath = `${newSeqPath}/${basename(oldShotPath)}`;
+    const after = useSessionStore.getState();
+    if (
+      after.shotsInSequence.includes(targetShotPath) &&
+      after.shotPath !== targetShotPath
+    ) {
+      await after.setShot(targetShotPath);
+    }
+  }
+
+  // script.md heading rewrite (silent no-op when no matching # heading).
+  const scriptState = useScriptStore.getState();
+  const nextRaw = rewriteScriptHeading(scriptState.raw, 1, oldSeqBase, trimmed);
+  if (nextRaw !== scriptState.raw) {
+    await scriptState
+      .save(projectPath, nextRaw)
+      .catch(swallow("script heading rewrite"));
+  }
+}
+
+/** Rename the current shot: renames on disk, keeps the timeline/refs/script
+ *  mirrors coherent, and re-navigates to the renamed shot. */
+export async function renameShot(newName: string): Promise<void> {
+  const session = useSessionStore.getState();
+  const { projectPath, sequencePath, shotPath } = session;
+  if (!projectPath) throw new Error("no project");
+  if (!sequencePath) throw new Error("no sequence");
+  if (!shotPath) throw new Error("no shot to rename");
+  const trimmed = newName.trim();
+  if (!trimmed) throw new Error("name cannot be empty");
+
+  const oldShotPath = shotPath;
+  const oldShotBase = basename(oldShotPath);
+
+  const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldShotPath);
+  if (inFlight.length > 0) {
+    throw new Error(
+      `Cannot rename — ${inFlight.length} job${
+        inFlight.length > 1 ? "s are" : " is"
+      } running in this shot.`,
+    );
+  }
+
+  const newShotPath = await cmd.shot_rename(oldShotPath, trimmed);
+  if (newShotPath === oldShotPath) return;
+
+  useTimelineStore.getState().renameShotPathPrefix(oldShotPath, newShotPath);
+  useGenerationStore.getState().rewriteRefImagePaths(oldShotPath, newShotPath);
+
+  const { shots } = await cmd.sequence_open(sequencePath);
+  useSessionStore.getState().setShotsInSequence(shots);
+  await useSessionStore.getState().setShot(newShotPath);
+
+  const scriptState = useScriptStore.getState();
+  const nextRaw = rewriteScriptHeading(scriptState.raw, 2, oldShotBase, trimmed);
+  if (nextRaw !== scriptState.raw) {
+    await scriptState
+      .save(projectPath, nextRaw)
+      .catch(swallow("script heading rewrite"));
+  }
 }
 
 export function roleAssignmentLabel(a: RoleAssignment | null): string {
@@ -217,14 +333,11 @@ export type ImageAction =
   | "restore_chain"
   | "show_info";
 
-const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "mkv", "m4v", "avi"]);
-
 // Transcode an on-disk image to PNG bytes and push to the system clipboard.
 // Canvas handles jpeg/webp/etc. so the clipboard receives something every OS
 // paste target can accept. Videos aren't supported (no "image" to copy).
 async function copyImageToClipboard(path: string): Promise<void> {
-  const ext = (path.split(".").pop() ?? "").toLowerCase();
-  if (VIDEO_EXTS.has(ext)) {
+  if (classifyMedia(path) === "video") {
     await showMessage("Copy image not supported for video files", {
       kind: "warning",
     });
@@ -232,12 +345,7 @@ async function copyImageToClipboard(path: string): Promise<void> {
   }
   try {
     const { readFile } = await import("@tauri-apps/plugin-fs");
-    const mime =
-      ext === "jpg" || ext === "jpeg"
-        ? "image/jpeg"
-        : ext === "webp"
-          ? "image/webp"
-          : "image/png";
+    const mime = guessContentType(path);
     const bytes = await readFile(path);
     const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
     const img = new Image();
@@ -339,9 +447,7 @@ export async function performImageAction(
       return;
     }
     case "copy_settings": {
-      const meta = (await cmd
-        .image_metadata_read(path)
-        .catch(() => null)) as ImageMetadata | null;
+      const meta = await cmd.image_metadata_read(path).catch(() => null);
       if (!meta) {
         await showMessage("No metadata for this image", { kind: "warning" });
         return;
@@ -361,9 +467,7 @@ export async function performImageAction(
       return;
     }
     case "restore_chain": {
-      const meta = (await cmd
-        .image_metadata_read(path)
-        .catch(() => null)) as ImageMetadata | null;
+      const meta = await cmd.image_metadata_read(path).catch(() => null);
       if (!meta?.chain) {
         await showMessage("No chain metadata for this image", { kind: "warning" });
         return;
@@ -387,9 +491,7 @@ export async function performImageAction(
       return;
     }
     case "copy_prompt": {
-      const meta = (await cmd
-        .image_metadata_read(path)
-        .catch(() => null)) as ImageMetadata | null;
+      const meta = await cmd.image_metadata_read(path).catch(() => null);
       if (!meta) {
         await showMessage("No metadata for this image", { kind: "warning" });
         return;
