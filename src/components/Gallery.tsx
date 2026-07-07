@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { GalleryColumn, type DragState } from "./GalleryColumn";
 import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
@@ -10,6 +16,7 @@ import { TraceView } from "./TraceView";
 import { Icon } from "../lib/icon";
 import { useSessionStore } from "../stores/sessionStore";
 import { useLayoutStore } from "../stores/layoutStore";
+import { useGenerationStore } from "../stores/generationStore";
 import { addImageToRefs, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
@@ -17,9 +24,53 @@ import { confirmAction, showMessage } from "../lib/dialog";
 import { isFilenameExists } from "../lib/errors";
 import { fileSrc } from "../lib/assets";
 import { syntheticImage } from "../lib/media";
+import type {
+  GalleryColumn as GalleryColumnData,
+  GalleryImage,
+} from "../lib/types";
 
 export function Gallery() {
   const columns = useSessionStore((s) => s.columns);
+  const shotPath = useSessionStore((s) => s.shotPath);
+  const pendingOutputs = useGenerationStore((s) => s.pendingOutputs);
+
+  // Merge pending-output placeholders into columns so the gallery shows
+  // skeleton tiles for in-flight generations without touching the filesystem.
+  const columnsWithPlaceholders = useMemo<GalleryColumnData[]>(() => {
+    if (Object.keys(pendingOutputs).length === 0) return columns;
+    const result = columns.map((c) => ({ ...c, images: [...c.images] }));
+    for (const [key, count] of Object.entries(pendingOutputs)) {
+      const [pShot, pVersion] = key.split("|");
+      if (pShot !== shotPath) continue;
+      let col = result.find((c) => c.version === pVersion);
+      if (!col) {
+        // Version dir doesn't exist on disk yet — create a synthetic column.
+        col = {
+          id: pVersion,
+          version: pVersion,
+          isSrc: false,
+          images: [],
+          srcImages: [],
+          synthetic: true,
+        };
+        result.push(col);
+      }
+      const existing = col.images.filter((i) => i.pending).length;
+      const needed = count - existing;
+      for (let i = 0; i < needed; i++) {
+        const placeholder: GalleryImage = {
+          filename: `pending_${i}`,
+          path: `pending://${pShot}/${pVersion}/${i}`,
+          metadataPath: "",
+          isVideo: false,
+          pending: true,
+        };
+        col.images.unshift(placeholder);
+      }
+    }
+    return result;
+  }, [columns, pendingOutputs, shotPath]);
+
   const traceActive = useSessionStore((s) => s.traceActive);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
@@ -29,7 +80,6 @@ export function Gallery() {
   const setRenameImage = useSessionStore((s) => s.setRenameImage);
   const infoImagePath = useSessionStore((s) => s.infoImagePath);
   const setInfoImage = useSessionStore((s) => s.setInfoImage);
-  const shotPath = useSessionStore((s) => s.shotPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const viewMode = useSessionStore((s) => s.viewMode);
   const setViewMode = useSessionStore((s) => s.setViewMode);
@@ -617,13 +667,13 @@ export function Gallery() {
         <>
           {splitButtons}
           <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
-            {columns.length === 0 ? (
+            {columnsWithPlaceholders.length === 0 ? (
               <div className="text-sm text-dim p-4">
                 Open a shot to see its versions.
               </div>
             ) : (
               <>
-                {columns.map((c) => (
+                {columnsWithPlaceholders.map((c) => (
                   <GalleryColumn
                     key={c.version}
                     column={c}

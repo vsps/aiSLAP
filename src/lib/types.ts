@@ -96,7 +96,8 @@ export type PromptsParam = {
   default: [];
 };
 
-export type Parameter = EnumParam | IntParam | FloatParam | BoolParam | PromptsParam;
+export type Parameter =
+  EnumParam | IntParam | FloatParam | BoolParam | PromptsParam;
 
 export type ModelNode = {
   id: string;
@@ -185,6 +186,8 @@ export type GalleryImage = {
   isModel3d?: boolean;
   thumbPath?: string;
   starred?: boolean;
+  /** True when the image hasn't been generated yet — renders a placeholder tile. */
+  pending?: boolean;
 };
 
 export type ShotStarredGroup = {
@@ -207,6 +210,8 @@ export type GalleryColumn = {
   srcImages: GalleryImage[];
   timestamp?: string;
   modelName?: string;
+  /** True when the column doesn't exist on disk (pending-output placeholder). */
+  synthetic?: boolean;
 };
 
 // ---------- Prompt history ----------
@@ -234,7 +239,8 @@ export type ColorOverrides = {
   accent?: string;
 };
 
-export type FalLifecycle = "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never";
+export type FalLifecycle =
+  "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never";
 
 export type Config = {
   windowBounds: { x?: number; y?: number; width: number; height: number };

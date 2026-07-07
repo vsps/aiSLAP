@@ -248,7 +248,7 @@ export function GalleryColumn({
                 }}
               />
             )}
-            {!column.isSrc && (
+            {!column.isSrc && !column.synthetic && (
               <IconBtn
                 name="delete"
                 size={18}
