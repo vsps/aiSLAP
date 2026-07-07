@@ -127,9 +127,10 @@ function buildPendingRecord(
 }
 
 function activeJobCount(): number {
-  return useGenerationStore.getState().jobs.filter(
-    (j) => j.status !== "queued" && !isJobTerminal(j.status),
-  ).length;
+  return useGenerationStore
+    .getState()
+    .jobs.filter((j) => j.status !== "queued" && !isJobTerminal(j.status))
+    .length;
 }
 
 /**
@@ -271,6 +272,8 @@ async function runJob(spec: JobSpec): Promise<void> {
         });
         totalOutputs.push(...outs);
         gen.updateJob(spec.id, { completedIterations: k });
+        // Each completed iteration replaces one placeholder tile.
+        gen.decrementPendingOutputs(spec.shotPath, spec.targetVersion);
         // Rescan only when the freshly-written shot is what the user is viewing;
         // otherwise the gallery would briefly flicker to the job's shot.
         if (useSessionStore.getState().shotPath === spec.shotPath) {
@@ -280,7 +283,9 @@ async function runJob(spec: JobSpec): Promise<void> {
         // Whether the iter succeeded, failed, or was aborted, the pending
         // record's job is done. Crash-path is the one case `finally` doesn't
         // fire — that's exactly when the recovery flow picks it up later.
-        await cmd.pending_remove(pendingId).catch(swallow("pending-record removal"));
+        await cmd
+          .pending_remove(pendingId)
+          .catch(swallow("pending-record removal"));
       }
     }
 
@@ -306,6 +311,7 @@ async function runJob(spec: JobSpec): Promise<void> {
         status: "cancelled",
         progressMessage: "Cancelled",
       });
+      gen.clearPendingOutputs(spec.shotPath, spec.targetVersion);
       pushLog("INFO", "Cancelled by user", tag);
       spec.onCancelled?.();
     } else {
@@ -319,6 +325,7 @@ async function runJob(spec: JobSpec): Promise<void> {
         progressMessage: "Failed",
         error: msg,
       });
+      gen.clearPendingOutputs(spec.shotPath, spec.targetVersion);
       gen.setError(msg);
       pushLog("ERROR", msg, tag);
       spec.onFailed?.(e);

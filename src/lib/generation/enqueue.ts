@@ -57,7 +57,10 @@ async function appendPromptHistories(
 ): Promise<void> {
   if (sequencePath && sequenceText.length > 0) {
     try {
-      const sidecar = await cmd.sequence_prompt_append(sequencePath, sequenceText);
+      const sidecar = await cmd.sequence_prompt_append(
+        sequencePath,
+        sequenceText,
+      );
       useSessionStore.getState().hydrateSequenceSidecar(sidecar);
     } catch (e) {
       swallow("sequence prompt history append")(e);
@@ -105,7 +108,9 @@ async function loadJobConfig(): Promise<{
   filenameTemplate: string;
 }> {
   const config = await loadConfigSafely();
-  setMaxConcurrentJobs(config?.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS);
+  setMaxConcurrentJobs(
+    config?.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS,
+  );
   return {
     ffmpegPath: config?.ffmpegPath ?? "",
     filenameTemplate: config?.filenameTemplate ?? "",
@@ -166,7 +171,11 @@ export async function enqueueGeneration(): Promise<void> {
     return;
   }
 
-  const runs = buildPromptsForLink(activeLink, session.sequencePath, session.shotPath);
+  const runs = buildPromptsForLink(
+    activeLink,
+    session.sequencePath,
+    session.shotPath,
+  );
   if (runs.length === 0) {
     gen.setError("Both prompts are empty.");
     return;
@@ -213,6 +222,8 @@ export async function enqueueGeneration(): Promise<void> {
       filenameTemplate,
     };
     registerJob(spec, makeJob(spec));
+    // Show placeholder tiles for the expected outputs.
+    gen.addPendingOutputs(session.shotPath, targetVersion, iterations);
     pushLog("INFO", `Queued: ${node.name}`, spec.tag);
   }
   gen.setError(null);
@@ -251,13 +262,18 @@ function persistLink(l: ChainLink): ChainLinkPersisted {
 /** Pick a role for the synthetic chain_prev ref so it lands in the right
  *  API slot. Defaults to null when the model has neither a "start" nor a
  *  "source" role (args.ts's fallback then routes it as an element/source). */
-function chainPrevRole(model: ModelNode, prevPath: string): RoleAssignment | null {
+function chainPrevRole(
+  model: ModelNode,
+  prevPath: string,
+): RoleAssignment | null {
   const roles = model.ref_roles ?? [];
   const isVideo = isVideoPath(prevPath);
   // Video → prefer source (img2img / vid2vid).
   // Image → prefer start (img → video), else source.
-  if (isVideo && roles.some((r) => r.role === "source")) return { kind: "source" };
-  if (!isVideo && roles.some((r) => r.role === "start")) return { kind: "start" };
+  if (isVideo && roles.some((r) => r.role === "source"))
+    return { kind: "source" };
+  if (!isVideo && roles.some((r) => r.role === "start"))
+    return { kind: "start" };
   if (roles.some((r) => r.role === "source")) return { kind: "source" };
   return null;
 }
@@ -328,7 +344,11 @@ export async function enqueueChain(): Promise<void> {
   const iterations = Math.max(1, gen.iterations | 0);
   const shotPath = session.shotPath;
 
-  pushLog("INFO", `Chain started · ${activeLinks.length} links`, shortId(chainId));
+  pushLog(
+    "INFO",
+    `Chain started · ${activeLinks.length} links`,
+    shortId(chainId),
+  );
 
   // Fire-and-forget driver — runs each link, awaits, feeds the next.
   void (async () => {
@@ -351,7 +371,11 @@ export async function enqueueChain(): Promise<void> {
       const id = crypto.randomUUID();
       const combinedShot = nonEmptyTrimmed(link.shotPrompts).join("\n\n");
 
-      const linkCombined = buildCombinedForLink(link, session.sequencePath, shotPath);
+      const linkCombined = buildCombinedForLink(
+        link,
+        session.sequencePath,
+        shotPath,
+      );
       const spec: JobSpec = {
         id,
         tag: shortId(id),
@@ -403,6 +427,9 @@ function queueAndAwait(spec: JobSpec): Promise<string[] | null> {
     spec.onFailed = () => resolve(null);
     spec.onCancelled = () => resolve(null);
     registerJob(spec, makeJob(spec));
+    useGenerationStore
+      .getState()
+      .addPendingOutputs(spec.shotPath, spec.targetVersion, spec.iterations);
     void pumpQueue();
   });
 }

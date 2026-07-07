@@ -10,6 +10,8 @@ import type {
 import { classifyMedia } from "../lib/media";
 import { isJobTerminal } from "../lib/jobs";
 
+type PendingOutputKey = string; // `<shotPath>|<targetVersion>`
+
 type State = {
   // Source of truth: prompt-chain links. Always >= 1 entry. expandedIdx
   // points at the link the UI panels read/write. null = all-collapsed
@@ -22,6 +24,10 @@ type State = {
   /** All in-flight, queued, and recently-finished submissions. Finished
    * entries are pruned on a short tail so the UI can flash success briefly. */
   jobs: Job[];
+
+  /** Number of placeholder tiles to show per shot+version while generation
+   *  is in flight. Key = `<shotPath>|<targetVersion>`. */
+  pendingOutputs: Record<PendingOutputKey, number>;
 
   errorPopup: string | null;
 };
@@ -72,6 +78,17 @@ type Actions = {
   removeJob: (id: string) => void;
   clearFinishedJobs: () => void;
   setError: (msg: string | null) => void;
+
+  /** Register placeholder tiles for a shot+version before generation starts. */
+  addPendingOutputs: (
+    shotPath: string,
+    targetVersion: string,
+    count: number,
+  ) => void;
+  /** Remove one placeholder when a real file lands. */
+  decrementPendingOutputs: (shotPath: string, targetVersion: string) => void;
+  /** Clear all placeholders for a shot+version (e.g. on rescan). */
+  clearPendingOutputs: (shotPath: string, targetVersion: string) => void;
 };
 
 function defaultsFor(params: Parameter[]): Record<string, unknown> {
@@ -126,10 +143,7 @@ export function makeChainLink(overrides: Partial<ChainLink> = {}): ChainLink {
 // Apply a patch to the active link and return the partial state update.
 // No-op when no link is expanded — panels can't render in that state, so
 // this guards stray late writes.
-function patchActive(
-  s: State,
-  patch: Partial<ChainLink>,
-): Partial<State> {
+function patchActive(s: State, patch: Partial<ChainLink>): Partial<State> {
   if (s.expandedIdx == null) return {};
   const links = s.links.slice();
   links[s.expandedIdx] = { ...links[s.expandedIdx], ...patch };
@@ -146,7 +160,9 @@ function activeOf(s: State): ChainLink | null {
  *  padded to match the current shotPrompts length (older links may lack the
  *  field or have a stale, shorter array). */
 function shotPromptIncludes(link: ChainLink): boolean[] {
-  const inc = (link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)).slice();
+  const inc = (
+    link.shotPromptsIncluded ?? link.shotPrompts.map(() => true)
+  ).slice();
   while (inc.length < link.shotPrompts.length) inc.push(true);
   return inc;
 }
@@ -159,6 +175,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
     iterations: 1,
 
     jobs: [],
+    pendingOutputs: {},
     errorPopup: null,
 
     selectModel(model) {
@@ -172,7 +189,9 @@ export const useGenerationStore = create<State & Actions>((set) => {
         // Precedence: defaults < cached(this model) < shared keys from the
         // outgoing (visible) settings — so point/box prompts follow the user
         // across SAM nodes, while unrelated models restore their own settings.
-        let next: Record<string, unknown> = model ? defaultsFor(model.parameters) : {};
+        let next: Record<string, unknown> = model
+          ? defaultsFor(model.parameters)
+          : {};
         if (model) {
           const cached = settingsCache.get(cacheKey(link.id, model.id));
           if (cached) next = { ...next, ...cached };
@@ -191,7 +210,12 @@ export const useGenerationStore = create<State & Actions>((set) => {
     },
     setShotPrompts(values) {
       const next = values.length > 0 ? values : [""];
-      set((s) => patchActive(s, { shotPrompts: next, shotPromptsIncluded: next.map(() => true) }));
+      set((s) =>
+        patchActive(s, {
+          shotPrompts: next,
+          shotPromptsIncluded: next.map(() => true),
+        }),
+      );
     },
     setShotPromptAt(idx, value) {
       set((s) => {
@@ -208,7 +232,10 @@ export const useGenerationStore = create<State & Actions>((set) => {
       set((s) => {
         const link = activeOf(s);
         if (!link) return {} as Partial<State>;
-        const insertAt = Math.max(0, Math.min(link.shotPrompts.length, idx + 1));
+        const insertAt = Math.max(
+          0,
+          Math.min(link.shotPrompts.length, idx + 1),
+        );
         const next = link.shotPrompts.slice();
         next.splice(insertAt, 0, "");
         const inc = shotPromptIncludes(link);
@@ -220,7 +247,11 @@ export const useGenerationStore = create<State & Actions>((set) => {
       set((s) => {
         const link = activeOf(s);
         if (!link) return {} as Partial<State>;
-        if (link.shotPrompts.length <= 1 || idx < 0 || idx >= link.shotPrompts.length) {
+        if (
+          link.shotPrompts.length <= 1 ||
+          idx < 0 ||
+          idx >= link.shotPrompts.length
+        ) {
           return {} as Partial<State>;
         }
         const next = link.shotPrompts.slice();
@@ -300,7 +331,9 @@ export const useGenerationStore = create<State & Actions>((set) => {
         const link = activeOf(s);
         if (!link) return {} as Partial<State>;
         return patchActive(s, {
-          refImages: ensureFrontals(link.refImages.filter((r) => r.path !== path)),
+          refImages: ensureFrontals(
+            link.refImages.filter((r) => r.path !== path),
+          ),
         });
       });
     },
@@ -347,7 +380,10 @@ export const useGenerationStore = create<State & Actions>((set) => {
             r.roleAssignment.groupName === role.groupName &&
             r.path !== path
           ) {
-            return { ...r, roleAssignment: { ...r.roleAssignment, frontal: false } };
+            return {
+              ...r,
+              roleAssignment: { ...r.roleAssignment, frontal: false },
+            };
           }
           return r;
         });
@@ -406,7 +442,8 @@ export const useGenerationStore = create<State & Actions>((set) => {
         const link = s.links[s.expandedIdx];
         const defaults = link.model ? defaultsFor(link.model.parameters) : {};
         // Keep the cache in step so a later switch-back doesn't undo the reset.
-        if (link.model) settingsCache.set(cacheKey(link.id, link.model.id), defaults);
+        if (link.model)
+          settingsCache.set(cacheKey(link.id, link.model.id), defaults);
         return {
           ...patchActive(s, {
             sequencePrompt: "",
@@ -492,8 +529,10 @@ export const useGenerationStore = create<State & Actions>((set) => {
         let expandedIdx = s.expandedIdx;
         if (expandedIdx != null) {
           if (expandedIdx === fromIdx) expandedIdx = toIdx;
-          else if (fromIdx < expandedIdx && toIdx >= expandedIdx) expandedIdx -= 1;
-          else if (fromIdx > expandedIdx && toIdx <= expandedIdx) expandedIdx += 1;
+          else if (fromIdx < expandedIdx && toIdx >= expandedIdx)
+            expandedIdx -= 1;
+          else if (fromIdx > expandedIdx && toIdx <= expandedIdx)
+            expandedIdx += 1;
         }
         return { links, expandedIdx };
       });
@@ -527,7 +566,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
         if (next.length <= MAX) return { jobs: next };
         // Drop oldest *completed* jobs first so active work is never evicted.
         const trimmed = next.slice();
-        for (let i = 0; trimmed.length > MAX && i < trimmed.length; ) {
+        for (let i = 0; trimmed.length > MAX && i < trimmed.length;) {
           if (isJobTerminal(trimmed[i].status)) trimmed.splice(i, 1);
           else i++;
         }
@@ -550,6 +589,37 @@ export const useGenerationStore = create<State & Actions>((set) => {
     },
     setError(msg) {
       set({ errorPopup: msg });
+    },
+
+    addPendingOutputs(shotPath, targetVersion, count) {
+      const key = `${shotPath}|${targetVersion}`;
+      set((s) => ({
+        pendingOutputs: {
+          ...s.pendingOutputs,
+          [key]: (s.pendingOutputs[key] ?? 0) + count,
+        },
+      }));
+    },
+    decrementPendingOutputs(shotPath, targetVersion) {
+      const key = `${shotPath}|${targetVersion}`;
+      set((s) => {
+        const cur = s.pendingOutputs[key] ?? 0;
+        if (cur <= 1) {
+          const next = { ...s.pendingOutputs };
+          delete next[key];
+          return { pendingOutputs: next };
+        }
+        return { pendingOutputs: { ...s.pendingOutputs, [key]: cur - 1 } };
+      });
+    },
+    clearPendingOutputs(shotPath, targetVersion) {
+      const key = `${shotPath}|${targetVersion}`;
+      set((s) => {
+        if (!(key in s.pendingOutputs)) return {};
+        const next = { ...s.pendingOutputs };
+        delete next[key];
+        return { pendingOutputs: next };
+      });
     },
   };
 });

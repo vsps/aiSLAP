@@ -103,8 +103,49 @@ jobs:
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  verify-apple-cert:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: macos-latest
+    steps:
+      - name: Decode cert & verify signing identity
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -e
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::error::one or more of APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY secrets is empty"
+            exit 1
+          fi
+
+          KEYCHAIN="verify.keychain"
+          KEYCHAIN_PW=$(openssl rand -base64 24)
+          trap 'security delete-keychain "$KEYCHAIN" 2>/dev/null; rm -f cert.p12' EXIT
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+
+          if ! security import cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign; then
+            echo "::error::failed to import cert.p12 - check APPLE_CERTIFICATE (base64) and APPLE_CERTIFICATE_PASSWORD"
+            exit 1
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+
+          if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -qF "$APPLE_SIGNING_IDENTITY"; then
+            echo "::error::APPLE_SIGNING_IDENTITY '$APPLE_SIGNING_IDENTITY' not found in certificate. Identities present:"
+            security find-identity -v -p codesigning "$KEYCHAIN"
+            exit 1
+          fi
+
+          echo "Signing identity verified: $APPLE_SIGNING_IDENTITY"
+
   build:
-    needs: [check-version, create-release]
+    needs: [check-version, create-release, verify-apple-cert]
     if: needs.check-version.outputs.changed == 'true'
     strategy:
       fail-fast: false
@@ -166,6 +207,9 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tauriScript: pnpm tauri

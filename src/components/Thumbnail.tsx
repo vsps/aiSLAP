@@ -188,6 +188,24 @@ export const Thumbnail = memo(function Thumbnail({
 
   if (hidden) return null;
 
+  // Pending placeholder: pulsing skeleton square with a subtle spinner.
+  if (image.pending) {
+    return (
+      <div
+        ref={rootRef}
+        className="group relative w-full shrink-0 overflow-hidden border border-dim/30 bg-panel"
+        style={{
+          paddingBottom: `${maxAspect != null ? maxAspect * 100 : 100}%`,
+        }}
+      >
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full border-2 border-dim/40 border-t-accent animate-spin" />
+        </div>
+        <div className="absolute inset-0 bg-accent/5 animate-pulse" />
+      </div>
+    );
+  }
+
   return (
     <div
       ref={rootRef}
