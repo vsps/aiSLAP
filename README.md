@@ -38,7 +38,7 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 ### [LATEST BUILDS](https://github.com/vsps/aiSLAP/releases) — v0.2.9
 
 > **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.
-> **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**. If macOS reports the app as **damaged**, run `sudo xattr -cr /path/to/aiSLAP_*.dmg` in Terminal, then open it again.
+> **macOS:** the app is signed and notarized by Apple, so it should open normally. If you still hit a Gatekeeper prompt, right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.
 
 ### Windows
 | | |
