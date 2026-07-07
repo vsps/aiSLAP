@@ -75,7 +75,7 @@ jobs:
           BODY_FILE=$(mktemp)
           printf "## What's changed\n\n%s\n\n---\n\n" "$CHANGELOG" >> "$BODY_FILE"
           printf "> **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.\n" >> "$BODY_FILE"
-          printf "> **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**. If macOS reports the app as **damaged**, run \`sudo xattr -cr /path/to/aiSLAP_*.dmg\` in Terminal, then open it again.\n\n" >> "$BODY_FILE"
+          printf "> **macOS:** the app is signed and notarized by Apple, so it should open normally. If you still hit a Gatekeeper prompt, right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.\n\n" >> "$BODY_FILE"
           printf "### Windows\n| | |\n|---|---|\n" >> "$BODY_FILE"
           printf "| MSI installer | [aiSLAP_%s_x64_en-US.msi](%s/aiSLAP_%s_x64_en-US.msi) |\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
           printf "| EXE installer | [aiSLAP_%s_x64-setup.exe](%s/aiSLAP_%s_x64-setup.exe) |\n\n" "$VERSION" "$BASE" "$VERSION" >> "$BODY_FILE"
@@ -248,9 +248,8 @@ jobs:
           TAG="aiSLAP-v${VERSION}"
           BASE="https://github.com/vsps/aiSLAP/releases/download/${TAG}"
           BLOCK=$(mktemp)
-          printf "### [LATEST BUILDS](https://github.com/vsps/aiSLAP/releases) — v%s\n\n" "$VERSION" >> "$BLOCK"
           printf "> **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.\n" >> "$BLOCK"
-          printf "> **macOS Gatekeeper:** right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**. If macOS reports the app as **damaged**, run \`sudo xattr -cr /path/to/aiSLAP_*.dmg\` in Terminal, then open it again.\n\n" >> "$BLOCK"
+          printf "> **macOS:** the app is signed and notarized by Apple, so it should open normally. If you still hit a Gatekeeper prompt, right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.\n\n" >> "$BLOCK"
           printf "### Windows\n| | |\n|---|---|\n" >> "$BLOCK"
           printf "| MSI installer | [aiSLAP_%s_x64_en-US.msi](%s/aiSLAP_%s_x64_en-US.msi) |\n" "$VERSION" "$BASE" "$VERSION" >> "$BLOCK"
           printf "| EXE installer | [aiSLAP_%s_x64-setup.exe](%s/aiSLAP_%s_x64-setup.exe) |\n\n" "$VERSION" "$BASE" "$VERSION" >> "$BLOCK"
