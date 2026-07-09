@@ -253,6 +253,17 @@ pub struct SequenceSidecar {
     pub name: String,
     #[serde(default)]
     pub prompt_history: Vec<PromptEntry>,
+    /// Sum of costUsd across every image under this sequence's shots, from
+    /// the most recent project_cost_scan run. None until a scan has run once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
+    /// Count of images that contributed to total_cost_usd (had a known price).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_image_count: Option<u32>,
+    /// Count of images with no known price (unpriced/non-fal/time-billed),
+    /// excluded from total_cost_usd.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unknown_image_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -273,6 +284,14 @@ pub struct ShotSidecar {
     /// value = comment shown next to the version label. Folders are not renamed.
     #[serde(default, skip_serializing_if = "map_is_empty")]
     pub version_comments: HashMap<String, String>,
+    /// Sum of costUsd across every image in this shot's version folders, from
+    /// the most recent project_cost_scan run. None until a scan has run once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_image_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unknown_image_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

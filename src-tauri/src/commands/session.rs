@@ -92,6 +92,7 @@ pub fn sequence_create(project_path: String, name: String) -> AppResult<String> 
             &SequenceSidecar {
                 name: name.clone(),
                 prompt_history: vec![],
+                ..Default::default()
             },
         )?;
     }
@@ -136,6 +137,7 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
                 clip_media_path: None,
                 version_selects: Default::default(),
                 version_comments: Default::default(),
+                ..Default::default()
             },
         )?;
     }
@@ -155,7 +157,7 @@ pub fn version_create_next(shot_path: String) -> AppResult<String> {
 /// Read-modify-write helper for the common shot-sidecar-field-update shape:
 /// validate the shot dir exists, load the sidecar, apply `mutate`, persist,
 /// and hand back the updated sidecar for callers that want it.
-fn with_shot_sidecar(
+pub(crate) fn with_shot_sidecar(
     shot_path: &str,
     mutate: impl FnOnce(&mut ShotSidecar),
 ) -> AppResult<ShotSidecar> {

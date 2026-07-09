@@ -11,6 +11,7 @@ import type {
   PendingSubmission,
   SeqStarredGroup,
   SequenceStacks,
+  ProjectCostScan,
   SequenceTimeline,
   TimelineInit,
   TimelineExportParams,
@@ -96,6 +97,8 @@ export const cmd = {
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),
+  project_cost_scan: (projectPath: string): Promise<ProjectCostScan> =>
+    rawInvoke("project_cost_scan", { projectPath }),
 
   image_set_visible: (imagePath: string, visible: boolean): Promise<void> =>
     rawInvoke("image_set_visible", { imagePath, visible }),

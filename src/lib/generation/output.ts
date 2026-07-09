@@ -4,6 +4,7 @@
 
 import { cmd } from "../tauri";
 import { basename, dirname, joinPath } from "../paths";
+import { perItemPrice } from "../falPrices";
 import type {
   ChainMetadataBlock,
   ImageMetadata,
@@ -28,6 +29,10 @@ export type DownloadCtx = {
    *  can't drift from what was actually sent. */
   combinedPrompt: string;
   settings: Record<string, unknown>;
+  /** Cached fal per-endpoint prices (Settings -> fetch prices), used to
+   *  compute costUsd at write time. A plain snapshot, not a store import —
+   *  keeps this module usable by the orphan-recovery driver. */
+  prices: Record<string, string>;
   /** Uploaded refs (live path). Empty in recovery — see `refSnapshots`. */
   refs: UploadedRef[];
   /** Alternative source for sidecar refs when `refs` (uploaded) is empty.
@@ -132,6 +137,7 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number): ImageMet
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
   }
+  const costUsd = perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices) ?? undefined;
   return {
     provider: ctx.node.provider ?? "fal",
     model: ctx.node.name,
@@ -153,6 +159,7 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number): ImageMet
     timestamp: new Date().toISOString(),
     providerResponse: ctx.out.raw,
     chain: ctx.chain,
+    costUsd,
   };
 }
 

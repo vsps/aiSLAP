@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import { useGenerationStore } from "../../stores/generationStore";
 import { useSessionStore } from "../../stores/sessionStore";
+import { usePricesStore } from "../../stores/pricesStore";
 import { getProvider } from "../providers";
 import type { ProviderProgress } from "../providers";
 import { extractErrorMessage, swallow } from "../errors";
@@ -258,6 +259,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           shotPrompts: spec.shotPrompts,
           combinedPrompt: spec.combinedPrompt,
           settings: spec.settings,
+          prices: usePricesStore.getState().prices,
           refs: uploaded,
           refSnapshots: undefined,
           shotPath: spec.shotPath,

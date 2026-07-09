@@ -3,6 +3,7 @@ import { joinPath } from "./paths";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { usePricesStore } from "../stores/pricesStore";
 import {
   FalProvider,
   falQueueResult,
@@ -125,6 +126,7 @@ async function pullDown(
     shotPrompts: rec.shotPrompts,
     combinedPrompt: rec.combinedPrompt,
     settings: rec.settings,
+    prices: usePricesStore.getState().prices,
     refs: [], // no upload URLs on recovery
     refSnapshots: rec.refs,
     shotPath: rec.shotPath,

@@ -3,6 +3,7 @@ mod domain;
 mod error;
 mod fsjson;
 mod paths;
+mod pricing;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -73,6 +74,7 @@ pub fn run() {
             commands::image::image_copy_to_sel,
             commands::image::image_move_to_sel,
             commands::image::export_selects,
+            commands::cost::project_cost_scan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

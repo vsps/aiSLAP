@@ -348,6 +348,11 @@ export type AppState = {
 export type SequenceSidecar = {
   name: string;
   promptHistory: PromptEntry[];
+  /** Sum of costUsd across every image under this sequence's shots, from the
+   *  most recent project_cost_scan run. Absent until a scan has run once. */
+  totalCostUsd?: number;
+  knownImageCount?: number;
+  unknownImageCount?: number;
 };
 
 export type ShotSidecar = {
@@ -361,6 +366,11 @@ export type ShotSidecar = {
   versionSelects?: Record<string, string>;
   /** Per-version short free-text comments. Folders are not renamed. */
   versionComments?: Record<string, string>;
+  /** Sum of costUsd across every image in this shot's version folders, from
+   *  the most recent project_cost_scan run. Absent until a scan has run once. */
+  totalCostUsd?: number;
+  knownImageCount?: number;
+  unknownImageCount?: number;
 };
 
 // ---------- Stacked view (sequence-wide shot/version grid) ----------
@@ -488,6 +498,36 @@ export type ImageMetadata = {
   /** Chain provenance — present only when this media was produced as part
    *  of a multi-link chain submission. */
   chain?: ChainMetadataBlock;
+  /** Computed at write time from cached fal per-item prices (Settings ->
+   *  fetch prices). Omitted when the model's price is unknown or isn't
+   *  billed per-item (time/size-billed models are left unpriced). Backfilled
+   *  into older sidecars by project_cost_scan when a price becomes known
+   *  later — see src-tauri/src/commands/cost.rs. */
+  costUsd?: number;
+};
+
+// ---------- Cost aggregation (project_cost_scan) ----------
+
+export type ShotCost = {
+  name: string;
+  path: string;
+  totalCostUsd: number;
+  knownImageCount: number;
+  unknownImageCount: number;
+};
+
+export type SequenceCost = ShotCost & {
+  shots: ShotCost[];
+};
+
+export type ProjectCostScan = {
+  totalCostUsd: number;
+  knownImageCount: number;
+  unknownImageCount: number;
+  /** Count of image sidecars that were missing costUsd but got backfilled
+   *  this run (subset of knownImageCount). */
+  backfilledCount: number;
+  sequences: SequenceCost[];
 };
 
 // ---------- Pending submissions (orphan recovery) ----------
