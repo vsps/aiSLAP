@@ -484,18 +484,28 @@ pub fn save_png_base64(path: String, data_base64: String) -> AppResult<()> {
 #[tauri::command]
 pub fn reveal_in_explorer(path: String) -> AppResult<()> {
     let p = std::path::PathBuf::from(&path);
-    // Open the containing folder. For regular drives this navigates to the
-    // folder; for virtual/cloud filesystems (Google Drive, etc.) `/select`
-    // is not supported by Explorer, but opening the folder itself works.
-    let target = if p.is_dir() {
-        p
+    let native = p.to_string_lossy().replace('/', "\\");
+    if p.is_dir() {
+        std::process::Command::new("explorer")
+            .arg(&native)
+            .spawn()
+            .map_err(|e| AppError::Msg(e.to_string()))?;
     } else {
-        p.parent().map(|d| d.to_path_buf()).unwrap_or(p)
-    };
-    let native = target.to_string_lossy().replace('/', "\\");
-    std::process::Command::new("explorer")
-        .arg(&native)
-        .spawn()
-        .map_err(|e| AppError::Msg(e.to_string()))?;
+        // /select opens the containing folder with the file highlighted.
+        // Falls back to just the parent folder for virtual/cloud filesystems
+        // where /select is not supported.
+        let result = std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&native)
+            .spawn();
+        if result.is_err() {
+            let parent = p.parent().map(|d| d.to_path_buf()).unwrap_or(p);
+            let parent_native = parent.to_string_lossy().replace('/', "\\");
+            std::process::Command::new("explorer")
+                .arg(&parent_native)
+                .spawn()
+                .map_err(|e| AppError::Msg(e.to_string()))?;
+        }
+    }
     Ok(())
 }

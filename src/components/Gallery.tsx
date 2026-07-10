@@ -65,7 +65,7 @@ export function Gallery() {
           isVideo: false,
           pending: true,
         };
-        col.images.unshift(placeholder);
+        col.images.push(placeholder);
       }
     }
     return result;
