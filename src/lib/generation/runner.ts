@@ -95,8 +95,12 @@ function buildPendingRecord(
   iterationIndex: number,
   requestId: string,
 ): PendingSubmission {
-  const provider: "fal" | "replicate" =
-    spec.node.provider === "replicate" ? "replicate" : "fal";
+  const provider: "fal" | "replicate" | "bytedance" =
+    spec.node.provider === "replicate"
+      ? "replicate"
+      : spec.node.provider === "bytedance"
+        ? "bytedance"
+        : "fal";
   return {
     id: pendingId,
     provider,

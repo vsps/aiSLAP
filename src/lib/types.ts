@@ -110,7 +110,7 @@ export type ModelNode = {
   parameters: Parameter[];
   batch_field?: string;
   /** Defaults to "fal" when omitted. */
-  provider?: "fal" | "replicate";
+  provider?: "fal" | "replicate" | "bytedance";
 };
 
 export type ModelEntry = {
@@ -476,7 +476,7 @@ export type ChainMetadataBlock = {
 };
 
 export type ImageMetadata = {
-  provider?: "fal" | "replicate";
+  provider?: "fal" | "replicate" | "bytedance";
   model: string;
   modelId: string;
   endpoint: string;
@@ -538,7 +538,7 @@ export type ProjectCostScan = {
  *  walks survivors after a crash/restart and re-pulls completed ones. */
 export type PendingSubmission = {
   id: string;
-  provider: "fal" | "replicate";
+  provider: "fal" | "replicate" | "bytedance";
   endpoint: string;
   requestId: string;
 
@@ -552,7 +552,7 @@ export type PendingSubmission = {
   modelId: string;
   modelName: string;
   modelEndpoint: string;
-  modelProvider?: "fal" | "replicate";
+  modelProvider?: "fal" | "replicate" | "bytedance";
   batchField?: string;
   sequencePrompt: string;
   shotPrompt: string;

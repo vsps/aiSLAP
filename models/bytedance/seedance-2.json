@@ -1,0 +1,90 @@
+{
+  "provider": "bytedance",
+  "family": "Seedance 2",
+  "category": "ByteDance/Video Generation",
+  "nodes": [
+    {
+      "id": "bytedance_seedance2_txt2vid",
+      "name": "Seedance 2 (txt2vid)",
+      "endpoint": "dreamina-seedance-2-0-260128",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "parameters": [
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p", "4k"] },
+        { "name": "ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "ratio", "default": "16:9", "options": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 15 },
+        { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
+        { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": false }
+      ]
+    },
+    {
+      "id": "bytedance_seedance2_img2vid",
+      "name": "Seedance 2 (img2vid)",
+      "endpoint": "dreamina-seedance-2-0-260128",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
+        { "name": "first_frame", "data_type": "IMAGE", "api_field": "first_frame_url", "required": true },
+        { "name": "last_frame", "data_type": "IMAGE", "api_field": "last_frame_url" }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "first_frame", "api_field": "first_frame_url", "max": 1, "exclusive": true },
+        { "role": "last_frame", "api_field": "last_frame_url", "max": 1, "exclusive": true }
+      ],
+      "parameters": [
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p", "4k"] },
+        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 15 },
+        { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
+        { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": false }
+      ]
+    },
+    {
+      "id": "bytedance_seedance2_ref2vid",
+      "name": "Seedance 2 Pro (ref2vid)",
+      "endpoint": "dreamina-seedance-2-0-260128",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
+        { "name": "image_refs", "data_type": "IMAGE", "api_field": "reference_image_urls", "api_format": "array", "max": 9 },
+        { "name": "video_refs", "data_type": "VIDEO", "api_field": "reference_video_urls", "api_format": "array", "max": 3 },
+        { "name": "audio_refs", "data_type": "AUDIO", "api_field": "reference_audio_urls", "api_format": "array", "max": 3 }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "parameters": [
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "1080p", "options": ["480p", "720p", "1080p", "4k"] },
+        { "name": "ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "ratio", "default": "16:9", "options": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 15 },
+        { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
+        { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": false }
+      ]
+    },
+    {
+      "id": "bytedance_seedance2_fast_ref2vid",
+      "name": "Seedance 2 Fast (ref2vid)",
+      "endpoint": "dreamina-seedance-2-0-fast-260128",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
+        { "name": "image_refs", "data_type": "IMAGE", "api_field": "reference_image_urls", "api_format": "array", "max": 9 },
+        { "name": "video_refs", "data_type": "VIDEO", "api_field": "reference_video_urls", "api_format": "array", "max": 3 },
+        { "name": "audio_refs", "data_type": "AUDIO", "api_field": "reference_audio_urls", "api_format": "array", "max": 3 }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "parameters": [
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p"] },
+        { "name": "ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "ratio", "default": "16:9", "options": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
+        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 15 },
+        { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
+        { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": false }
+      ]
+    }
+  ]
+}

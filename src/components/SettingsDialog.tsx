@@ -44,8 +44,10 @@ type Props = {
 export function SettingsDialog({ onClose }: Props) {
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
+  const [bytedanceKey, setBytedanceKey] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const [revealReplicate, setRevealReplicate] = useState(false);
+  const [revealBytedance, setRevealBytedance] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [originalColors, setOriginalColors] = useState<
     ColorOverrides | undefined
@@ -67,13 +69,15 @@ export function SettingsDialog({ onClose }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [k, rk, c] = await Promise.all([
+      const [k, rk, bk, c] = await Promise.all([
         cmd.provider_key_get("fal").catch(() => ""),
         cmd.provider_key_get("replicate").catch(() => ""),
+        cmd.provider_key_get("bytedance").catch(() => ""),
         cmd.config_load().catch(() => null),
       ]);
       setFalKey(k);
       setReplicateKey(rk);
+      setBytedanceKey(bk);
       if (c) {
         const cfg = c as Config;
         setConfig(cfg);
@@ -180,6 +184,7 @@ export function SettingsDialog({ onClose }: Props) {
     try {
       await cmd.provider_key_set("fal", falKey.trim());
       await cmd.provider_key_set("replicate", replicateKey.trim());
+      await cmd.provider_key_set("bytedance", bytedanceKey.trim());
       await cmd.config_save(config);
       invalidateConfigCache();
       setOriginalColors(config.colors);
@@ -259,6 +264,24 @@ export function SettingsDialog({ onClose }: Props) {
                 onClick={() => setRevealReplicate((v) => !v)}
               >
                 {revealReplicate ? "hide" : "show"}
+              </button>
+            </div>
+          </Field>
+
+          <Field label="BYTEDANCE_API_KEY">
+            <div className="flex gap-1">
+              <input
+                type={revealBytedance ? "text" : "password"}
+                value={bytedanceKey}
+                onChange={(e) => setBytedanceKey(e.currentTarget.value)}
+                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                placeholder="Ark API key…"
+              />
+              <button
+                className="px-2 bg-bg text-xs"
+                onClick={() => setRevealBytedance((v) => !v)}
+              >
+                {revealBytedance ? "hide" : "show"}
               </button>
             </div>
           </Field>
