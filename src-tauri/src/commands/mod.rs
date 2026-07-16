@@ -5,6 +5,7 @@ pub mod fsutil;
 pub mod gallery;
 pub mod image;
 pub mod media;
+pub mod media_id;
 pub mod metadata;
 pub mod models;
 pub mod pending;

@@ -504,6 +504,15 @@ export type ImageMetadata = {
    *  into older sidecars by project_cost_scan when a price becomes known
    *  later — see src-tauri/src/commands/cost.rs. */
   costUsd?: number;
+  /** Stable identity for this output, minted at write time (crypto.randomUUID).
+   *  Embedded into the media file itself (see lib/tauri.ts media_id_embed) so
+   *  a file that's moved or unlinked from this sidecar can still be traced
+   *  back to it — the join key for a future central asset index. */
+  assetId?: string;
+  /** SHA-256 of the media file's bytes at write time, captured after
+   *  embedding. Fallback identity when embedded tags get stripped by an
+   *  external tool (re-encode, re-export, etc). */
+  contentHash?: string;
 };
 
 // ---------- Cost aggregation (project_cost_scan) ----------

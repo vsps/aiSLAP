@@ -46,6 +46,7 @@ pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
                 created: Utc::now().to_rfc3339(),
                 visible: vec![],
                 version_prefix: "gen".into(),
+                project_id: String::new(),
             },
         )?;
     }
@@ -273,6 +274,36 @@ pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppRe
     let path = root.join(PROJECT_SIDECAR);
     let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
     sidecar.version_prefix = trimmed;
+    write_sidecar_atomic(&path, &sidecar)
+}
+
+/// Read the project's stable identity UUID. Returns `None` for a project
+/// that hasn't been assigned one yet — the caller (sessionStore) mints one
+/// with `crypto.randomUUID()` and persists it via `project_id_set`, keeping
+/// ID generation on the TS side consistent with every other id in the app.
+#[tauri::command]
+pub fn project_id_get(project_path: String) -> AppResult<Option<String>> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let sidecar: ProjectSidecar = read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    Ok(if sidecar.project_id.is_empty() {
+        None
+    } else {
+        Some(sidecar.project_id)
+    })
+}
+
+#[tauri::command]
+pub fn project_id_set(project_path: String, project_id: String) -> AppResult<()> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let path = root.join(PROJECT_SIDECAR);
+    let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
+    sidecar.project_id = project_id;
     write_sidecar_atomic(&path, &sidecar)
 }
 

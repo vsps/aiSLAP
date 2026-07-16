@@ -351,6 +351,12 @@ pub struct ProjectSidecar {
     /// 3-digit suffix is appended at creation time. Defaults to "gen".
     #[serde(default = "default_version_prefix")]
     pub version_prefix: String,
+    /// Stable UUID identifying this project across machines — the join key
+    /// for a future central index/DB. Minted client-side (crypto.randomUUID)
+    /// on first read via `project_id_get`; empty on projects not yet touched
+    /// by that path.
+    #[serde(default)]
+    pub project_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

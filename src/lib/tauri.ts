@@ -212,6 +212,26 @@ export const cmd = {
     prefix: string,
   ): Promise<void> =>
     rawInvoke("project_version_prefix_set", { projectPath, prefix }),
+  project_id_get: (projectPath: string): Promise<string | null> =>
+    rawInvoke("project_id_get", { projectPath }),
+  project_id_set: (projectPath: string, projectId: string): Promise<void> =>
+    rawInvoke("project_id_set", { projectPath, projectId }),
+
+  // Asset identity (embedded in media + content hash)
+  file_hash: (path: string): Promise<string> =>
+    rawInvoke("file_hash", { path }),
+  media_id_embed: (
+    path: string,
+    assetId: string,
+    projectId: string,
+    ffmpegPath: string,
+  ): Promise<boolean> =>
+    rawInvoke("media_id_embed", { path, assetId, projectId, ffmpegPath }),
+  media_id_read: (
+    path: string,
+    ffmpegPath: string,
+  ): Promise<{ assetId: string; projectId: string } | null> =>
+    rawInvoke("media_id_read", { path, ffmpegPath }),
 
   // Orphan recovery
   pending_load: (): Promise<PendingSubmission[]> => rawInvoke("pending_load"),

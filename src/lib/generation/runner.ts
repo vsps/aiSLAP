@@ -275,6 +275,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           ffmpegPath: spec.ffmpegPath,
           filenameTemplate: spec.filenameTemplate,
           chain: spec.chain,
+          projectId: useSessionStore.getState().projectId ?? "",
         });
         totalOutputs.push(...outs);
         gen.updateJob(spec.id, { completedIterations: k });
