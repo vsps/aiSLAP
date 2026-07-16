@@ -174,7 +174,7 @@ fn db_err(e: impl std::fmt::Display) -> AppError {
 /// a value handed over IPC — the frontend mints it asynchronously right
 /// after `project_open`, and a DB command could in principle race that.
 /// Empty string when the project hasn't been assigned one yet.
-fn read_project_id(project_root: &Path) -> AppResult<String> {
+pub(crate) fn read_project_id(project_root: &Path) -> AppResult<String> {
     let sidecar: ProjectSidecar = read_json_or_default(&project_root.join(PROJECT_SIDECAR))?;
     Ok(sidecar.project_id)
 }
@@ -553,7 +553,7 @@ async fn push_one_asset(local: &Connection, remote: &Connection, id: &str) -> Ap
 
 // ---------- reconcile (scan + relink + legacy backfill) ----------
 
-fn media_kind(path: &Path) -> &'static str {
+pub(crate) fn media_kind(path: &Path) -> &'static str {
     if is_image_ext(path) {
         "image"
     } else if is_video_ext(path) {

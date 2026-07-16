@@ -8,8 +8,10 @@ use crate::commands::fsutil::{
     as_str, is_media_ext, next_version_name, project_root_for, rel_of, relativize, sidecar_path,
     thumb_path, validate_filename_stem, TransferMode, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
+use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
 use crate::commands::visible::{visible_set_rekey, visible_set_rekey_one};
-use crate::domain::ShotSidecar;
+use crate::db::{self, AssetRecord};
+use crate::domain::{Config, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{ensure_dir, read_json_or_default, write_json_atomic};
 
@@ -139,8 +141,100 @@ async fn apply_relinks(relinks: impl IntoIterator<Item = RelinkInfo>) {
     }
 }
 
+/// (project_root, record) for a copy's freshly-minted identity — computed by
+/// `reidentify_copy` (sync, mid-transfer) and ingested by the async command
+/// wrapper afterward, mirroring `RelinkInfo`/`apply_relinks`.
+type NewAssetInfo = (PathBuf, AssetRecord);
+
+fn ffmpeg_path() -> String {
+    crate::paths::config_path()
+        .and_then(|p| read_json_or_default::<Config>(&p))
+        .map(|c| c.ffmpeg_path)
+        .unwrap_or_default()
+}
+
+/// After a **copy**, `transfer_triple_to_dir` has just duplicated the
+/// sidecar byte-for-byte — including its `assetId` — so without this the two
+/// files would share one identity forever (see plan Risks: "copying a file
+/// duplicates its assetId"). Mint the copy a fresh id, re-embed it
+/// (best-effort, same as `reconcile_one_file`'s legacy-backfill path) and
+/// rewrite the copied sidecar, then hand back an `AssetRecord` for the async
+/// wrapper to ingest as a brand new row — never a relink, since the source
+/// keeps its own row pointing at the source file. `None` for untracked
+/// copies (no project root, no sidecar, no prior `assetId`) — nothing to
+/// re-identify, same as pre-Phase-1 files elsewhere.
+fn reidentify_copy(dest: &Path) -> Option<NewAssetInfo> {
+    let root = project_root_for(dest).ok()?;
+    let sidecar = sidecar_path(dest);
+    let text = std::fs::read_to_string(&sidecar).ok()?;
+    let mut value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let obj = value.as_object()?.clone();
+    obj.get("assetId").and_then(|v| v.as_str())?;
+
+    let project_id = db::read_project_id(&root).unwrap_or_default();
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let _ = media_id_embed_impl(dest, &new_id, &project_id, &ffmpeg_path());
+    let hash = file_hash_impl(dest).ok()?;
+
+    if let Some(map) = value.as_object_mut() {
+        map.insert("assetId".into(), serde_json::json!(new_id));
+        map.insert("contentHash".into(), serde_json::json!(hash));
+    }
+    write_json_atomic(&sidecar, &value).ok()?;
+
+    let rel_path = relativize(dest, &root)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    Some((
+        root,
+        AssetRecord {
+            id: new_id,
+            project_id: Some(project_id),
+            rel_path,
+            content_hash: Some(hash),
+            kind: db::media_kind(dest).to_string(),
+            provider: obj.get("provider").and_then(|v| v.as_str()).map(String::from),
+            model_id: obj.get("modelId").and_then(|v| v.as_str()).map(String::from),
+            endpoint: obj.get("endpoint").and_then(|v| v.as_str()).map(String::from),
+            combined_prompt: obj
+                .get("combinedPrompt")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            settings_json: obj.get("settings").map(|v| v.to_string()),
+            cost_usd: obj.get("costUsd").and_then(|v| v.as_f64()),
+            created_at: obj
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| now.clone()),
+            updated_at: Some(now),
+            deleted_at: None,
+        },
+    ))
+}
+
+/// Push every freshly re-identified copy into the local asset index — fire
+/// and log-only on failure, same treatment as `apply_relinks`.
+async fn apply_new_assets(infos: impl IntoIterator<Item = NewAssetInfo>) {
+    for (root, record) in infos {
+        let id = record.id.clone();
+        if let Err(e) = db::asset_upsert(&root, record).await {
+            tracing::warn!("asset upsert for copied asset {id} failed: {e}");
+        }
+    }
+}
+
 #[tauri::command]
-pub fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResult<String> {
+pub async fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResult<String> {
+    let (out, new_asset) =
+        run_blocking(move || ref_copy_to_global_src_impl(shot_path, source_path)).await?;
+    apply_new_assets(new_asset).await;
+    Ok(out)
+}
+
+fn ref_copy_to_global_src_impl(
+    shot_path: String,
+    source_path: String,
+) -> AppResult<(String, Option<NewAssetInfo>)> {
     let src = PathBuf::from(&source_path);
     let project_dir = PathBuf::from(&shot_path)
         .parent()
@@ -154,15 +248,22 @@ pub fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResu
         TransferMode::Copy,
         CollisionPolicy::Overwrite,
     )?;
-    Ok(as_str(&dest))
+    let new_asset = reidentify_copy(&dest);
+    Ok((as_str(&dest), new_asset))
 }
 
 #[tauri::command]
 pub async fn image_copy_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
-    run_blocking(move || image_copy_to_dir_impl(source_path, dest_dir)).await
+    let (out, new_asset) =
+        run_blocking(move || image_copy_to_dir_impl(source_path, dest_dir)).await?;
+    apply_new_assets(new_asset).await;
+    Ok(out)
 }
 
-fn image_copy_to_dir_impl(source_path: String, dest_dir: String) -> AppResult<String> {
+fn image_copy_to_dir_impl(
+    source_path: String,
+    dest_dir: String,
+) -> AppResult<(String, Option<NewAssetInfo>)> {
     let src = PathBuf::from(&source_path);
     let dest = PathBuf::from(&dest_dir);
     let out = transfer_triple_to_dir(&src, &dest, TransferMode::Copy, CollisionPolicy::Error)?;
@@ -172,7 +273,8 @@ fn image_copy_to_dir_impl(source_path: String, dest_dir: String) -> AppResult<St
         let dest_rel = relativize(&out, &root);
         visible_set_rekey_one(&root, TransferMode::Copy, src_rel, dest_rel)?;
     }
-    Ok(as_str(&out))
+    let new_asset = reidentify_copy(&out);
+    Ok((as_str(&out), new_asset))
 }
 
 #[tauri::command]
@@ -278,11 +380,12 @@ pub async fn version_stack_move(
     dst_version: Option<String>,
     copy: bool,
 ) -> AppResult<String> {
-    let (out, relinks) = run_blocking(move || {
+    let (out, relinks, new_assets) = run_blocking(move || {
         version_stack_move_impl(src_shot, src_version, dst_shot, dst_version, copy)
     })
     .await?;
     apply_relinks(relinks).await;
+    apply_new_assets(new_assets).await;
     Ok(out)
 }
 
@@ -292,7 +395,7 @@ fn version_stack_move_impl(
     dst_shot: String,
     dst_version: Option<String>,
     copy: bool,
-) -> AppResult<(String, Vec<RelinkInfo>)> {
+) -> AppResult<(String, Vec<RelinkInfo>, Vec<NewAssetInfo>)> {
     let src_dir = PathBuf::from(&src_shot).join(&src_version);
     if !src_dir.is_dir() {
         return Err(AppError::Msg(format!(
@@ -314,7 +417,7 @@ fn version_stack_move_impl(
         _ => false,
     };
     if same {
-        return Ok((as_str(&dst_dir), Vec::new()));
+        return Ok((as_str(&dst_dir), Vec::new(), Vec::new()));
     }
 
     // Collect the media files (skip thumbs/json — they move as siblings).
@@ -362,16 +465,23 @@ fn version_stack_move_impl(
     } else {
         TransferMode::Move
     };
-    // Relinks only matter for a move — a copy leaves the original asset's
-    // row pointing at the (still-valid) source; the copy is a separate file
-    // sharing the same assetId for now (see plan Risks: copies aren't
-    // re-identified yet).
+    // A move relinks the existing asset to its new path; a copy mints the
+    // duplicate a fresh identity (see reidentify_copy) rather than letting
+    // it share the source's assetId.
     let mut relinks = Vec::new();
+    let mut new_assets = Vec::new();
     for src in &moves {
         let dest = transfer_triple_to_dir(src, &dst_dir, mode, CollisionPolicy::Error)?;
-        if matches!(mode, TransferMode::Move) {
-            if let Some(info) = relink_info(&dest) {
-                relinks.push(info);
+        match mode {
+            TransferMode::Move => {
+                if let Some(info) = relink_info(&dest) {
+                    relinks.push(info);
+                }
+            }
+            TransferMode::Copy => {
+                if let Some(info) = reidentify_copy(&dest) {
+                    new_assets.push(info);
+                }
             }
         }
     }
@@ -394,7 +504,7 @@ fn version_stack_move_impl(
         }
     }
 
-    Ok((as_str(&dst_dir), relinks))
+    Ok((as_str(&dst_dir), relinks, new_assets))
 }
 
 // ---------- SEL (Selects) ----------
@@ -402,16 +512,17 @@ fn version_stack_move_impl(
 /// Copy an image (and its .json sidecar) into the shot's SEL folder.
 #[tauri::command]
 pub async fn image_copy_to_sel(shot_path: String, source_path: String) -> AppResult<String> {
-    let (out, _relink) =
+    let (out, _relink, new_asset) =
         run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Copy))
             .await?;
+    apply_new_assets(new_asset).await;
     Ok(out)
 }
 
 /// Move an image (and its .json sidecar) into the shot's SEL folder.
 #[tauri::command]
 pub async fn image_move_to_sel(shot_path: String, source_path: String) -> AppResult<String> {
-    let (out, relink) =
+    let (out, relink, _new_asset) =
         run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Move))
             .await?;
     apply_relinks(relink).await;
@@ -422,7 +533,7 @@ fn sel_transfer_impl(
     shot_path: String,
     source_path: String,
     mode: TransferMode,
-) -> AppResult<(String, Option<RelinkInfo>)> {
+) -> AppResult<(String, Option<RelinkInfo>, Option<NewAssetInfo>)> {
     let src = PathBuf::from(&source_path);
     if !src.is_file() {
         return Err(AppError::Msg(format!("not a file: {}", as_str(&src))));
@@ -438,12 +549,10 @@ fn sel_transfer_impl(
             visible_set_rekey_one(&root, mode, Some(s), Some(d))?;
         }
     }
-    let relink = if matches!(mode, TransferMode::Move) {
-        relink_info(&dest)
-    } else {
-        None
-    };
-    Ok((as_str(&dest), relink))
+    match mode {
+        TransferMode::Move => Ok((as_str(&dest), relink_info(&dest), None)),
+        TransferMode::Copy => Ok((as_str(&dest), None, reidentify_copy(&dest))),
+    }
 }
 
 /// Export all SEL folders from the project to a destination directory.
@@ -622,6 +731,57 @@ mod tests {
             "assetId": asset_id,
         });
         write_json_atomic(&sidecar_path(media_path), &sidecar).unwrap();
+    }
+
+    fn sidecar_asset_id_for_test(media_path: &Path) -> String {
+        sidecar_asset_id(media_path).expect("sidecar has an assetId")
+    }
+
+    #[tokio::test]
+    async fn copy_to_dir_mints_a_fresh_identity_and_leaves_the_source_indexed() {
+        let (root, project_id) = test_project();
+        let src = root.join("shot1").join("gen001").join("img.png");
+        write_media_with_sidecar(&src, "asset-src-1");
+        db::asset_upsert(
+            &root,
+            AssetRecord {
+                id: "asset-src-1".to_string(),
+                rel_path: "shot1/gen001/img.png".to_string(),
+                kind: "image".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let dest_dir = root.join("shot1").join("gen002");
+        let out = image_copy_to_dir(as_str(&src), as_str(&dest_dir))
+            .await
+            .unwrap();
+        let dest = PathBuf::from(&out);
+
+        // Copy got a brand new id, distinct from the source's.
+        let new_id = sidecar_asset_id_for_test(&dest);
+        assert_ne!(new_id, "asset-src-1");
+        // Source sidecar untouched.
+        assert_eq!(sidecar_asset_id_for_test(&src), "asset-src-1");
+
+        // Source's DB row still points at the source file.
+        let src_row = db::asset_lookup(&root, Some("asset-src-1".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(src_row.rel_path, "shot1/gen001/img.png");
+
+        // The copy is indexed as its own row at its own path.
+        let copy_row = db::asset_lookup(&root, Some(new_id), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy_row.rel_path, "shot1/gen002/img.png");
+
+        cleanup(&root, &project_id);
     }
 
     #[tokio::test]
