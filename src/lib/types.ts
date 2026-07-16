@@ -135,6 +135,13 @@ export type RoleAssignment =
 export type RefImage = {
   path: string;
   roleAssignment: RoleAssignment | null;
+  /** The ref source's assetId/contentHash, captured at ref-add time from its
+   *  own sidecar (when it has one) — lets the resolver in lib/actions.ts
+   *  find this ref again by id/hash if `path` no longer resolves (moved,
+   *  renamed, or restored on a different machine). Absent for refs added
+   *  before Phase 2, or whose source predates Phase 1 asset identity. */
+  assetId?: string;
+  hash?: string;
 };
 
 // ---------- Prompt chains ----------
@@ -457,6 +464,8 @@ export type TimelineExportParams = {
 export type RefSnapshot = {
   path: string;
   roleAssignment: RoleAssignment | null;
+  assetId?: string;
+  hash?: string;
 };
 
 /** Per-output snapshot of the chain that produced this media. Captured at
@@ -513,6 +522,49 @@ export type ImageMetadata = {
    *  embedding. Fallback identity when embedded tags get stripped by an
    *  external tool (re-encode, re-export, etc). */
   contentHash?: string;
+};
+
+// ---------- Local asset index (db.rs) ----------
+
+/** Mirrors the Rust `AssetRecord` — a row in the local (and, once synced,
+ *  Turso) `assets` table. `relPath` is project-relative, forward-slash. */
+export type AssetRecord = {
+  id: string;
+  projectId?: string;
+  relPath: string;
+  contentHash?: string;
+  kind: "image" | "video" | "model3d" | "other";
+  provider?: string;
+  modelId?: string;
+  endpoint?: string;
+  combinedPrompt?: string;
+  settingsJson?: string;
+  costUsd?: number;
+  createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string;
+};
+
+export type AssetRefRecord = {
+  ordinal: number;
+  refAssetId?: string;
+  refRelPath?: string;
+  refHash?: string;
+  roleJson?: string;
+};
+
+export type SyncReport = {
+  configured: boolean;
+  pushed: number;
+  pending: number;
+  error?: string;
+};
+
+export type ReconcileReport = {
+  scanned: number;
+  sidecarBackfilled: number;
+  dbIngested: number;
+  relinked: number;
 };
 
 // ---------- Cost aggregation (project_cost_scan) ----------

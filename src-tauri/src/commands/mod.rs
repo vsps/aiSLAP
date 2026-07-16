@@ -1,5 +1,6 @@
 pub mod config;
 pub mod cost;
+pub mod db;
 pub mod download;
 pub mod fsutil;
 pub mod gallery;

@@ -34,7 +34,7 @@ pub async fn file_hash(path: String) -> AppResult<String> {
     run_blocking(move || file_hash_impl(&PathBuf::from(path))).await
 }
 
-fn file_hash_impl(path: &Path) -> AppResult<String> {
+pub(crate) fn file_hash_impl(path: &Path) -> AppResult<String> {
     let bytes = std::fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
@@ -56,7 +56,7 @@ pub async fn media_id_embed(
         .await
 }
 
-fn media_id_embed_impl(
+pub(crate) fn media_id_embed_impl(
     path: &Path,
     asset_id: &str,
     project_id: &str,

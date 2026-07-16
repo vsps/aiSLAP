@@ -3,9 +3,12 @@
 // used by the orphan-recovery driver.
 
 import { cmd } from "../tauri";
-import { basename, dirname, joinPath } from "../paths";
+import { basename, dirname, joinPath, relativeTo } from "../paths";
 import { perItemPrice } from "../falPrices";
+import { classifyMedia } from "../media";
 import type {
+  AssetRecord,
+  AssetRefRecord,
   ChainMetadataBlock,
   ImageMetadata,
   ModelNode,
@@ -77,6 +80,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const identity = await identifyOutput(ctx, target);
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -94,6 +98,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const identity = await identifyOutput(ctx, target);
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -113,6 +118,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     }
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -133,6 +139,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       : ctx.iterationBase;
     const meta = buildMetadataRecord(ctx, iterIdx, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
   }
   return written;
@@ -155,6 +162,55 @@ async function identifyOutput(
     .catch(() => false);
   const contentHash = await cmd.file_hash(target).catch(() => undefined);
   return { assetId, contentHash };
+}
+
+function assetKind(path: string): AssetRecord["kind"] {
+  const kind = classifyMedia(path);
+  return kind === "image" || kind === "video" || kind === "model3d" ? kind : "other";
+}
+
+/** Enrich the local asset index (best-effort — sidecar write above is
+ *  already the durable commit for this output) and opportunistically flush
+ *  the outbox to Turso. The local upsert is awaited (fast, no network); the
+ *  remote push is fire-and-forget so a slow/offline Turso never delays a
+ *  generation. */
+async function recordAsset(
+  ctx: DownloadCtx,
+  target: string,
+  meta: ImageMetadata,
+  identity: OutputIdentity,
+): Promise<void> {
+  const projectPath = dirname(dirname(ctx.shotPath));
+  const record: AssetRecord = {
+    id: identity.assetId,
+    relPath: relativeTo(projectPath, target),
+    contentHash: identity.contentHash,
+    kind: assetKind(target),
+    provider: meta.provider,
+    modelId: meta.modelId,
+    endpoint: meta.endpoint,
+    combinedPrompt: meta.combinedPrompt,
+    settingsJson: JSON.stringify(meta.settings ?? {}),
+    costUsd: meta.costUsd,
+    createdAt: meta.timestamp,
+  };
+  await cmd.asset_upsert(projectPath, record).catch(() => {});
+
+  const refs: AssetRefRecord[] = meta.refs.map((r, i) => {
+    const snap: RefSnapshot = typeof r === "string" ? { path: r, roleAssignment: null } : r;
+    return {
+      ordinal: i,
+      refAssetId: snap.assetId,
+      refRelPath: relativeTo(projectPath, snap.path),
+      refHash: snap.hash,
+      roleJson: JSON.stringify(snap.roleAssignment ?? null),
+    };
+  });
+  if (refs.length > 0) {
+    await cmd.asset_refs_set(projectPath, identity.assetId, refs).catch(() => {});
+  }
+
+  void cmd.db_sync_outbox(projectPath).catch(() => {});
 }
 
 function buildMetadataRecord(

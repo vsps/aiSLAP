@@ -6,7 +6,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { normalizeTitle, parseScript } from "../lib/script";
 import { ModalDialog } from "./ModalDialog";
 import { formatCost } from "../lib/falPrices";
-import type { Config, ProjectCostScan } from "../lib/types";
+import type { Config, ProjectCostScan, ReconcileReport } from "../lib/types";
 
 type Props = {
   onClose: () => void;
@@ -39,6 +39,24 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   // Costs
   const [costScan, setCostScan] = useState<ProjectCostScan | null>(null);
   const [costBusy, setCostBusy] = useState(false);
+
+  // Asset index reconcile
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileReport, setReconcileReport] = useState<ReconcileReport | null>(null);
+
+  async function reconcileAssetIndex() {
+    if (!projectPath) return;
+    setReconcileBusy(true);
+    try {
+      setReconcileReport(
+        await cmd.project_reconcile(projectPath, config?.ffmpegPath ?? ""),
+      );
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setReconcileBusy(false);
+    }
+  }
 
   async function recalculateCosts() {
     if (!projectPath) return;
@@ -414,6 +432,36 @@ export function ProjectSettingsDialog({ onClose }: Props) {
                 ))}
               </ul>
             </>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+              Asset index
+            </div>
+            <button
+              type="button"
+              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+              disabled={reconcileBusy || !projectPath}
+              onClick={reconcileAssetIndex}
+            >
+              {reconcileBusy ? "Scanning…" : "Reconcile"}
+            </button>
+          </div>
+          <div className="text-xs text-dim">
+            Scans every generated file: assigns an id to anything from before
+            asset identity existed, and relinks files moved since the last
+            scan. Runs automatically on project open — use this after moving
+            files around outside the app.
+          </div>
+          {reconcileReport && (
+            <div className="text-xs font-mono text-text">
+              Scanned {reconcileReport.scanned} · backfilled{" "}
+              {reconcileReport.sidecarBackfilled} · ingested{" "}
+              {reconcileReport.dbIngested} · relinked{" "}
+              {reconcileReport.relinked}
+            </div>
           )}
         </div>
       </div>

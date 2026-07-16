@@ -10,6 +10,7 @@ import { classifyMedia } from "./media";
 import { cmd } from "./tauri";
 import { showMessage } from "./dialog";
 import { basename } from "./paths";
+import { enrichRefIdentity } from "./actions";
 
 export type OsDragTarget =
   | { kind: "column"; version: string; isSrc: boolean; destDir: string }
@@ -111,6 +112,7 @@ export async function ingestIntoRefPanel(paths: string[]): Promise<void> {
   }
   if (copied.length) {
     useGenerationStore.getState().addRefs(copied);
+    void enrichRefIdentity(copied);
     await useSessionStore.getState().rescanShot();
   }
 }

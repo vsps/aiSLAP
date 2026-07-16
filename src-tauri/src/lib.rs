@@ -1,4 +1,5 @@
 mod commands;
+mod db;
 mod domain;
 mod error;
 mod fsjson;
@@ -68,6 +69,12 @@ pub fn run() {
             commands::media_id::file_hash,
             commands::media_id::media_id_embed,
             commands::media_id::media_id_read,
+            commands::db::asset_upsert,
+            commands::db::asset_lookup,
+            commands::db::asset_refs_set,
+            commands::db::asset_refs_get,
+            commands::db::db_sync_outbox,
+            commands::db::project_reconcile,
             commands::pending::pending_load,
             commands::pending::pending_add,
             commands::pending::pending_remove,

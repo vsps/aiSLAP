@@ -31,3 +31,14 @@ export function isChildOf(parent: string, child: string): boolean {
   const c = normalizeDir(child);
   return c === p || c.startsWith(p + "/");
 }
+
+/** Forward-slash path relative to `root`, or the unmodified (normalized)
+ *  input when it isn't actually under `root`. Mirrors the Rust side's
+ *  `fsutil::rel_of` — used for the DB's project-relative `relPath` column. */
+export function relativeTo(root: string, path: string): string {
+  const r = normalizeDir(root);
+  const p = normalizeDir(path);
+  if (p === r) return "";
+  if (p.startsWith(r + "/")) return p.slice(r.length + 1);
+  return p;
+}

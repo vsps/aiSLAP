@@ -45,9 +45,12 @@ export function SettingsDialog({ onClose }: Props) {
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
   const [bytedanceKey, setBytedanceKey] = useState("");
+  const [tursoUrl, setTursoUrl] = useState("");
+  const [tursoToken, setTursoToken] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const [revealReplicate, setRevealReplicate] = useState(false);
   const [revealBytedance, setRevealBytedance] = useState(false);
+  const [revealTursoToken, setRevealTursoToken] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [originalColors, setOriginalColors] = useState<
     ColorOverrides | undefined
@@ -69,15 +72,19 @@ export function SettingsDialog({ onClose }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [k, rk, bk, c] = await Promise.all([
+      const [k, rk, bk, tu, tt, c] = await Promise.all([
         cmd.provider_key_get("fal").catch(() => ""),
         cmd.provider_key_get("replicate").catch(() => ""),
         cmd.provider_key_get("bytedance").catch(() => ""),
+        cmd.provider_key_get("turso_url").catch(() => ""),
+        cmd.provider_key_get("turso_token").catch(() => ""),
         cmd.config_load().catch(() => null),
       ]);
       setFalKey(k);
       setReplicateKey(rk);
       setBytedanceKey(bk);
+      setTursoUrl(tu);
+      setTursoToken(tt);
       if (c) {
         const cfg = c as Config;
         setConfig(cfg);
@@ -185,6 +192,8 @@ export function SettingsDialog({ onClose }: Props) {
       await cmd.provider_key_set("fal", falKey.trim());
       await cmd.provider_key_set("replicate", replicateKey.trim());
       await cmd.provider_key_set("bytedance", bytedanceKey.trim());
+      await cmd.provider_key_set("turso_url", tursoUrl.trim());
+      await cmd.provider_key_set("turso_token", tursoToken.trim());
       await cmd.config_save(config);
       invalidateConfigCache();
       setOriginalColors(config.colors);
@@ -282,6 +291,38 @@ export function SettingsDialog({ onClose }: Props) {
                 onClick={() => setRevealBytedance((v) => !v)}
               >
                 {revealBytedance ? "hide" : "show"}
+              </button>
+            </div>
+          </Field>
+
+          <Field label="TURSO_DATABASE_URL (optional)">
+            <input
+              type="text"
+              value={tursoUrl}
+              onChange={(e) => setTursoUrl(e.currentTarget.value)}
+              className="w-full bg-inset px-2 py-1 font-mono text-xs"
+              placeholder="libsql://your-db.turso.io"
+            />
+            <div className="text-xs text-dim mt-1">
+              Central index sync. Blank keeps everything local-only — nothing
+              breaks, generated assets just aren't shared with other machines.
+            </div>
+          </Field>
+
+          <Field label="TURSO_AUTH_TOKEN">
+            <div className="flex gap-1">
+              <input
+                type={revealTursoToken ? "text" : "password"}
+                value={tursoToken}
+                onChange={(e) => setTursoToken(e.currentTarget.value)}
+                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                placeholder="ey…"
+              />
+              <button
+                className="px-2 bg-bg text-xs"
+                onClick={() => setRevealTursoToken((v) => !v)}
+              >
+                {revealTursoToken ? "hide" : "show"}
               </button>
             </div>
           </Field>

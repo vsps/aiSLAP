@@ -14,6 +14,7 @@ import { useScriptStore } from "./scriptStore";
 import { swallow } from "../lib/errors";
 import { normalizeDir } from "../lib/paths";
 import { coalesceAsync } from "../lib/coalesce";
+import { pushLog } from "./logStore";
 
 type PromptScope = "sequence" | "shot";
 type ViewMode = "columns" | "starred" | "stacked";
@@ -206,6 +207,26 @@ export const useSessionStore = create<State & Actions>((set, get) => {
           if (get().projectPath === normalized) set({ projectId: id });
         })
         .catch(swallow("project id mint"));
+      // Flush anything queued from a prior offline/no-Turso-configured
+      // session. Best-effort and fire-and-forget — never blocks opening.
+      void cmd.db_sync_outbox(normalized).catch(swallow("turso outbox sync"));
+      // Self-heal the asset index in the background: assigns ids to
+      // anything generated before Phase 1, relinks files moved outside the
+      // app since the last scan. Fire-and-forget — hashing every media file
+      // can take a while on a large project; the app stays interactive.
+      void (async () => {
+        const config = await cmd.config_load().catch(() => null);
+        const report = await cmd
+          .project_reconcile(normalized, config?.ffmpegPath ?? "")
+          .catch(() => null);
+        if (!report) return;
+        if (report.sidecarBackfilled || report.dbIngested || report.relinked) {
+          pushLog(
+            "INFO",
+            `Asset index: ${report.sidecarBackfilled} backfilled, ${report.dbIngested} ingested, ${report.relinked} relinked`,
+          );
+        }
+      })();
     },
 
     async setSequence(sequencePath) {
