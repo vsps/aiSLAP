@@ -398,6 +398,30 @@ pub async fn asset_upsert(project_root: &Path, mut record: AssetRecord) -> AppRe
     Ok(())
 }
 
+/// Push a cost that just became available onto an already-indexed asset —
+/// the counterpart to `asset_upsert` for `cost.rs`'s backfill pass: a model
+/// with no per-item price at generation time gets one once `Settings ->
+/// fetch prices` has run and `project_cost_scan` recomputes it, and that
+/// value should land in the DB the moment it's known, not wait for the next
+/// reconcile. No-op (not an error) if the asset isn't indexed yet — nothing
+/// to update, and reconcile will pick the cost up fresh from the sidecar
+/// whenever it does get indexed.
+pub async fn asset_cost_update(project_root: &Path, asset_id: &str, cost_usd: f64) -> AppResult<()> {
+    let conn = open_local(project_root).await?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let changed = conn
+        .execute(
+            "UPDATE assets SET cost_usd = ?1, updated_at = ?2 WHERE id = ?3",
+            params!(cost_usd, now, asset_id.to_string()),
+        )
+        .await
+        .map_err(db_err)?;
+    if changed > 0 {
+        enqueue_outbox(&conn, asset_id).await?;
+    }
+    Ok(())
+}
+
 pub async fn asset_lookup(
     project_root: &Path,
     asset_id: Option<String>,
@@ -731,6 +755,31 @@ mod tests {
             .await
             .unwrap();
         assert!(missing.is_none());
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn asset_cost_update_sets_cost_on_existing_row_and_no_ops_on_missing() {
+        let (root, project_id) = test_project();
+        asset_upsert(&root, asset("asset-cost-1", "seq1/shot1/gen001/img.png"))
+            .await
+            .unwrap();
+
+        asset_cost_update(&root, "asset-cost-1", 0.0123).await.unwrap();
+        let row = asset_lookup(&root, Some("asset-cost-1".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.cost_usd, Some(0.0123));
+
+        // No row for this id yet — a no-op, not an error (mirrors cost.rs's
+        // backfill running before the asset has ever been indexed).
+        asset_cost_update(&root, "no-such-asset", 1.0).await.unwrap();
+        let still_missing = asset_lookup(&root, Some("no-such-asset".to_string()), None)
+            .await
+            .unwrap();
+        assert!(still_missing.is_none());
 
         cleanup(&root, &project_id);
     }

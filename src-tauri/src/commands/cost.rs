@@ -15,6 +15,7 @@ use crate::commands::fsutil::{
     SRC_DIR,
 };
 use crate::commands::session::with_shot_sidecar;
+use crate::db;
 use crate::domain::{Config, SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppResult};
 use crate::fsjson::{read_json_or_default, write_json_atomic};
@@ -55,10 +56,21 @@ pub struct ProjectCostScan {
 
 #[tauri::command]
 pub async fn project_cost_scan(project_path: String) -> AppResult<ProjectCostScan> {
-    run_blocking(move || project_cost_scan_impl(project_path)).await
+    let root = PathBuf::from(&project_path);
+    let (scan, db_updates) = run_blocking(move || project_cost_scan_impl(project_path)).await?;
+    // Push every freshly-backfilled cost into the local asset index — best
+    // effort, same spirit as `recordAsset` on the TS side: this scan already
+    // succeeded and the sidecars are already written, a DB push failure
+    // here shouldn't fail the command the user is waiting on.
+    for (asset_id, cost_usd) in db_updates {
+        if let Err(e) = db::asset_cost_update(&root, &asset_id, cost_usd).await {
+            tracing::warn!("cost scan: DB update for asset {asset_id} failed: {e}");
+        }
+    }
+    Ok(scan)
 }
 
-fn project_cost_scan_impl(project_path: String) -> AppResult<ProjectCostScan> {
+fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, CostDbUpdates)> {
     let root = PathBuf::from(&project_path);
     let config: Config = read_json_or_default(&crate::paths::config_path()?)?;
     let prices = config.fal_prices.unwrap_or_default();
@@ -68,6 +80,7 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<ProjectCostScan> {
     let mut project_unknown = 0u32;
     let mut project_backfilled = 0u32;
     let mut sequences: Vec<SequenceCost> = Vec::new();
+    let mut db_updates: Vec<(String, f64)> = Vec::new();
 
     for seq_dir in list_dirs(&root)? {
         let seq_name = match seq_dir.file_name().and_then(|n| n.to_str()) {
@@ -94,8 +107,9 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<ProjectCostScan> {
                 continue;
             }
 
-            let (shot_total, shot_known, shot_unknown, shot_backfilled) =
+            let (shot_total, shot_known, shot_unknown, shot_backfilled, shot_db_updates) =
                 scan_shot_cost(&shot_dir, &prices)?;
+            db_updates.extend(shot_db_updates);
 
             with_shot_sidecar(&as_str(&shot_dir), |sidecar: &mut ShotSidecar| {
                 sidecar.total_cost_usd = Some(shot_total);
@@ -136,27 +150,36 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<ProjectCostScan> {
         project_unknown += seq_unknown;
     }
 
-    Ok(ProjectCostScan {
-        total_cost_usd: project_total,
-        known_image_count: project_known,
-        unknown_image_count: project_unknown,
-        backfilled_count: project_backfilled,
-        sequences,
-    })
+    Ok((
+        ProjectCostScan {
+            total_cost_usd: project_total,
+            known_image_count: project_known,
+            unknown_image_count: project_unknown,
+            backfilled_count: project_backfilled,
+            sequences,
+        },
+        db_updates,
+    ))
 }
+
+/// (assetId, cost) for an asset whose sidecar cost was just backfilled —
+/// pending push into the local asset index.
+type CostDbUpdates = Vec<(String, f64)>;
 
 /// Walk every version-folder image under one shot (skipping SRC/SEL, mirroring
 /// scan_shot_columns's traversal in gallery.rs -- no is_version_name gate is
 /// applied there either, so this matches it), read/backfill each sidecar's
-/// costUsd, and return (total, known_count, unknown_count, backfilled_count).
+/// costUsd, and return (total, known_count, unknown_count, backfilled_count,
+/// db_updates).
 fn scan_shot_cost(
     shot_dir: &Path,
     prices: &HashMap<String, String>,
-) -> AppResult<(f64, u32, u32, u32)> {
+) -> AppResult<(f64, u32, u32, u32, CostDbUpdates)> {
     let mut total = 0.0f64;
     let mut known = 0u32;
     let mut unknown = 0u32;
     let mut backfilled = 0u32;
+    let mut db_updates: Vec<(String, f64)> = Vec::new();
 
     for entry in std::fs::read_dir(shot_dir)? {
         let entry = entry?;
@@ -189,11 +212,14 @@ fn scan_shot_cost(
                 continue;
             }
             match process_image_sidecar(&sidecar_path, prices) {
-                Ok(Some((amount, was_backfilled))) => {
-                    total += amount;
+                Ok(Some(cost)) => {
+                    total += cost.amount;
                     known += 1;
-                    if was_backfilled {
+                    if cost.backfilled {
                         backfilled += 1;
+                        if let Some(id) = cost.asset_id {
+                            db_updates.push((id, cost.amount));
+                        }
                     }
                 }
                 Ok(None) => unknown += 1,
@@ -204,7 +230,16 @@ fn scan_shot_cost(
             }
         }
     }
-    Ok((total, known, unknown, backfilled))
+    Ok((total, known, unknown, backfilled, db_updates))
+}
+
+/// Outcome of pricing one image sidecar.
+struct SidecarCost {
+    amount: f64,
+    backfilled: bool,
+    /// The sidecar's `assetId`, if it has one — lets the caller push a
+    /// freshly-backfilled cost straight into the local asset index.
+    asset_id: Option<String>,
 }
 
 /// Read one image's `.json` sidecar. If `costUsd` is already present, trust
@@ -212,20 +247,24 @@ fn scan_shot_cost(
 /// have since changed). If absent, try to compute it from
 /// provider+endpoint+prices; on success, write it back (backfill) and report
 /// it; on failure, leave the sidecar untouched and report None.
-/// Returns Some((amount, was_backfilled)) if known, None if unpriced.
 fn process_image_sidecar(
     sidecar_path: &Path,
     prices: &HashMap<String, String>,
-) -> AppResult<Option<(f64, bool)>> {
+) -> AppResult<Option<SidecarCost>> {
     let text = std::fs::read_to_string(sidecar_path)?;
     let mut value: Value = serde_json::from_str(&text)?;
     let obj = match value.as_object() {
         Some(o) => o,
         None => return Ok(None),
     };
+    let asset_id = obj.get("assetId").and_then(|v| v.as_str()).map(String::from);
 
     if let Some(existing) = obj.get("costUsd").and_then(|v| v.as_f64()) {
-        return Ok(Some((existing, false)));
+        return Ok(Some(SidecarCost {
+            amount: existing,
+            backfilled: false,
+            asset_id,
+        }));
     }
 
     let provider = obj.get("provider").and_then(|v| v.as_str());
@@ -242,5 +281,9 @@ fn process_image_sidecar(
         map.insert("costUsd".to_string(), serde_json::json!(amount));
     }
     write_json_atomic(sidecar_path, &value)?;
-    Ok(Some((amount, true)))
+    Ok(Some(SidecarCost {
+        amount,
+        backfilled: true,
+        asset_id,
+    }))
 }
