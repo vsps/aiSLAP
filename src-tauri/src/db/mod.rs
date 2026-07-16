@@ -422,6 +422,34 @@ pub async fn asset_cost_update(project_root: &Path, asset_id: &str, cost_usd: f6
     Ok(())
 }
 
+async fn update_rel_path(conn: &Connection, asset_id: &str, new_rel_path: &str) -> AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE assets SET rel_path = ?1, updated_at = ?2, deleted_at = NULL WHERE id = ?3",
+        params!(new_rel_path.to_string(), now, asset_id.to_string()),
+    )
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Relink an already-indexed asset to its new location the moment a move
+/// command (image.rs) knows about it — the counterpart to `asset_cost_update`
+/// for path changes, so a moved file resolves again immediately instead of
+/// waiting for the next `project_reconcile` pass. No-op if the asset isn't
+/// indexed yet or is already at `new_rel_path`.
+pub async fn asset_relink(project_root: &Path, asset_id: &str, new_rel_path: &str) -> AppResult<()> {
+    let conn = open_local(project_root).await?;
+    match select_asset_by(&conn, "id", asset_id).await? {
+        Some(existing) if existing.rel_path != new_rel_path => {
+            update_rel_path(&conn, asset_id, new_rel_path).await?;
+            enqueue_outbox(&conn, asset_id).await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub async fn asset_lookup(
     project_root: &Path,
     asset_id: Option<String>,
@@ -651,13 +679,7 @@ async fn reconcile_one_file(
 
     match select_asset_by(conn, "id", &id).await? {
         Some(existing) if existing.rel_path != rel_path => {
-            let now = chrono::Utc::now().to_rfc3339();
-            conn.execute(
-                "UPDATE assets SET rel_path = ?1, updated_at = ?2, deleted_at = NULL WHERE id = ?3",
-                (rel_path, now, id.clone()),
-            )
-            .await
-            .map_err(db_err)?;
+            update_rel_path(conn, &id, &rel_path).await?;
             enqueue_outbox(conn, &id).await?;
             report.relinked += 1;
         }
@@ -755,6 +777,34 @@ mod tests {
             .await
             .unwrap();
         assert!(missing.is_none());
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn asset_relink_updates_rel_path_and_no_ops_on_missing() {
+        let (root, project_id) = test_project();
+        asset_upsert(&root, asset("asset-relink-1", "seq1/shot1/gen001/img.png"))
+            .await
+            .unwrap();
+
+        asset_relink(&root, "asset-relink-1", "seq1/shot1/gen002/img.png")
+            .await
+            .unwrap();
+        let row = asset_lookup(&root, Some("asset-relink-1".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.rel_path, "seq1/shot1/gen002/img.png");
+
+        // No row for this id — a no-op, not an error (a move on a file that
+        // was never indexed, e.g. pre-Phase-1, self-heals on the next
+        // reconcile instead).
+        asset_relink(&root, "no-such-asset", "wherever.png").await.unwrap();
+        let still_missing = asset_lookup(&root, Some("no-such-asset".to_string()), None)
+            .await
+            .unwrap();
+        assert!(still_missing.is_none());
 
         cleanup(&root, &project_id);
     }

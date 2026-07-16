@@ -104,6 +104,41 @@ fn transfer_triple_to_dir(
     Ok(dest_primary)
 }
 
+/// (project_root, asset_id, new_rel_path) for a moved file's DB relink —
+/// computed by the sync `_impl` fns (which already have the paths in hand
+/// mid-move) and applied by the async command wrapper afterward, since the
+/// DB layer is async and these `_impl` fns are plain blocking functions run
+/// via `run_blocking`.
+type RelinkInfo = (PathBuf, String, String);
+
+/// Best-effort: `None` for an untracked file (no project root, no sidecar,
+/// no `assetId`, or a path that can't be relativized) — callers just skip
+/// the relink in that case, same as they always have for pre-Phase-1 files.
+fn relink_info(dest: &Path) -> Option<RelinkInfo> {
+    let root = project_root_for(dest).ok()?;
+    let asset_id = sidecar_asset_id(dest)?;
+    let rel_path = relativize(dest, &root)?;
+    Some((root, asset_id, rel_path))
+}
+
+fn sidecar_asset_id(media_path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(sidecar_path(media_path)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value.get("assetId")?.as_str().map(String::from)
+}
+
+/// Push every collected relink through to the local asset index — fire and
+/// log-only on failure, mirroring how `media_id_embed` failures are treated
+/// elsewhere: this is enrichment, not the durable record (the sidecar/file
+/// move already succeeded by the time this runs).
+async fn apply_relinks(relinks: impl IntoIterator<Item = RelinkInfo>) {
+    for (root, asset_id, rel_path) in relinks {
+        if let Err(e) = crate::db::asset_relink(&root, &asset_id, &rel_path).await {
+            tracing::warn!("asset relink failed for {asset_id}: {e}");
+        }
+    }
+}
+
 #[tauri::command]
 pub fn ref_copy_to_global_src(shot_path: String, source_path: String) -> AppResult<String> {
     let src = PathBuf::from(&source_path);
@@ -142,10 +177,16 @@ fn image_copy_to_dir_impl(source_path: String, dest_dir: String) -> AppResult<St
 
 #[tauri::command]
 pub async fn image_move_to_dir(source_path: String, dest_dir: String) -> AppResult<String> {
-    run_blocking(move || image_move_to_dir_impl(source_path, dest_dir)).await
+    let (out, relink) =
+        run_blocking(move || image_move_to_dir_impl(source_path, dest_dir)).await?;
+    apply_relinks(relink).await;
+    Ok(out)
 }
 
-fn image_move_to_dir_impl(source_path: String, dest_dir: String) -> AppResult<String> {
+fn image_move_to_dir_impl(
+    source_path: String,
+    dest_dir: String,
+) -> AppResult<(String, Option<RelinkInfo>)> {
     let src = PathBuf::from(&source_path);
     let dest = PathBuf::from(&dest_dir);
     let out = transfer_triple_to_dir(&src, &dest, TransferMode::Move, CollisionPolicy::Error)?;
@@ -157,11 +198,18 @@ fn image_move_to_dir_impl(source_path: String, dest_dir: String) -> AppResult<St
         let dest_rel = rel_of(&out, &root);
         visible_set_rekey_one(&root, TransferMode::Move, src_rel, dest_rel)?;
     }
-    Ok(as_str(&out))
+    let relink = relink_info(&out);
+    Ok((as_str(&out), relink))
 }
 
 #[tauri::command]
-pub fn image_rename(source_path: String, new_stem: String) -> AppResult<String> {
+pub async fn image_rename(source_path: String, new_stem: String) -> AppResult<String> {
+    let (out, relink) = run_blocking(move || image_rename_impl(source_path, new_stem)).await?;
+    apply_relinks(relink).await;
+    Ok(out)
+}
+
+fn image_rename_impl(source_path: String, new_stem: String) -> AppResult<(String, Option<RelinkInfo>)> {
     let src = PathBuf::from(&source_path);
     if !src.is_file() {
         return Err(AppError::Msg(format!("not a file: {source_path}")));
@@ -214,7 +262,8 @@ pub fn image_rename(source_path: String, new_stem: String) -> AppResult<String> 
         let new_rel = rel_of(&new_primary, &root);
         visible_set_rekey_one(&root, TransferMode::Move, old_rel, new_rel)?;
     }
-    Ok(as_str(&new_primary))
+    let relink = relink_info(&new_primary);
+    Ok((as_str(&new_primary), relink))
 }
 
 /// Move (or copy) every image file (plus its sidecar/thumb) from
@@ -229,10 +278,12 @@ pub async fn version_stack_move(
     dst_version: Option<String>,
     copy: bool,
 ) -> AppResult<String> {
-    run_blocking(move || {
+    let (out, relinks) = run_blocking(move || {
         version_stack_move_impl(src_shot, src_version, dst_shot, dst_version, copy)
     })
-    .await
+    .await?;
+    apply_relinks(relinks).await;
+    Ok(out)
 }
 
 fn version_stack_move_impl(
@@ -241,7 +292,7 @@ fn version_stack_move_impl(
     dst_shot: String,
     dst_version: Option<String>,
     copy: bool,
-) -> AppResult<String> {
+) -> AppResult<(String, Vec<RelinkInfo>)> {
     let src_dir = PathBuf::from(&src_shot).join(&src_version);
     if !src_dir.is_dir() {
         return Err(AppError::Msg(format!(
@@ -263,7 +314,7 @@ fn version_stack_move_impl(
         _ => false,
     };
     if same {
-        return Ok(as_str(&dst_dir));
+        return Ok((as_str(&dst_dir), Vec::new()));
     }
 
     // Collect the media files (skip thumbs/json — they move as siblings).
@@ -311,8 +362,18 @@ fn version_stack_move_impl(
     } else {
         TransferMode::Move
     };
+    // Relinks only matter for a move — a copy leaves the original asset's
+    // row pointing at the (still-valid) source; the copy is a separate file
+    // sharing the same assetId for now (see plan Risks: copies aren't
+    // re-identified yet).
+    let mut relinks = Vec::new();
     for src in &moves {
-        transfer_triple_to_dir(src, &dst_dir, mode, CollisionPolicy::Error)?;
+        let dest = transfer_triple_to_dir(src, &dst_dir, mode, CollisionPolicy::Error)?;
+        if matches!(mode, TransferMode::Move) {
+            if let Some(info) = relink_info(&dest) {
+                relinks.push(info);
+            }
+        }
     }
 
     // Update the visible set: a move re-keys src -> dst; a copy adds dst
@@ -333,7 +394,7 @@ fn version_stack_move_impl(
         }
     }
 
-    Ok(as_str(&dst_dir))
+    Ok((as_str(&dst_dir), relinks))
 }
 
 // ---------- SEL (Selects) ----------
@@ -341,20 +402,27 @@ fn version_stack_move_impl(
 /// Copy an image (and its .json sidecar) into the shot's SEL folder.
 #[tauri::command]
 pub async fn image_copy_to_sel(shot_path: String, source_path: String) -> AppResult<String> {
-    run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Copy)).await
+    let (out, _relink) =
+        run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Copy))
+            .await?;
+    Ok(out)
 }
 
 /// Move an image (and its .json sidecar) into the shot's SEL folder.
 #[tauri::command]
 pub async fn image_move_to_sel(shot_path: String, source_path: String) -> AppResult<String> {
-    run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Move)).await
+    let (out, relink) =
+        run_blocking(move || sel_transfer_impl(shot_path, source_path, TransferMode::Move))
+            .await?;
+    apply_relinks(relink).await;
+    Ok(out)
 }
 
 fn sel_transfer_impl(
     shot_path: String,
     source_path: String,
     mode: TransferMode,
-) -> AppResult<String> {
+) -> AppResult<(String, Option<RelinkInfo>)> {
     let src = PathBuf::from(&source_path);
     if !src.is_file() {
         return Err(AppError::Msg(format!("not a file: {}", as_str(&src))));
@@ -370,7 +438,12 @@ fn sel_transfer_impl(
             visible_set_rekey_one(&root, mode, Some(s), Some(d))?;
         }
     }
-    Ok(as_str(&dest))
+    let relink = if matches!(mode, TransferMode::Move) {
+        relink_info(&dest)
+    } else {
+        None
+    };
+    Ok((as_str(&dest), relink))
 }
 
 /// Export all SEL folders from the project to a destination directory.
@@ -508,4 +581,109 @@ pub fn reveal_in_explorer(path: String) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::fsutil::PROJECT_SIDECAR;
+    use crate::db::{self, AssetRecord};
+    use crate::domain::ProjectSidecar;
+    use std::fs;
+
+    /// A throwaway project under the OS temp dir, with a real project.json —
+    /// same fixture shape as db::tests::test_project, duplicated here since
+    /// that helper is private to the db module.
+    fn test_project() -> (PathBuf, String) {
+        let project_id = format!("test-image-{}", uuid::Uuid::new_v4());
+        let root = std::env::temp_dir().join(&project_id);
+        fs::create_dir_all(&root).unwrap();
+        let sidecar = ProjectSidecar {
+            project_id: project_id.clone(),
+            ..Default::default()
+        };
+        write_json_atomic(&root.join(PROJECT_SIDECAR), &sidecar).unwrap();
+        (root, project_id)
+    }
+
+    fn cleanup(root: &Path, project_id: &str) {
+        let _ = fs::remove_dir_all(root);
+        if let Ok(dir) = crate::paths::appdata_dir() {
+            let _ = fs::remove_file(dir.join("db").join(format!("{project_id}.db")));
+        }
+    }
+
+    fn write_media_with_sidecar(media_path: &Path, asset_id: &str) {
+        fs::create_dir_all(media_path.parent().unwrap()).unwrap();
+        fs::write(media_path, b"fake image bytes").unwrap();
+        let sidecar = serde_json::json!({
+            "model": "Test", "modelId": "m1", "endpoint": "e1",
+            "settings": {}, "refs": [], "timestamp": "2024-01-01T00:00:00Z",
+            "assetId": asset_id,
+        });
+        write_json_atomic(&sidecar_path(media_path), &sidecar).unwrap();
+    }
+
+    #[tokio::test]
+    async fn move_to_dir_relinks_the_indexed_asset_immediately() {
+        let (root, project_id) = test_project();
+        let src = root.join("shot1").join("gen001").join("img.png");
+        write_media_with_sidecar(&src, "asset-move-1");
+        db::asset_upsert(
+            &root,
+            AssetRecord {
+                id: "asset-move-1".to_string(),
+                rel_path: "shot1/gen001/img.png".to_string(),
+                kind: "image".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let dest_dir = root.join("shot1").join("gen002");
+        image_move_to_dir(as_str(&src), as_str(&dest_dir))
+            .await
+            .unwrap();
+
+        let row = db::asset_lookup(&root, Some("asset-move-1".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.rel_path, "shot1/gen002/img.png");
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn rename_relinks_the_indexed_asset_immediately() {
+        let (root, project_id) = test_project();
+        let src = root.join("shot1").join("gen001").join("img.png");
+        write_media_with_sidecar(&src, "asset-rename-1");
+        db::asset_upsert(
+            &root,
+            AssetRecord {
+                id: "asset-rename-1".to_string(),
+                rel_path: "shot1/gen001/img.png".to_string(),
+                kind: "image".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        image_rename(as_str(&src), "renamed".to_string())
+            .await
+            .unwrap();
+
+        let row = db::asset_lookup(&root, Some("asset-rename-1".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.rel_path, "shot1/gen001/renamed.png");
+
+        cleanup(&root, &project_id);
+    }
 }
