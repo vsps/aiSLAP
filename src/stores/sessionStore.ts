@@ -325,10 +325,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
     setSelectedImage(path) {
       if (path !== null) {
         const tl = useTimelineStore.getState();
-        if (tl.playing || tl.playheadSec > 0) {
-          tl.pause();
-          tl.restart();
-        }
+        if (tl.timelineActive) tl.deactivate();
       }
       set({ selectedImagePath: path });
     },

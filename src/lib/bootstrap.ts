@@ -126,6 +126,7 @@ export async function bootstrap(): Promise<() => void> {
   usePricesStore
     .getState()
     .setPrices(config?.falPrices ?? {}, config?.falPricesFetchedAt ?? null);
+  usePricesStore.getState().setOverrides(config?.priceOverrides ?? {});
 
   const entries = useModelsStore.getState().entries;
   const gen = useGenerationStore.getState();

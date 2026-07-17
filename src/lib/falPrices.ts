@@ -118,17 +118,68 @@ export function isPerItemUnit(unit: string): boolean {
   return /^(request|image|video|unit|generation)s?\b/.test(unit);
 }
 
-/** Per-output price for one fal endpoint, or null when the model isn't fal,
- *  isn't priced yet, or is billed by time/size rather than per output. */
+/** Seconds-billed units — almost every video model. Distinct from
+ *  isPerItemUnit() because the total depends on the output's actual
+ *  duration, not a flat per-run amount. */
+export function isPerSecondUnit(unit: string): boolean {
+  return /^sec(ond)?s?\b/.test(unit);
+}
+
+/** Parse a `duration` setting value to seconds. Handles the numeric,
+ *  numeric-string, and suffixed-string ("8s") shapes used across the model
+ *  registry. Returns null for non-numeric values (e.g. seedance-2's "auto"),
+ *  where the actual output length isn't knowable from settings alone. */
+export function parseDurationSeconds(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === "string") {
+    const m = raw.match(/^(\d+(?:\.\d+)?)/);
+    const n = m ? Number(m[1]) : NaN;
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+export type CostContext = {
+  /** True when the actual output is a video — a per-second price (scraped or
+   *  overridden) only resolves to a total when this is set. */
+  isVideo?: boolean;
+  /** Output duration in seconds, from the generation's `duration` setting
+   *  (see parseDurationSeconds). Null/undefined when unknown. */
+  durationSec?: number | null;
+  /** The generation's `resolution` setting, for models priced per-resolution.
+   *  Overrides are keyed `${endpoint}::${resolution}` when set, since
+   *  scraping only ever yields one blended price per model regardless of
+   *  resolution (Settings -> Costs table). */
+  resolution?: string | null;
+};
+
+/** Per-output price for one endpoint. A user-entered override (Settings ->
+ *  Costs) always wins when present — it's the only way to price non-fal
+ *  models, or a specific resolution, since only fal has a scraper and only
+ *  at the model level. For video, both an override and a scraped price are
+ *  interpreted as $/sec and multiplied by `ctx.durationSec`; without a known
+ *  duration a per-second price can't be resolved to a total (null). */
 export function perItemPrice(
   provider: string | undefined,
   endpoint: string,
   prices: Record<string, string>,
+  overrides?: Record<string, number>,
+  ctx?: CostContext,
 ): number | null {
+  const overrideKey = ctx?.resolution ? `${endpoint}::${ctx.resolution}` : endpoint;
+  const override = overrides?.[overrideKey] ?? (ctx?.resolution ? overrides?.[endpoint] : undefined);
+  if (override != null && Number.isFinite(override)) {
+    if (!ctx?.isVideo) return override;
+    return ctx.durationSec != null ? override * ctx.durationSec : null;
+  }
   if ((provider ?? "fal") !== "fal") return null;
   const text = prices[endpoint];
   if (!text) return null;
   const parsed = parseFalPrice(text);
-  if (!parsed || !isPerItemUnit(parsed.unit)) return null;
-  return parsed.amount;
+  if (!parsed) return null;
+  if (isPerItemUnit(parsed.unit)) return parsed.amount;
+  if (ctx?.isVideo && isPerSecondUnit(parsed.unit) && ctx.durationSec != null) {
+    return parsed.amount * ctx.durationSec;
+  }
+  return null;
 }

@@ -134,6 +134,7 @@ async function pullDown(
     combinedPrompt: rec.combinedPrompt,
     settings: rec.settings,
     prices: usePricesStore.getState().prices,
+    priceOverrides: usePricesStore.getState().overrides,
     refs: [], // no upload URLs on recovery
     refSnapshots: rec.refs,
     shotPath: rec.shotPath,

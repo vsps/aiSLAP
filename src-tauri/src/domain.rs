@@ -120,6 +120,11 @@ pub struct Config {
     pub fal_prices: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fal_prices_fetched_at: Option<String>,
+    /// Per-endpoint user-entered price overrides (any provider,
+    /// frontend-managed) — takes priority over `fal_prices` when set. See
+    /// `pricing::per_item_price`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_overrides: Option<HashMap<String, f64>>,
 }
 
 fn default_max_concurrent_jobs() -> u32 {
@@ -146,6 +151,7 @@ impl Default for Config {
             fal_lifecycle: None,
             fal_prices: None,
             fal_prices_fetched_at: None,
+            price_overrides: None,
         }
     }
 }

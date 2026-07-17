@@ -4,7 +4,7 @@
 
 import { cmd } from "../tauri";
 import { basename, dirname, joinPath, relativeTo } from "../paths";
-import { perItemPrice } from "../falPrices";
+import { perItemPrice, parseDurationSeconds } from "../falPrices";
 import { classifyMedia } from "../media";
 import type {
   AssetRecord,
@@ -36,6 +36,9 @@ export type DownloadCtx = {
    *  compute costUsd at write time. A plain snapshot, not a store import —
    *  keeps this module usable by the orphan-recovery driver. */
   prices: Record<string, string>;
+  /** User-entered per-endpoint price overrides (Settings -> Costs), any
+   *  provider. Takes priority over `prices` — see perItemPrice(). */
+  priceOverrides?: Record<string, number>;
   /** Uploaded refs (live path). Empty in recovery — see `refSnapshots`. */
   refs: UploadedRef[];
   /** Alternative source for sidecar refs when `refs` (uploaded) is empty.
@@ -224,7 +227,13 @@ function buildMetadataRecord(
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
   }
-  const costUsd = perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices) ?? undefined;
+  const costUsd =
+    perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices, ctx.priceOverrides, {
+      isVideo: ctx.node.kind === "video",
+      durationSec: parseDurationSeconds(ctx.settings.duration),
+      resolution:
+        typeof ctx.settings.resolution === "string" ? ctx.settings.resolution : null,
+    }) ?? undefined;
   return {
     provider: ctx.node.provider ?? "fal",
     model: ctx.node.name,

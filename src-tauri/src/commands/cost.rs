@@ -19,7 +19,7 @@ use crate::db;
 use crate::domain::{Config, SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppResult};
 use crate::fsjson::{read_json_or_default, write_json_atomic};
-use crate::pricing::per_item_price;
+use crate::pricing::{parse_duration_seconds, per_item_price, CostContext};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +74,7 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
     let root = PathBuf::from(&project_path);
     let config: Config = read_json_or_default(&crate::paths::config_path()?)?;
     let prices = config.fal_prices.unwrap_or_default();
+    let overrides = config.price_overrides.unwrap_or_default();
 
     let mut project_total = 0.0f64;
     let mut project_known = 0u32;
@@ -108,7 +109,7 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
             }
 
             let (shot_total, shot_known, shot_unknown, shot_backfilled, shot_db_updates) =
-                scan_shot_cost(&shot_dir, &prices)?;
+                scan_shot_cost(&shot_dir, &prices, &overrides)?;
             db_updates.extend(shot_db_updates);
 
             with_shot_sidecar(&as_str(&shot_dir), |sidecar: &mut ShotSidecar| {
@@ -174,6 +175,7 @@ type CostDbUpdates = Vec<(String, f64)>;
 fn scan_shot_cost(
     shot_dir: &Path,
     prices: &HashMap<String, String>,
+    overrides: &HashMap<String, f64>,
 ) -> AppResult<(f64, u32, u32, u32, CostDbUpdates)> {
     let mut total = 0.0f64;
     let mut known = 0u32;
@@ -211,7 +213,8 @@ fn scan_shot_cost(
                 unknown += 1;
                 continue;
             }
-            match process_image_sidecar(&sidecar_path, prices) {
+            let is_video = is_video_ext(&media_path);
+            match process_image_sidecar(&sidecar_path, prices, overrides, is_video) {
                 Ok(Some(cost)) => {
                     total += cost.amount;
                     known += 1;
@@ -250,6 +253,8 @@ struct SidecarCost {
 fn process_image_sidecar(
     sidecar_path: &Path,
     prices: &HashMap<String, String>,
+    overrides: &HashMap<String, f64>,
+    is_video: bool,
 ) -> AppResult<Option<SidecarCost>> {
     let text = std::fs::read_to_string(sidecar_path)?;
     let mut value: Value = serde_json::from_str(&text)?;
@@ -272,7 +277,15 @@ fn process_image_sidecar(
         Some(e) => e,
         None => return Ok(None),
     };
-    let amount = match per_item_price(provider, endpoint, prices) {
+    let settings = obj.get("settings").and_then(|v| v.as_object());
+    let resolution = settings
+        .and_then(|s| s.get("resolution"))
+        .and_then(|v| v.as_str());
+    let duration_sec = settings.and_then(|s| s.get("duration")).and_then(|v| {
+        v.as_f64().or_else(|| v.as_str().and_then(parse_duration_seconds))
+    });
+    let ctx = CostContext { is_video, duration_sec, resolution };
+    let amount = match per_item_price(provider, endpoint, prices, overrides, &ctx) {
         Some(a) => a,
         None => return Ok(None),
     };

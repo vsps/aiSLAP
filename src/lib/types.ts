@@ -266,6 +266,10 @@ export type Config = {
   /** Per-endpoint price texts fetched from fal's gallery API (see lib/falPrices.ts). */
   falPrices?: Record<string, string>;
   falPricesFetchedAt?: string;
+  /** Per-endpoint user-entered price overrides (any provider), keyed like
+   *  falPrices. Takes priority over a scraped price when set — the only way
+   *  to price non-fal models, since only fal has a scraper. */
+  priceOverrides?: Record<string, number>;
 };
 
 export const DEFAULT_MAX_CONCURRENT_JOBS = 3;

@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
-import { showMessage, pickDirectory } from "../lib/dialog";
+import { showMessage, confirmAction, pickDirectory, pickFile } from "../lib/dialog";
 import { useScriptStore } from "../stores/scriptStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { normalizeTitle, parseScript } from "../lib/script";
 import { ModalDialog } from "./ModalDialog";
-import { formatCost } from "../lib/falPrices";
-import type { Config, ProjectCostScan, ReconcileReport } from "../lib/types";
+import type { Config, ReconcileReport } from "../lib/types";
 
 type Props = {
   onClose: () => void;
@@ -17,6 +16,11 @@ const FILENAME_TEMPLATE_DEFAULT =
 
 const VERSION_PREFIX_DEFAULT = "gen";
 const VERSION_PREFIX_RE = /^[A-Za-z][A-Za-z_-]*$/;
+
+function withAssetsHeader(raw: string): string {
+  const hasAssets = /^#\s+ASSETS\b/i.test(raw.trimStart());
+  return hasAssets ? raw : "# ASSETS\n\n" + raw;
+}
 
 export function ProjectSettingsDialog({ onClose }: Props) {
   const projectPath = useSessionStore((s) => s.projectPath);
@@ -36,10 +40,6 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   type PendingSeq = { seq: string; isNew: boolean; shots: PendingShot[] };
   const [pendingDirs, setPendingDirs] = useState<PendingSeq[] | null>(null);
 
-  // Costs
-  const [costScan, setCostScan] = useState<ProjectCostScan | null>(null);
-  const [costBusy, setCostBusy] = useState(false);
-
   // Asset index reconcile
   const [reconcileBusy, setReconcileBusy] = useState(false);
   const [reconcileReport, setReconcileReport] = useState<ReconcileReport | null>(null);
@@ -55,18 +55,6 @@ export function ProjectSettingsDialog({ onClose }: Props) {
       await showMessage(String(e), { kind: "error" });
     } finally {
       setReconcileBusy(false);
-    }
-  }
-
-  async function recalculateCosts() {
-    if (!projectPath) return;
-    setCostBusy(true);
-    try {
-      setCostScan(await cmd.project_cost_scan(projectPath));
-    } catch (e) {
-      await showMessage(String(e), { kind: "error" });
-    } finally {
-      setCostBusy(false);
     }
   }
 
@@ -133,10 +121,31 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   }
 
   useEffect(() => {
-    const trimmed = scriptRaw.trimStart();
-    const hasAssets = /^#\s+ASSETS\b/i.test(trimmed);
-    setScript(hasAssets ? scriptRaw : "# ASSETS\n\n" + scriptRaw);
+    setScript(withAssetsHeader(scriptRaw));
   }, [scriptRaw]);
+
+  async function reloadScript() {
+    if (!projectPath) return;
+    if (script !== scriptRaw) {
+      const ok = await confirmAction(
+        "Discard unsaved script changes and reload script.md from disk?",
+        { title: "Reload script", kind: "warning" },
+      );
+      if (!ok) return;
+    }
+    await useScriptStore.getState().loadFor(projectPath);
+  }
+
+  async function importScript() {
+    const picked = await pickFile("Import script", { extensions: ["md", "txt"] });
+    if (!picked || picked.length === 0) return;
+    try {
+      const { readTextFile } = await import("@tauri-apps/plugin-fs");
+      setScript(withAssetsHeader(await readTextFile(picked[0])));
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    }
+  }
 
   function sanitizeName(name: string): string {
     return [...name]
@@ -333,8 +342,27 @@ export function ProjectSettingsDialog({ onClose }: Props) {
         </div>
 
         <div className="flex flex-col gap-1">
-          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-            Script (script.md)
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+              Script (script.md)
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+                disabled={!projectPath}
+                onClick={reloadScript}
+              >
+                Reload
+              </button>
+              <button
+                type="button"
+                className="px-2 py-0.5 bg-bg text-xs"
+                onClick={importScript}
+              >
+                Import…
+              </button>
+            </div>
           </div>
           <textarea
             value={script}
@@ -351,88 +379,6 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             dropdown. Body text below each heading appears above the matching
             prompt column.
           </div>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-              Costs
-            </div>
-            <button
-              type="button"
-              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-              disabled={costBusy || !projectPath}
-              onClick={recalculateCosts}
-            >
-              {costBusy ? "Calculating…" : "Recalculate"}
-            </button>
-          </div>
-
-          {costScan === null ? (
-            <div className="text-xs text-dim">
-              Not yet calculated. Computed from cached fal prices (Settings →
-              Fetch prices); older images without a stored cost are
-              backfilled automatically when a price is available.
-            </div>
-          ) : (
-            <>
-              <div className="text-xs font-mono text-text flex items-center gap-2">
-                <span className="font-semibold">Project total:</span>
-                <span>≈ ${formatCost(costScan.totalCostUsd)}</span>
-                {costScan.unknownImageCount > 0 && (
-                  <span className="text-dim">
-                    ({costScan.unknownImageCount} unpriced)
-                  </span>
-                )}
-                {costScan.backfilledCount > 0 && (
-                  <span className="text-dim">
-                    (backfilled {costScan.backfilledCount})
-                  </span>
-                )}
-              </div>
-              <ul className="font-mono text-xs overflow-y-auto thin-scroll max-h-64 flex flex-col gap-0.5 mt-1">
-                {costScan.sequences.map((seq) => (
-                  <li key={seq.path}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-text">{seq.name}/</span>
-                      {seq.totalCostUsd > 0 && (
-                        <span
-                          className="text-[10px] font-mono text-dim shrink-0"
-                          title={
-                            seq.unknownImageCount > 0
-                              ? `≈ $${formatCost(seq.totalCostUsd)} (${seq.unknownImageCount} unpriced)`
-                              : `≈ $${formatCost(seq.totalCostUsd)}`
-                          }
-                        >
-                          ≈ ${formatCost(seq.totalCostUsd)}
-                        </span>
-                      )}
-                    </div>
-                    {seq.shots.map((shot) => (
-                      <div
-                        key={shot.path}
-                        className="pl-4 flex items-center gap-2 text-dim"
-                      >
-                        <span>{shot.name}/</span>
-                        {shot.totalCostUsd > 0 && (
-                          <span
-                            className="text-[10px] font-mono shrink-0"
-                            title={
-                              shot.unknownImageCount > 0
-                                ? `≈ $${formatCost(shot.totalCostUsd)} (${shot.unknownImageCount} unpriced)`
-                                : `≈ $${formatCost(shot.totalCostUsd)}`
-                            }
-                          >
-                            ≈ ${formatCost(shot.totalCostUsd)}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
         </div>
 
         <div className="flex flex-col gap-1">

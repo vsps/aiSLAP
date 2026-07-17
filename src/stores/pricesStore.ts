@@ -6,16 +6,25 @@ import { create } from "zustand";
 type State = {
   prices: Record<string, string>;
   fetchedAt: string | null;
+  /** Per-endpoint user-entered overrides (any provider), keyed like `prices`.
+   *  Seeded from config at bootstrap; edited via Settings -> Costs and
+   *  committed on Save (see lib/falPrices.ts's perItemPrice). */
+  overrides: Record<string, number>;
 };
 
 type Actions = {
   setPrices: (prices: Record<string, string>, fetchedAt: string | null) => void;
+  setOverrides: (overrides: Record<string, number>) => void;
 };
 
 export const usePricesStore = create<State & Actions>((set) => ({
   prices: {},
   fetchedAt: null,
+  overrides: {},
   setPrices(prices, fetchedAt) {
     set({ prices, fetchedAt });
+  },
+  setOverrides(overrides) {
+    set({ overrides });
   },
 }));

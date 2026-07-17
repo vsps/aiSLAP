@@ -20,6 +20,10 @@ type State = {
   videoDurations: Map<string, number>;
   playing: boolean;
   playheadSec: number;
+  /** True once the user has explicitly engaged the timeline (played, scrubbed,
+   *  or rewound) — distinct from `playheadSec === 0`, which is itself a valid
+   *  scrubbed-to position and shouldn't fall back to the per-shot preview. */
+  timelineActive: boolean;
 };
 
 type Actions = {
@@ -62,6 +66,9 @@ type Actions = {
   pause: () => void;
   restart: () => void;
   setPlayheadSec: (sec: number) => void;
+  /** Exit timeline preview mode and hand the view back to the per-shot
+   *  preview. Used when the user picks a specific image/shot elsewhere. */
+  deactivate: () => void;
   /**
    * Record a probed video duration; if a clip still has the default duration
    * (likely never touched) and points to this video, resize it to the probed
@@ -82,6 +89,7 @@ export const useTimelineStore = create<State & Actions>((set, get) => ({
   videoDurations: new Map(),
   playing: false,
   playheadSec: 0,
+  timelineActive: false,
 
   async loadForSequence(seqPath) {
     const { timeline, shotsLatestMedia } = await cmd.timeline_init(seqPath);
@@ -154,6 +162,7 @@ export const useTimelineStore = create<State & Actions>((set, get) => ({
       videoDurations: new Map(),
       playing: false,
       playheadSec: 0,
+      timelineActive: false,
     });
   },
 
@@ -356,8 +365,17 @@ export const useTimelineStore = create<State & Actions>((set, get) => ({
           clipMediaPath: mediaPath,
         });
       }
-      return { shotsLatestMedia: next };
+      // Clear any per-clip override for this shot — resolveClipMedia()
+      // prefers clip.mediaPath over the shot-level pin, so leaving a stale
+      // override in place would make this pin silently have no effect.
+      const clips = s.clips.map((c) =>
+        c.shotPath === shotPath && c.mediaPath != null
+          ? { ...c, mediaPath: null }
+          : c,
+      );
+      return { shotsLatestMedia: next, clips };
     });
+    get().saveDebounced();
   },
 
   play() {
@@ -365,18 +383,21 @@ export const useTimelineStore = create<State & Actions>((set, get) => ({
     if (totalDurationSec <= 0) return;
     // If we're at (or past) the end, snap back to 0 before resuming.
     const head = playheadSec >= totalDurationSec - 0.001 ? 0 : playheadSec;
-    set({ playing: true, playheadSec: head });
+    set({ playing: true, playheadSec: head, timelineActive: true });
   },
   pause() {
     set({ playing: false });
   },
   restart() {
-    set({ playheadSec: 0 });
+    set({ playheadSec: 0, timelineActive: true });
   },
   setPlayheadSec(sec) {
     const { totalDurationSec } = get();
     const clamped = Math.max(0, Math.min(totalDurationSec, sec));
-    set({ playheadSec: clamped });
+    set({ playheadSec: clamped, timelineActive: true });
+  },
+  deactivate() {
+    set({ playing: false, playheadSec: 0, timelineActive: false });
   },
 
   renameShotPathPrefix(oldPrefix, newPrefix) {

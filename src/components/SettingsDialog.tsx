@@ -3,10 +3,11 @@ import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
 import { recoverOrphans } from "../lib/recovery";
-import { fetchFalPrices } from "../lib/falPrices";
+import { fetchFalPrices, formatCost } from "../lib/falPrices";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
+import { useSessionStore } from "../stores/sessionStore";
 import { invalidateConfigCache } from "../lib/metadataCache";
 import { ModalDialog } from "./ModalDialog";
 import {
@@ -14,8 +15,13 @@ import {
   DEFAULT_MAX_CONCURRENT_JOBS,
   type ColorOverrides,
   type Config,
+  type EnumParam,
   type FalLifecycle,
+  type ProjectCostScan,
 } from "../lib/types";
+
+const TABS = ["General", "Appearance", "APIs", "Costs"] as const;
+type Tab = (typeof TABS)[number];
 
 const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
   { value: "", label: "fal default (keep forever)" },
@@ -42,6 +48,8 @@ type Props = {
 };
 
 export function SettingsDialog({ onClose }: Props) {
+  const projectPath = useSessionStore((s) => s.projectPath);
+  const [tab, setTab] = useState<Tab>("General");
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
   const [bytedanceKey, setBytedanceKey] = useState("");
@@ -61,14 +69,95 @@ export function SettingsDialog({ onClose }: Props) {
   const [pricesBusy, setPricesBusy] = useState(false);
   const [pricesStatus, setPricesStatus] = useState<string | null>(null);
   const pricesFetchedAt = usePricesStore((s) => s.fetchedAt);
+  const prices = usePricesStore((s) => s.prices);
   const pricesCount = usePricesStore((s) => Object.keys(s.prices).length);
+  const [costScan, setCostScan] = useState<ProjectCostScan | null>(null);
+  const [costBusy, setCostBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const modelEntries = useModelsStore((s) => s.entries);
+  const [costProvider, setCostProvider] = useState<string>("fal");
 
   const currentColors = useMemo<Required<ColorOverrides>>(
     () => ({ ...DEFAULT_COLORS, ...(config.colors ?? {}) }),
     [config.colors],
   );
+
+  const providers = useMemo<string[]>(() => {
+    const set = new Set<string>(modelEntries.map((e) => e.node.provider ?? "fal"));
+    return [...set].sort();
+  }, [modelEntries]);
+
+  useEffect(() => {
+    if (providers.length > 0 && !providers.includes(costProvider)) {
+      setCostProvider(providers[0]);
+    }
+  }, [providers, costProvider]);
+
+  const modelsForProvider = useMemo(
+    () =>
+      modelEntries
+        .filter((e) => (e.node.provider ?? "fal") === costProvider)
+        .sort((a, b) => a.node.name.localeCompare(b.node.name)),
+    [modelEntries, costProvider],
+  );
+
+  // One row per model, or one row per resolution option for models whose
+  // cost varies by resolution — fal's scraper only ever returns one blended
+  // price per model, so a resolution split only ever affects the override.
+  type PriceRow = {
+    key: string;
+    name: string;
+    endpoint: string;
+    isVideo: boolean;
+    resolution: string | null;
+  };
+  const priceRows = useMemo<PriceRow[]>(() => {
+    const rows: PriceRow[] = [];
+    for (const e of modelsForProvider) {
+      const resParam = e.node.parameters.find(
+        (p): p is EnumParam => p.type === "enum" && p.name === "resolution",
+      );
+      const isVideo = e.node.kind === "video";
+      if (resParam && resParam.options.length > 0) {
+        for (const r of resParam.options) {
+          rows.push({
+            key: `${e.node.id}::${r}`,
+            name: e.node.name,
+            endpoint: e.node.endpoint,
+            isVideo,
+            resolution: r,
+          });
+        }
+      } else {
+        rows.push({
+          key: e.node.id,
+          name: e.node.name,
+          endpoint: e.node.endpoint,
+          isVideo,
+          resolution: null,
+        });
+      }
+    }
+    return rows;
+  }, [modelsForProvider]);
+
+  function overrideKeyFor(row: { endpoint: string; resolution: string | null }): string {
+    return row.resolution ? `${row.endpoint}::${row.resolution}` : row.endpoint;
+  }
+
+  function setPriceOverride(overrideKey: string, raw: string) {
+    setConfig((c) => {
+      const next = { ...(c.priceOverrides ?? {}) };
+      if (raw.trim() === "") {
+        delete next[overrideKey];
+      } else {
+        const n = parseFloat(raw);
+        if (Number.isFinite(n)) next[overrideKey] = n;
+      }
+      return { ...c, priceOverrides: next };
+    });
+  }
 
   useEffect(() => {
     void (async () => {
@@ -159,6 +248,18 @@ export function SettingsDialog({ onClose }: Props) {
     }
   }
 
+  async function recalculateCosts() {
+    if (!projectPath) return;
+    setCostBusy(true);
+    try {
+      setCostScan(await cmd.project_cost_scan(projectPath));
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setCostBusy(false);
+    }
+  }
+
   // Live-preview color edits — only after config has loaded to avoid wiping current colors on mount.
   useEffect(() => {
     if (!loaded) return;
@@ -196,6 +297,7 @@ export function SettingsDialog({ onClose }: Props) {
       await cmd.provider_key_set("turso_token", tursoToken.trim());
       await cmd.config_save(config);
       invalidateConfigCache();
+      usePricesStore.getState().setOverrides(config.priceOverrides ?? {});
       setOriginalColors(config.colors);
       onClose();
     } catch (e) {
@@ -209,213 +311,96 @@ export function SettingsDialog({ onClose }: Props) {
     <ModalDialog
       onClose={handleClose}
       padded={false}
-      panelClassName="max-w-[560px] w-full shadow-xl"
+      panelClassName="max-w-[640px] w-full shadow-xl"
     >
       <div className="px-4 py-2 bg-surface text-text text-sm">Settings</div>
 
-        <div className="p-4 flex flex-col gap-4 max-h-[70vh] overflow-y-auto thin-scroll">
-          <Field label="FAL_KEY">
-            <div className="flex gap-1">
+      <div className="flex border-b border-dim px-4">
+        {TABS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`px-3 py-1.5 text-xs ${
+              tab === t
+                ? "text-accent border-b-2 border-accent -mb-px"
+                : "text-dim hover:text-text"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <div className="p-4 flex flex-col gap-4 max-h-[70vh] overflow-y-auto thin-scroll">
+        {tab === "General" && (
+          <>
+            <Field label="Max concurrent submissions">
               <input
-                type={revealKey ? "text" : "password"}
-                value={falKey}
-                onChange={(e) => setFalKey(e.currentTarget.value)}
-                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
-                placeholder="fal-…"
-              />
-              <button
-                className="px-2 bg-bg text-xs"
-                onClick={() => setRevealKey((v) => !v)}
-              >
-                {revealKey ? "hide" : "show"}
-              </button>
-            </div>
-            <div className="text-xs text-dim mt-1">
-              Stored in <code>%APPDATA%/aiSLAP/.env</code>.
-            </div>
-          </Field>
-
-          <Field label="fal.ai object lifecycle">
-            <select
-              value={config.falLifecycle ?? ""}
-              onChange={(e) => {
-                const v = e.currentTarget.value;
-                setConfig((c) => ({
-                  ...c,
-                  falLifecycle: v ? (v as FalLifecycle) : undefined,
-                }));
-              }}
-              className="bg-inset px-2 py-1 text-xs font-mono"
-            >
-              {FAL_LIFECYCLE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <div className="text-xs text-dim mt-1">
-              Sent as <code>x-fal-object-lifecycle-preference</code>. Controls
-              how long fal retains generated objects.
-            </div>
-          </Field>
-
-          <Field label="REPLICATE_API_TOKEN">
-            <div className="flex gap-1">
-              <input
-                type={revealReplicate ? "text" : "password"}
-                value={replicateKey}
-                onChange={(e) => setReplicateKey(e.currentTarget.value)}
-                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
-                placeholder="r8_…"
-              />
-              <button
-                className="px-2 bg-bg text-xs"
-                onClick={() => setRevealReplicate((v) => !v)}
-              >
-                {revealReplicate ? "hide" : "show"}
-              </button>
-            </div>
-          </Field>
-
-          <Field label="BYTEDANCE_API_KEY">
-            <div className="flex gap-1">
-              <input
-                type={revealBytedance ? "text" : "password"}
-                value={bytedanceKey}
-                onChange={(e) => setBytedanceKey(e.currentTarget.value)}
-                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
-                placeholder="Ark API key…"
-              />
-              <button
-                className="px-2 bg-bg text-xs"
-                onClick={() => setRevealBytedance((v) => !v)}
-              >
-                {revealBytedance ? "hide" : "show"}
-              </button>
-            </div>
-          </Field>
-
-          <Field label="TURSO_DATABASE_URL (optional)">
-            <input
-              type="text"
-              value={tursoUrl}
-              onChange={(e) => setTursoUrl(e.currentTarget.value)}
-              className="w-full bg-inset px-2 py-1 font-mono text-xs"
-              placeholder="libsql://your-db.turso.io"
-            />
-            <div className="text-xs text-dim mt-1">
-              Central index sync. Blank keeps everything local-only — nothing
-              breaks, generated assets just aren't shared with other machines.
-            </div>
-          </Field>
-
-          <Field label="TURSO_AUTH_TOKEN">
-            <div className="flex gap-1">
-              <input
-                type={revealTursoToken ? "text" : "password"}
-                value={tursoToken}
-                onChange={(e) => setTursoToken(e.currentTarget.value)}
-                className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
-                placeholder="ey…"
-              />
-              <button
-                className="px-2 bg-bg text-xs"
-                onClick={() => setRevealTursoToken((v) => !v)}
-              >
-                {revealTursoToken ? "hide" : "show"}
-              </button>
-            </div>
-          </Field>
-
-          <Field label="ffmpeg path (for video thumbnails)">
-            <div className="flex gap-1">
-              <input
-                type="text"
-                value={config.ffmpegPath}
+                type="number"
+                min={1}
+                max={10}
+                value={config.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS}
                 onChange={(e) => {
-                  const value = e.currentTarget.value;
-                  setConfig((c) => ({ ...c, ffmpegPath: value }));
+                  const n = parseInt(e.currentTarget.value, 10);
+                  setConfig((c) => ({
+                    ...c,
+                    maxConcurrentJobs: Number.isFinite(n)
+                      ? Math.max(1, Math.min(10, n))
+                      : DEFAULT_MAX_CONCURRENT_JOBS,
+                  }));
                 }}
-                className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
-                placeholder="ffmpeg.exe (optional)"
+                className="bg-inset px-2 py-1 text-xs font-mono w-20"
+                title="Caps how many submissions hit fal.ai in parallel. Extra submits sit in a local queue."
               />
-              <button className="px-2 bg-bg text-xs" onClick={browseFfmpeg}>
-                browse
-              </button>
-            </div>
-          </Field>
+              <div className="text-xs text-dim mt-1">
+                Extra submits beyond this cap wait in a local queue.
+              </div>
+            </Field>
 
-          <Field label="Max concurrent submissions">
-            <input
-              type="number"
-              min={1}
-              max={10}
-              value={config.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS}
-              onChange={(e) => {
-                const n = parseInt(e.currentTarget.value, 10);
-                setConfig((c) => ({
-                  ...c,
-                  maxConcurrentJobs: Number.isFinite(n)
-                    ? Math.max(1, Math.min(10, n))
-                    : DEFAULT_MAX_CONCURRENT_JOBS,
-                }));
-              }}
-              className="bg-inset px-2 py-1 text-xs font-mono w-20"
-              title="Caps how many submissions hit fal.ai in parallel. Extra submits sit in a local queue."
-            />
-            <div className="text-xs text-dim mt-1">
-              Extra submits beyond this cap wait in a local queue.
-            </div>
-          </Field>
+            <Field label="Pending submissions">
+              <div className="flex gap-1 items-center">
+                <button
+                  type="button"
+                  className="px-2 bg-bg text-xs disabled:opacity-50"
+                  onClick={() => void checkOrphans()}
+                  disabled={orphanBusy}
+                >
+                  {orphanBusy ? "Checking…" : "Check for orphans"}
+                </button>
+                <span className="text-xs text-dim">
+                  {pendingCount === null
+                    ? "—"
+                    : `${pendingCount} record${pendingCount === 1 ? "" : "s"} on file`}
+                </span>
+              </div>
+              <div className="text-xs text-dim mt-1">
+                {orphanStatus ??
+                  "If the app was killed mid-submit, the result may still be on fal.ai. Click Check to pull it down."}
+              </div>
+            </Field>
 
-          <Field label="Pending submissions">
-            <div className="flex gap-1 items-center">
-              <button
-                type="button"
-                className="px-2 bg-bg text-xs disabled:opacity-50"
-                onClick={() => void checkOrphans()}
-                disabled={orphanBusy}
-              >
-                {orphanBusy ? "Checking…" : "Check for orphans"}
-              </button>
-              <span className="text-xs text-dim">
-                {pendingCount === null
-                  ? "—"
-                  : `${pendingCount} record${pendingCount === 1 ? "" : "s"} on file`}
-              </span>
-            </div>
-            <div className="text-xs text-dim mt-1">
-              {orphanStatus ??
-                "If the app was killed mid-submit, the result may still be on fal.ai. Click Check to pull it down."}
-            </div>
-          </Field>
+            <Field label="ffmpeg path (for video thumbnails)">
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={config.ffmpegPath}
+                  onChange={(e) => {
+                    const value = e.currentTarget.value;
+                    setConfig((c) => ({ ...c, ffmpegPath: value }));
+                  }}
+                  className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
+                  placeholder="ffmpeg.exe (optional)"
+                />
+                <button className="px-2 bg-bg text-xs" onClick={browseFfmpeg}>
+                  browse
+                </button>
+              </div>
+            </Field>
+          </>
+        )}
 
-          <Field label="fal.ai prices">
-            <div className="flex gap-1 items-center">
-              <button
-                type="button"
-                className="px-2 bg-bg text-xs disabled:opacity-50"
-                onClick={() => void fetchPrices()}
-                disabled={pricesBusy}
-              >
-                {pricesBusy ? "Fetching…" : "Fetch prices"}
-              </button>
-              <span className="text-xs text-dim">
-                {pricesCount > 0
-                  ? `${pricesCount} cached${
-                      pricesFetchedAt
-                        ? ` · ${new Date(pricesFetchedAt).toLocaleString()}`
-                        : ""
-                    }`
-                  : "no prices cached"}
-              </span>
-            </div>
-            <div className="text-xs text-dim mt-1">
-              {pricesStatus ??
-                "Pulls per-model prices from fal.ai's model gallery (unofficial — prices are estimates)."}
-            </div>
-          </Field>
-
+        {tab === "Appearance" && (
           <Field label="Colors">
             <div className="flex flex-col gap-1">
               {COLOR_KEYS.map((key) => (
@@ -435,20 +420,338 @@ export function SettingsDialog({ onClose }: Props) {
               </button>
             </div>
           </Field>
-        </div>
+        )}
 
-        <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-          <button className="px-3 py-1 bg-bg text-xs" onClick={handleClose}>
-            Cancel
-          </button>
-          <button
-            className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
-            disabled={busy}
-            onClick={save}
-          >
-            Save
-          </button>
-        </div>
+        {tab === "APIs" && (
+          <>
+            <Field label="FAL_KEY">
+              <div className="flex gap-1">
+                <input
+                  type={revealKey ? "text" : "password"}
+                  value={falKey}
+                  onChange={(e) => setFalKey(e.currentTarget.value)}
+                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="fal-…"
+                />
+                <button
+                  className="px-2 bg-bg text-xs"
+                  onClick={() => setRevealKey((v) => !v)}
+                >
+                  {revealKey ? "hide" : "show"}
+                </button>
+              </div>
+              <div className="text-xs text-dim mt-1">
+                Stored in <code>%APPDATA%/aiSLAP/.env</code>.
+              </div>
+            </Field>
+
+            <Field label="fal.ai object lifecycle">
+              <select
+                value={config.falLifecycle ?? ""}
+                onChange={(e) => {
+                  const v = e.currentTarget.value;
+                  setConfig((c) => ({
+                    ...c,
+                    falLifecycle: v ? (v as FalLifecycle) : undefined,
+                  }));
+                }}
+                className="bg-inset px-2 py-1 text-xs font-mono"
+              >
+                {FAL_LIFECYCLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <div className="text-xs text-dim mt-1">
+                Sent as <code>x-fal-object-lifecycle-preference</code>.
+                Controls how long fal retains generated objects.
+              </div>
+            </Field>
+
+            <Field label="REPLICATE_API_TOKEN">
+              <div className="flex gap-1">
+                <input
+                  type={revealReplicate ? "text" : "password"}
+                  value={replicateKey}
+                  onChange={(e) => setReplicateKey(e.currentTarget.value)}
+                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="r8_…"
+                />
+                <button
+                  className="px-2 bg-bg text-xs"
+                  onClick={() => setRevealReplicate((v) => !v)}
+                >
+                  {revealReplicate ? "hide" : "show"}
+                </button>
+              </div>
+            </Field>
+
+            <Field label="BYTEDANCE_API_KEY">
+              <div className="flex gap-1">
+                <input
+                  type={revealBytedance ? "text" : "password"}
+                  value={bytedanceKey}
+                  onChange={(e) => setBytedanceKey(e.currentTarget.value)}
+                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="Ark API key…"
+                />
+                <button
+                  className="px-2 bg-bg text-xs"
+                  onClick={() => setRevealBytedance((v) => !v)}
+                >
+                  {revealBytedance ? "hide" : "show"}
+                </button>
+              </div>
+            </Field>
+
+            <Field label="TURSO_DATABASE_URL (optional)">
+              <input
+                type="text"
+                value={tursoUrl}
+                onChange={(e) => setTursoUrl(e.currentTarget.value)}
+                className="w-full bg-inset px-2 py-1 font-mono text-xs"
+                placeholder="libsql://your-db.turso.io"
+              />
+              <div className="text-xs text-dim mt-1">
+                Central index sync. Blank keeps everything local-only —
+                nothing breaks, generated assets just aren't shared with
+                other machines.
+              </div>
+            </Field>
+
+            <Field label="TURSO_AUTH_TOKEN">
+              <div className="flex gap-1">
+                <input
+                  type={revealTursoToken ? "text" : "password"}
+                  value={tursoToken}
+                  onChange={(e) => setTursoToken(e.currentTarget.value)}
+                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="ey…"
+                />
+                <button
+                  className="px-2 bg-bg text-xs"
+                  onClick={() => setRevealTursoToken((v) => !v)}
+                >
+                  {revealTursoToken ? "hide" : "show"}
+                </button>
+              </div>
+            </Field>
+          </>
+        )}
+
+        {tab === "Costs" && (
+          <>
+            <Field label="fal.ai prices">
+              <div className="flex gap-1 items-center">
+                <button
+                  type="button"
+                  className="px-2 bg-bg text-xs disabled:opacity-50"
+                  onClick={() => void fetchPrices()}
+                  disabled={pricesBusy}
+                >
+                  {pricesBusy ? "Fetching…" : "Fetch prices"}
+                </button>
+                <span className="text-xs text-dim">
+                  {pricesCount > 0
+                    ? `${pricesCount} cached${
+                        pricesFetchedAt
+                          ? ` · ${new Date(pricesFetchedAt).toLocaleString()}`
+                          : ""
+                      }`
+                    : "no prices cached"}
+                </span>
+              </div>
+              <div className="text-xs text-dim mt-1">
+                {pricesStatus ??
+                  "Pulls per-model prices from fal.ai's model gallery (unofficial — prices are estimates)."}
+              </div>
+            </Field>
+
+            <Field label="Model prices">
+              <div className="flex items-center gap-2">
+                <select
+                  value={costProvider}
+                  onChange={(e) => setCostProvider(e.currentTarget.value)}
+                  className="bg-inset px-2 py-1 text-xs font-mono"
+                >
+                  {providers.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs text-dim">
+                  {priceRows.length} row{priceRows.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="text-xs text-dim mt-1">
+                Known price comes from the fal.ai fetch above (fal only, one
+                blended price per model). Override is used for cost estimates
+                and exports whenever set. Video models are billed per second
+                — enter a $/sec rate, not a flat price; models priced per
+                resolution get one override row per resolution.
+              </div>
+              <div className="max-h-64 overflow-y-auto thin-scroll mt-1">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="text-dim text-left">
+                      <th className="font-normal pb-1">Model</th>
+                      <th className="font-normal pb-1">Known price</th>
+                      <th className="font-normal pb-1">Override</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {priceRows.map((row) => {
+                      const known = prices[row.endpoint];
+                      const overrideKey = overrideKeyFor(row);
+                      const override = config.priceOverrides?.[overrideKey];
+                      return (
+                        <tr key={row.key} className="border-t border-dim/30">
+                          <td
+                            className="py-1 pr-2 truncate max-w-[200px]"
+                            title={row.endpoint}
+                          >
+                            {row.name}
+                            {row.resolution && (
+                              <span className="text-dim"> · {row.resolution}</span>
+                            )}
+                          </td>
+                          <td className="py-1 pr-2 text-dim">{known ?? "—"}</td>
+                          <td className="py-1">
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                step="0.001"
+                                min={0}
+                                value={override ?? ""}
+                                onChange={(ev) =>
+                                  setPriceOverride(overrideKey, ev.currentTarget.value)
+                                }
+                                placeholder="—"
+                                className="w-20 bg-inset px-1 py-0.5 text-xs font-mono text-right"
+                              />
+                              <span className="text-dim">
+                                {row.isVideo ? "$/sec" : "$"}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {priceRows.length === 0 && (
+                      <tr>
+                        <td colSpan={3} className="text-dim py-2">
+                          No models for this provider.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Field>
+
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+                  Project costs
+                </div>
+                <button
+                  type="button"
+                  className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+                  disabled={costBusy || !projectPath}
+                  onClick={recalculateCosts}
+                >
+                  {costBusy ? "Calculating…" : "Recalculate"}
+                </button>
+              </div>
+
+              {!projectPath ? (
+                <div className="text-xs text-dim">
+                  Open a project to see its cost breakdown.
+                </div>
+              ) : costScan === null ? (
+                <div className="text-xs text-dim">
+                  Not yet calculated. Computed from cached fal prices above;
+                  older images without a stored cost are backfilled
+                  automatically when a price is available.
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs font-mono text-text flex items-center gap-2">
+                    <span className="font-semibold">Project total:</span>
+                    <span>≈ ${formatCost(costScan.totalCostUsd)}</span>
+                    {costScan.unknownImageCount > 0 && (
+                      <span className="text-dim">
+                        ({costScan.unknownImageCount} unpriced)
+                      </span>
+                    )}
+                    {costScan.backfilledCount > 0 && (
+                      <span className="text-dim">
+                        (backfilled {costScan.backfilledCount})
+                      </span>
+                    )}
+                  </div>
+                  <ul className="font-mono text-xs overflow-y-auto thin-scroll max-h-64 flex flex-col gap-0.5 mt-1">
+                    {costScan.sequences.map((seq) => (
+                      <li key={seq.path}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-text">{seq.name}/</span>
+                          {seq.totalCostUsd > 0 && (
+                            <span
+                              className="text-[10px] font-mono text-dim shrink-0"
+                              title={
+                                seq.unknownImageCount > 0
+                                  ? `≈ $${formatCost(seq.totalCostUsd)} (${seq.unknownImageCount} unpriced)`
+                                  : `≈ $${formatCost(seq.totalCostUsd)}`
+                              }
+                            >
+                              ≈ ${formatCost(seq.totalCostUsd)}
+                            </span>
+                          )}
+                        </div>
+                        {seq.shots.map((shot) => (
+                          <div
+                            key={shot.path}
+                            className="pl-4 flex items-center gap-2 text-dim"
+                          >
+                            <span>{shot.name}/</span>
+                            {shot.totalCostUsd > 0 && (
+                              <span
+                                className="text-[10px] font-mono shrink-0"
+                                title={
+                                  shot.unknownImageCount > 0
+                                    ? `≈ $${formatCost(shot.totalCostUsd)} (${shot.unknownImageCount} unpriced)`
+                                    : `≈ $${formatCost(shot.totalCostUsd)}`
+                                }
+                              >
+                                ≈ ${formatCost(shot.totalCostUsd)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
+        <button className="px-3 py-1 bg-bg text-xs" onClick={handleClose}>
+          Cancel
+        </button>
+        <button
+          className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
+          disabled={busy}
+          onClick={save}
+        >
+          Save
+        </button>
+      </div>
     </ModalDialog>
   );
 }

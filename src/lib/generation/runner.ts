@@ -264,6 +264,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           combinedPrompt: spec.combinedPrompt,
           settings: spec.settings,
           prices: usePricesStore.getState().prices,
+          priceOverrides: usePricesStore.getState().overrides,
           refs: uploaded,
           refSnapshots: undefined,
           shotPath: spec.shotPath,
