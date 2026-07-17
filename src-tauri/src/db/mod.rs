@@ -450,6 +450,56 @@ pub async fn asset_relink(project_root: &Path, asset_id: &str, new_rel_path: &st
     Ok(())
 }
 
+/// Rewrite the `rel_path` prefix of every asset under a renamed sequence/shot
+/// folder — the DB counterpart to `visible_set_rename_prefix`/
+/// `rewrite_path_strings_in_subtree` (rename.rs). A folder rename is one
+/// filesystem move, but `rel_path` is stored per-asset, so without this every
+/// asset under the renamed subtree goes stale in the index until the next
+/// `project_reconcile`. Matches entries equal to `old_prefix` or starting
+/// with `old_prefix + "/"`, same boundary rule as the sidecar cascade. Full
+/// scan is fine here — this is the local, already project-scoped index file,
+/// not a shared table. Returns the number of rows updated.
+pub async fn asset_rename_prefix(
+    project_root: &Path,
+    old_rel_prefix: &str,
+    new_rel_prefix: &str,
+) -> AppResult<u32> {
+    let old_clean = old_rel_prefix.trim_end_matches('/');
+    let new_clean = new_rel_prefix.trim_end_matches('/');
+    if old_clean == new_clean {
+        return Ok(0);
+    }
+    let conn = open_local(project_root).await?;
+    let mut rows = conn
+        .query(
+            "SELECT id, rel_path FROM assets WHERE deleted_at IS NULL",
+            (),
+        )
+        .await
+        .map_err(db_err)?;
+    let prefix = format!("{old_clean}/");
+    let mut matches: Vec<(String, String)> = Vec::new();
+    while let Some(row) = rows.next().await.map_err(db_err)? {
+        let id = row.get::<String>(0).map_err(db_err)?;
+        let rel_path = row.get::<String>(1).map_err(db_err)?;
+        if rel_path == old_clean || rel_path.starts_with(&prefix) {
+            matches.push((id, rel_path));
+        }
+    }
+    let mut updated = 0u32;
+    for (id, rel_path) in matches {
+        let new_rel_path = if rel_path == old_clean {
+            new_clean.to_string()
+        } else {
+            format!("{new_clean}{}", &rel_path[old_clean.len()..])
+        };
+        update_rel_path(&conn, &id, &new_rel_path).await?;
+        enqueue_outbox(&conn, &id).await?;
+        updated += 1;
+    }
+    Ok(updated)
+}
+
 pub async fn asset_lookup(
     project_root: &Path,
     asset_id: Option<String>,
@@ -805,6 +855,63 @@ mod tests {
             .await
             .unwrap();
         assert!(still_missing.is_none());
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn asset_rename_prefix_rewrites_matching_rel_paths_only() {
+        let (root, project_id) = test_project();
+        // Under the renamed shot.
+        asset_upsert(&root, asset("asset-in-1", "seq1/shot1/gen001/a.png"))
+            .await
+            .unwrap();
+        asset_upsert(&root, asset("asset-in-2", "seq1/shot1/gen002/b.png"))
+            .await
+            .unwrap();
+        // A sibling shot whose name merely starts with the same characters —
+        // must not be touched (exact `/` boundary, not a raw string prefix).
+        asset_upsert(&root, asset("asset-sibling", "seq1/shot10/gen001/c.png"))
+            .await
+            .unwrap();
+        // Unrelated asset elsewhere in the project.
+        asset_upsert(&root, asset("asset-other", "seq2/shotX/gen001/d.png"))
+            .await
+            .unwrap();
+
+        let updated =
+            asset_rename_prefix(&root, "seq1/shot1", "seq1/shot1-renamed")
+                .await
+                .unwrap();
+        assert_eq!(updated, 2);
+
+        let in1 = asset_lookup(&root, Some("asset-in-1".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(in1.rel_path, "seq1/shot1-renamed/gen001/a.png");
+        let in2 = asset_lookup(&root, Some("asset-in-2".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(in2.rel_path, "seq1/shot1-renamed/gen002/b.png");
+
+        let sibling = asset_lookup(&root, Some("asset-sibling".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(sibling.rel_path, "seq1/shot10/gen001/c.png");
+        let other = asset_lookup(&root, Some("asset-other".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(other.rel_path, "seq2/shotX/gen001/d.png");
+
+        // Re-running with old == new prefix is a no-op.
+        let noop = asset_rename_prefix(&root, "seq1/shot1-renamed", "seq1/shot1-renamed")
+            .await
+            .unwrap();
+        assert_eq!(noop, 0);
 
         cleanup(&root, &project_id);
     }
