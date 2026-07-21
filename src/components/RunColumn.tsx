@@ -16,19 +16,28 @@ import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
 import { basename } from "../lib/paths";
-import { formatCost, perItemPrice } from "../lib/falPrices";
+import { formatCost, perItemPrice, parseDurationSeconds } from "../lib/falPrices";
 import { usePricesStore } from "../stores/pricesStore";
 import type { ChainLink } from "../lib/types";
 
 // Cost of one run of a link, when its model is fal-priced per output item
-// (request/image/video). Time/size-billed models return null — no fake totals.
+// (request/image/video) or has a user-entered override. Otherwise (time/
+// size-billed, unpriced) returns null — no fake totals.
 function perRunCost(
   link: ChainLink | undefined,
   prices: Record<string, string>,
+  overrides: Record<string, number>,
 ): number | null {
   const model = link?.model;
   if (!model) return null;
-  const amount = perItemPrice(model.provider, model.endpoint, prices);
+  const amount = perItemPrice(model.provider, model.endpoint, prices, overrides, {
+    isVideo: model.kind === "video",
+    durationSec: parseDurationSeconds(link.settings.duration),
+    resolution:
+      typeof link.settings.resolution === "string"
+        ? link.settings.resolution
+        : null,
+  });
   if (amount == null) return null;
   // Batch models produce N outputs per request but fal bills per output.
   const batch = model.batch_field ? Number(link.settings[model.batch_field]) : 1;
@@ -78,12 +87,13 @@ export function RunColumn() {
   // Only shown when every billed run is per-item priced; time/size-billed
   // models fall back to the raw unit-price text (single-link only).
   const prices = usePricesStore((s) => s.prices);
+  const priceOverrides = usePricesStore((s) => s.overrides);
   const { costEstimate, costLabel } = useMemo(() => {
     if (isMultiLink) {
       const active = links.filter((l) => l.active);
       let sum = 0;
       for (let i = 0; i < active.length; i++) {
-        const c = perRunCost(active[i], prices);
+        const c = perRunCost(active[i], prices, priceOverrides);
         if (c == null) return { costEstimate: null, costLabel: null };
         // Intermediate links run once; the final link honors iterations.
         sum += i === active.length - 1 ? c * Math.max(1, iterations) : c;
@@ -92,7 +102,7 @@ export function RunColumn() {
         ? { costEstimate: sum, costLabel: null }
         : { costEstimate: null, costLabel: null };
     }
-    const per = perRunCost(activeLink, prices);
+    const per = perRunCost(activeLink, prices, priceOverrides);
     if (per != null) {
       return {
         costEstimate: per * Math.max(1, iterations) * runCount,
@@ -103,7 +113,16 @@ export function RunColumn() {
       ? prices[currentModel.endpoint] ?? null
       : null;
     return { costEstimate: null, costLabel: text };
-  }, [isMultiLink, links, activeLink, prices, iterations, runCount, currentModel]);
+  }, [
+    isMultiLink,
+    links,
+    activeLink,
+    prices,
+    priceOverrides,
+    iterations,
+    runCount,
+    currentModel,
+  ]);
 
   const canRun =
     !!currentModel &&

@@ -8,7 +8,7 @@ import {
 } from "../stores/generationStore";
 import type { ModelEntry } from "../lib/types";
 
-type Provider = "fal" | "replicate";
+type Provider = "fal" | "replicate" | "bytedance";
 
 type UiGroup = "image" | "video" | "utility" | "model3d";
 
@@ -134,7 +134,7 @@ export function ModelPicker() {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-1 text-xs font-mono">
-        {(["fal", "replicate"] as Provider[]).map((p) => (
+        {(["fal", "replicate", "bytedance"] as Provider[]).map((p) => (
           <button
             key={p}
             type="button"

@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import { useGenerationStore } from "../../stores/generationStore";
 import { useSessionStore } from "../../stores/sessionStore";
+import { usePricesStore } from "../../stores/pricesStore";
 import { getProvider } from "../providers";
 import type { ProviderProgress } from "../providers";
 import { extractErrorMessage, swallow } from "../errors";
@@ -94,8 +95,12 @@ function buildPendingRecord(
   iterationIndex: number,
   requestId: string,
 ): PendingSubmission {
-  const provider: "fal" | "replicate" =
-    spec.node.provider === "replicate" ? "replicate" : "fal";
+  const provider: "fal" | "replicate" | "bytedance" =
+    spec.node.provider === "replicate"
+      ? "replicate"
+      : spec.node.provider === "bytedance"
+        ? "bytedance"
+        : "fal";
   return {
     id: pendingId,
     provider,
@@ -258,6 +263,8 @@ async function runJob(spec: JobSpec): Promise<void> {
           shotPrompts: spec.shotPrompts,
           combinedPrompt: spec.combinedPrompt,
           settings: spec.settings,
+          prices: usePricesStore.getState().prices,
+          priceOverrides: usePricesStore.getState().overrides,
           refs: uploaded,
           refSnapshots: undefined,
           shotPath: spec.shotPath,
@@ -269,6 +276,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           ffmpegPath: spec.ffmpegPath,
           filenameTemplate: spec.filenameTemplate,
           chain: spec.chain,
+          projectId: useSessionStore.getState().projectId ?? "",
         });
         totalOutputs.push(...outs);
         gen.updateJob(spec.id, { completedIterations: k });

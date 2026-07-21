@@ -58,8 +58,25 @@ fn env_var_for(provider: &str) -> String {
     match provider {
         "fal" => "FAL_KEY".to_string(),
         "replicate" => "REPLICATE_API_TOKEN".to_string(),
+        "turso_url" => "TURSO_DATABASE_URL".to_string(),
+        "turso_token" => "TURSO_AUTH_TOKEN".to_string(),
+        "tos_ak" => "TOS_ACCESS_KEY_ID".to_string(),
+        "tos_sk" => "TOS_SECRET_ACCESS_KEY".to_string(),
         other => format!("{}_API_KEY", other.to_uppercase()),
     }
+}
+
+/// Turso credentials for the sync layer (`db/mod.rs`), stored via the same
+/// `provider_key_get/set("turso_url"|"turso_token", ...)` calls SettingsDialog
+/// uses for every other provider key. `None` when either half is unset —
+/// the DB layer treats that as "not configured" and stays local-only.
+pub(crate) fn turso_config() -> AppResult<Option<(String, String)>> {
+    let url = read_env_var(&env_var_for("turso_url"))?;
+    let token = read_env_var(&env_var_for("turso_token"))?;
+    if url.is_empty() || token.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((url, token)))
 }
 
 fn read_env_var(name: &str) -> AppResult<String> {

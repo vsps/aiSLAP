@@ -1,6 +1,6 @@
 [package]
 name = "aislap"
-version = "0.2.22"
+version = "0.3.1"
 description = "aiSLAP - AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
@@ -34,3 +34,12 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 thiserror = "1"
 base64 = "0.22"
+regex = "1"
+img-parts = "0.4"
+bytes = "1"
+sha2 = "0.10"
+libsql = "0.9"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

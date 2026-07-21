@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
-import { showMessage, pickDirectory } from "../lib/dialog";
+import { showMessage, confirmAction, pickDirectory, pickFile } from "../lib/dialog";
 import { useScriptStore } from "../stores/scriptStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { normalizeTitle, parseScript } from "../lib/script";
 import { ModalDialog } from "./ModalDialog";
-import type { Config } from "../lib/types";
+import type { Config, ReconcileReport } from "../lib/types";
 
 type Props = {
   onClose: () => void;
@@ -16,6 +16,11 @@ const FILENAME_TEMPLATE_DEFAULT =
 
 const VERSION_PREFIX_DEFAULT = "gen";
 const VERSION_PREFIX_RE = /^[A-Za-z][A-Za-z_-]*$/;
+
+function withAssetsHeader(raw: string): string {
+  const hasAssets = /^#\s+ASSETS\b/i.test(raw.trimStart());
+  return hasAssets ? raw : "# ASSETS\n\n" + raw;
+}
 
 export function ProjectSettingsDialog({ onClose }: Props) {
   const projectPath = useSessionStore((s) => s.projectPath);
@@ -34,6 +39,24 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   type PendingShot = { name: string; isNew: boolean };
   type PendingSeq = { seq: string; isNew: boolean; shots: PendingShot[] };
   const [pendingDirs, setPendingDirs] = useState<PendingSeq[] | null>(null);
+
+  // Asset index reconcile
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileReport, setReconcileReport] = useState<ReconcileReport | null>(null);
+
+  async function reconcileAssetIndex() {
+    if (!projectPath) return;
+    setReconcileBusy(true);
+    try {
+      setReconcileReport(
+        await cmd.project_reconcile(projectPath, config?.ffmpegPath ?? ""),
+      );
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setReconcileBusy(false);
+    }
+  }
 
   const scriptCounts = useMemo(() => {
     const p = parseScript(script);
@@ -98,10 +121,31 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   }
 
   useEffect(() => {
-    const trimmed = scriptRaw.trimStart();
-    const hasAssets = /^#\s+ASSETS\b/i.test(trimmed);
-    setScript(hasAssets ? scriptRaw : "# ASSETS\n\n" + scriptRaw);
+    setScript(withAssetsHeader(scriptRaw));
   }, [scriptRaw]);
+
+  async function reloadScript() {
+    if (!projectPath) return;
+    if (script !== scriptRaw) {
+      const ok = await confirmAction(
+        "Discard unsaved script changes and reload script.md from disk?",
+        { title: "Reload script", kind: "warning" },
+      );
+      if (!ok) return;
+    }
+    await useScriptStore.getState().loadFor(projectPath);
+  }
+
+  async function importScript() {
+    const picked = await pickFile("Import script", { extensions: ["md", "txt"] });
+    if (!picked || picked.length === 0) return;
+    try {
+      const { readTextFile } = await import("@tauri-apps/plugin-fs");
+      setScript(withAssetsHeader(await readTextFile(picked[0])));
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    }
+  }
 
   function sanitizeName(name: string): string {
     return [...name]
@@ -298,8 +342,27 @@ export function ProjectSettingsDialog({ onClose }: Props) {
         </div>
 
         <div className="flex flex-col gap-1">
-          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-            Script (script.md)
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+              Script (script.md)
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+                disabled={!projectPath}
+                onClick={reloadScript}
+              >
+                Reload
+              </button>
+              <button
+                type="button"
+                className="px-2 py-0.5 bg-bg text-xs"
+                onClick={importScript}
+              >
+                Import…
+              </button>
+            </div>
           </div>
           <textarea
             value={script}
@@ -316,6 +379,36 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             dropdown. Body text below each heading appears above the matching
             prompt column.
           </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+              Asset index
+            </div>
+            <button
+              type="button"
+              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+              disabled={reconcileBusy || !projectPath}
+              onClick={reconcileAssetIndex}
+            >
+              {reconcileBusy ? "Scanning…" : "Reconcile"}
+            </button>
+          </div>
+          <div className="text-xs text-dim">
+            Scans every generated file: assigns an id to anything from before
+            asset identity existed, and relinks files moved since the last
+            scan. Runs automatically on project open — use this after moving
+            files around outside the app.
+          </div>
+          {reconcileReport && (
+            <div className="text-xs font-mono text-text">
+              Scanned {reconcileReport.scanned} · backfilled{" "}
+              {reconcileReport.sidecarBackfilled} · ingested{" "}
+              {reconcileReport.dbIngested} · relinked{" "}
+              {reconcileReport.relinked}
+            </div>
+          )}
         </div>
       </div>
 

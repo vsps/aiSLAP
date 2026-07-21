@@ -1,8 +1,10 @@
 mod commands;
+mod db;
 mod domain;
 mod error;
 mod fsjson;
 mod paths;
+mod pricing;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -62,6 +64,17 @@ pub fn run() {
             commands::session::shot_version_comment_set,
             commands::session::project_version_prefix_get,
             commands::session::project_version_prefix_set,
+            commands::session::project_id_get,
+            commands::session::project_id_set,
+            commands::media_id::file_hash,
+            commands::media_id::media_id_embed,
+            commands::media_id::media_id_read,
+            commands::db::asset_upsert,
+            commands::db::asset_lookup,
+            commands::db::asset_refs_set,
+            commands::db::asset_refs_get,
+            commands::db::db_sync_outbox,
+            commands::db::project_reconcile,
             commands::pending::pending_load,
             commands::pending::pending_add,
             commands::pending::pending_remove,
@@ -73,6 +86,7 @@ pub fn run() {
             commands::image::image_copy_to_sel,
             commands::image::image_move_to_sel,
             commands::image::export_selects,
+            commands::cost::project_cost_scan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

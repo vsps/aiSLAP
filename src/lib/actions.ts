@@ -1,7 +1,7 @@
 // High-level action helpers that span stores + Tauri commands.
 
 import { cmd } from "./tauri";
-import { basename, isChildOf } from "./paths";
+import { basename, isChildOf, joinPath } from "./paths";
 import { confirmAction, showMessage } from "./dialog";
 import { classifyMedia, guessContentType } from "./media";
 import { swallow } from "./errors";
@@ -36,8 +36,37 @@ function normalizeRefs(raw: (RefSnapshot | string)[] | undefined): RefImage[] {
   return raw.map((r) =>
     typeof r === "string"
       ? { path: r, roleAssignment: null }
-      : { path: r.path, roleAssignment: r.roleAssignment ?? null },
+      : {
+          path: r.path,
+          roleAssignment: r.roleAssignment ?? null,
+          assetId: r.assetId,
+          hash: r.hash,
+        },
   );
+}
+
+/** Resolve a ref back to a live path: the recorded path first (fast, the
+ *  common case), then the local asset index by id, then by content hash —
+ *  catches a ref whose source moved (or was restored on a different
+ *  machine, once Turso sync is configured) since this sidecar was written.
+ *  Returns null when none of the tiers find a file that actually exists. */
+async function resolveRefPath(
+  projectPath: string | null,
+  ref: RefImage,
+): Promise<string | null> {
+  if (await pathExists(ref.path)) return ref.path;
+  if (!projectPath) return null;
+  for (const [id, hash] of [
+    [ref.assetId, null],
+    [null, ref.hash],
+  ] as const) {
+    if (!id && !hash) continue;
+    const row = await cmd.asset_lookup(projectPath, id ?? null, hash ?? null).catch(() => null);
+    if (!row) continue;
+    const abs = joinPath(projectPath, row.relPath);
+    if (await pathExists(abs)) return abs;
+  }
+  return null;
 }
 
 /** Apply a sidecar metadata record to the current editor state. */
@@ -65,12 +94,15 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
   const settings = meta.settings || {};
   for (const [k, v] of Object.entries(settings)) gen.setSetting(k, v);
 
-  // Refs — drop any that no longer exist on disk.
+  // Refs — resolve each (path hint -> assetId -> hash); drop any that
+  // still can't be found.
   const refs = normalizeRefs(meta.refs);
+  const projectPath = useSessionStore.getState().projectPath;
   const valid: RefImage[] = [];
   let skipped = 0;
   for (const r of refs) {
-    if (await pathExists(r.path)) valid.push(r);
+    const resolved = await resolveRefPath(projectPath, r);
+    if (resolved) valid.push(resolved === r.path ? r : { ...r, path: resolved });
     else skipped++;
   }
   gen.setRefImages(valid);
@@ -95,6 +127,7 @@ export async function restoreChainFromMetadata(
 ): Promise<{ missingModels: number; skippedRefs: number }> {
   if (!meta.chain) return { missingModels: 0, skippedRefs: 0 };
   const models = useModelsStore.getState();
+  const projectPath = useSessionStore.getState().projectPath;
   let missingModels = 0;
   let skippedRefs = 0;
   const restored: ChainLink[] = [];
@@ -103,7 +136,8 @@ export async function restoreChainFromMetadata(
     if (p.modelId && !model) missingModels++;
     const refs: RefImage[] = [];
     for (const r of p.refImages ?? []) {
-      if (await pathExists(r.path)) refs.push(r);
+      const resolved = await resolveRefPath(projectPath, r);
+      if (resolved) refs.push(resolved === r.path ? r : { ...r, path: resolved });
       else skippedRefs++;
     }
     restored.push(
@@ -163,6 +197,7 @@ export type TraceResult = {
 /** Compute ancestor set for a trace: {image} ∪ {all ancestors via sidecar.refs},
  *  retaining the parent→child edges discovered along the way. */
 export async function computeTraceSet(imagePath: string): Promise<TraceResult> {
+  const projectPath = useSessionStore.getState().projectPath;
   const nodes = new Set<string>();
   const parents = new Map<string, RefImage[]>();
   const queue: string[] = [imagePath];
@@ -173,10 +208,14 @@ export async function computeTraceSet(imagePath: string): Promise<TraceResult> {
     const meta = await cmd.image_metadata_read(p).catch(() => null);
     if (!meta) continue;
     const refs = normalizeRefs(meta.refs);
-    if (refs.length > 0) parents.set(p, refs);
+    const resolved: RefImage[] = [];
     for (const r of refs) {
-      if (!nodes.has(r.path)) queue.push(r.path);
+      const path = await resolveRefPath(projectPath, r);
+      if (!path) continue; // unresolved — no edge to draw
+      resolved.push(path === r.path ? r : { ...r, path });
+      if (!nodes.has(path)) queue.push(path);
     }
+    if (resolved.length > 0) parents.set(p, resolved);
   }
   return { nodes, parents };
 }
@@ -202,7 +241,25 @@ export async function addImageToRefs(imagePath: string): Promise<string> {
     finalPath = await cmd.image_copy_to_dir(imagePath, destDir);
   }
   useGenerationStore.getState().addRefs([finalPath]);
+  void enrichRefIdentity([finalPath]);
   return finalPath;
+}
+
+/** Backfill assetId/contentHash onto already-added refs by reading each
+ *  source's own sidecar — best-effort, fire-and-forget (the ref is already
+ *  visible in the UI with just its path; this only matters later, if the
+ *  resolver needs to find the file again after it's moved). No-op for refs
+ *  whose source has no sidecar (external, unmigrated, or already gone). */
+async function enrichRefIdentity(paths: string[]): Promise<void> {
+  const gen = useGenerationStore.getState();
+  await Promise.all(
+    paths.map(async (path) => {
+      const meta = await cmd.image_metadata_read(path).catch(() => null);
+      if (meta?.assetId || meta?.contentHash) {
+        gen.patchRefIdentity(path, meta.assetId, meta.contentHash);
+      }
+    }),
+  );
 }
 
 /** Rename the current sequence: renames on disk, keeps the timeline/refs/
@@ -629,4 +686,4 @@ export async function performImageAction(
   }
 }
 
-export { basename, type FsExistsLike };
+export { basename, enrichRefIdentity, type FsExistsLike };

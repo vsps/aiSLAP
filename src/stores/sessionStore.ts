@@ -14,12 +14,17 @@ import { useScriptStore } from "./scriptStore";
 import { swallow } from "../lib/errors";
 import { normalizeDir } from "../lib/paths";
 import { coalesceAsync } from "../lib/coalesce";
+import { pushLog } from "./logStore";
 
 type PromptScope = "sequence" | "shot";
 type ViewMode = "columns" | "starred" | "stacked";
 
 type State = {
   projectPath: string | null;
+  /** Stable identity UUID for the open project — minted on first open, then
+   *  persisted to project.json. The join key for a future central asset
+   *  index; also stamped into every output's sidecar + embedded media tag. */
+  projectId: string | null;
   sequencePath: string | null;
   shotPath: string | null;
 
@@ -102,6 +107,17 @@ type Actions = {
 
 const emptyChannel = (): PromptHistoryChannel => ({ entries: [], cursor: 0 });
 
+/** Read the project's identity UUID, minting and persisting one via
+ *  crypto.randomUUID() on first touch — keeps id generation on the TS side,
+ *  consistent with every other id (job, chain, ref) in the app. */
+async function ensureProjectId(projectPath: string): Promise<string> {
+  const existing = await cmd.project_id_get(projectPath);
+  if (existing) return existing;
+  const minted = crypto.randomUUID();
+  await cmd.project_id_set(projectPath, minted);
+  return minted;
+}
+
 function latestVersion(columns: GalleryColumn[]): string | null {
   const vs = columns.filter((c) => !c.isSrc).map((c) => c.version);
   return vs.length ? vs[vs.length - 1] : null;
@@ -131,6 +147,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
 
   return {
     projectPath: null,
+    projectId: null,
     sequencePath: null,
     shotPath: null,
 
@@ -168,6 +185,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       const sequences = await cmd.project_open(normalized);
       set({
         projectPath: normalized,
+        projectId: null,
         sequencesInProject: sequences,
         sequencePath: null,
         shotPath: null,
@@ -181,6 +199,34 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       });
       useTimelineStore.getState().reset();
       void useScriptStore.getState().loadFor(normalized);
+      // Best-effort: a project with no id yet gets one minted and persisted.
+      // Failure just leaves projectId null — asset embedding degrades to an
+      // empty project tag rather than blocking project open.
+      void ensureProjectId(normalized)
+        .then((id) => {
+          if (get().projectPath === normalized) set({ projectId: id });
+        })
+        .catch(swallow("project id mint"));
+      // Flush anything queued from a prior offline/no-Turso-configured
+      // session. Best-effort and fire-and-forget — never blocks opening.
+      void cmd.db_sync_outbox(normalized).catch(swallow("turso outbox sync"));
+      // Self-heal the asset index in the background: assigns ids to
+      // anything generated before Phase 1, relinks files moved outside the
+      // app since the last scan. Fire-and-forget — hashing every media file
+      // can take a while on a large project; the app stays interactive.
+      void (async () => {
+        const config = await cmd.config_load().catch(() => null);
+        const report = await cmd
+          .project_reconcile(normalized, config?.ffmpegPath ?? "")
+          .catch(() => null);
+        if (!report) return;
+        if (report.sidecarBackfilled || report.dbIngested || report.relinked) {
+          pushLog(
+            "INFO",
+            `Asset index: ${report.sidecarBackfilled} backfilled, ${report.dbIngested} ingested, ${report.relinked} relinked`,
+          );
+        }
+      })();
     },
 
     async setSequence(sequencePath) {
@@ -279,10 +325,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
     setSelectedImage(path) {
       if (path !== null) {
         const tl = useTimelineStore.getState();
-        if (tl.playing || tl.playheadSec > 0) {
-          tl.pause();
-          tl.restart();
-        }
+        if (tl.timelineActive) tl.deactivate();
       }
       set({ selectedImagePath: path });
     },

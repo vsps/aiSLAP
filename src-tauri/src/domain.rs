@@ -120,6 +120,11 @@ pub struct Config {
     pub fal_prices: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fal_prices_fetched_at: Option<String>,
+    /// Per-endpoint user-entered price overrides (any provider,
+    /// frontend-managed) — takes priority over `fal_prices` when set. See
+    /// `pricing::per_item_price`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub price_overrides: Option<HashMap<String, f64>>,
 }
 
 fn default_max_concurrent_jobs() -> u32 {
@@ -146,6 +151,7 @@ impl Default for Config {
             fal_lifecycle: None,
             fal_prices: None,
             fal_prices_fetched_at: None,
+            price_overrides: None,
         }
     }
 }
@@ -253,6 +259,17 @@ pub struct SequenceSidecar {
     pub name: String,
     #[serde(default)]
     pub prompt_history: Vec<PromptEntry>,
+    /// Sum of costUsd across every image under this sequence's shots, from
+    /// the most recent project_cost_scan run. None until a scan has run once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
+    /// Count of images that contributed to total_cost_usd (had a known price).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_image_count: Option<u32>,
+    /// Count of images with no known price (unpriced/non-fal/time-billed),
+    /// excluded from total_cost_usd.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unknown_image_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -273,6 +290,14 @@ pub struct ShotSidecar {
     /// value = comment shown next to the version label. Folders are not renamed.
     #[serde(default, skip_serializing_if = "map_is_empty")]
     pub version_comments: HashMap<String, String>,
+    /// Sum of costUsd across every image in this shot's version folders, from
+    /// the most recent project_cost_scan run. None until a scan has run once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_image_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unknown_image_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +357,12 @@ pub struct ProjectSidecar {
     /// 3-digit suffix is appended at creation time. Defaults to "gen".
     #[serde(default = "default_version_prefix")]
     pub version_prefix: String,
+    /// Stable UUID identifying this project across machines — the join key
+    /// for a future central index/DB. Minted client-side (crypto.randomUUID)
+    /// on first read via `project_id_get`; empty on projects not yet touched
+    /// by that path.
+    #[serde(default)]
+    pub project_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

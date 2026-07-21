@@ -1,8 +1,9 @@
 import { cmd } from "./tauri";
-import { joinPath } from "./paths";
+import { dirname, joinPath } from "./paths";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { usePricesStore } from "../stores/pricesStore";
 import {
   FalProvider,
   falQueueResult,
@@ -117,14 +118,23 @@ async function pullDown(
     provider: rec.modelProvider,
   };
 
+  // rec.shotPath is project/sequence/shot — two levels up is the project
+  // root. Read (never mint) the id here: recovery runs standalone and
+  // shouldn't race the normal setProject mint path over the same file.
+  const projectPath = dirname(dirname(rec.shotPath));
+  const projectId = await cmd.project_id_get(projectPath).catch(() => null);
+
   const ctx: DownloadCtx = {
     out,
     node,
+    projectId: projectId ?? "",
     sequencePrompt: rec.sequencePrompt,
     shotPrompt: rec.shotPrompt,
     shotPrompts: rec.shotPrompts,
     combinedPrompt: rec.combinedPrompt,
     settings: rec.settings,
+    prices: usePricesStore.getState().prices,
+    priceOverrides: usePricesStore.getState().overrides,
     refs: [], // no upload URLs on recovery
     refSnapshots: rec.refs,
     shotPath: rec.shotPath,

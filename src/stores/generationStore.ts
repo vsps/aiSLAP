@@ -48,6 +48,10 @@ type Actions = {
   setShotPromptIncludedAt: (idx: number, v: boolean) => void;
 
   addRefs: (paths: string[]) => void;
+  /** Backfill a ref's assetId/contentHash once read from its sidecar — see
+   *  `lib/actions.ts`'s `enrichRefIdentity`, which does the async read and
+   *  calls this to commit the result. No-op if the ref was removed since. */
+  patchRefIdentity: (path: string, assetId?: string, hash?: string) => void;
   removeRef: (path: string) => void;
   removeAllRefs: () => void;
   assignRole: (path: string, role: RoleAssignment | null) => void;
@@ -324,6 +328,17 @@ export const useGenerationStore = create<State & Actions>((set) => {
         return patchActive(s, {
           refImages: [...link.refImages, ...added],
         });
+      });
+    },
+    patchRefIdentity(path, assetId, hash) {
+      set((s) => {
+        const link = activeOf(s);
+        if (!link) return {} as Partial<State>;
+        const idx = link.refImages.findIndex((r) => r.path === path);
+        if (idx < 0) return {} as Partial<State>;
+        const next = link.refImages.slice();
+        next[idx] = { ...next[idx], assetId, hash };
+        return patchActive(s, { refImages: next });
       });
     },
     removeRef(path) {

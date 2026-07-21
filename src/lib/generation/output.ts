@@ -3,8 +3,12 @@
 // used by the orphan-recovery driver.
 
 import { cmd } from "../tauri";
-import { basename, dirname, joinPath } from "../paths";
+import { basename, dirname, joinPath, relativeTo } from "../paths";
+import { perItemPrice, parseDurationSeconds } from "../falPrices";
+import { classifyMedia } from "../media";
 import type {
+  AssetRecord,
+  AssetRefRecord,
   ChainMetadataBlock,
   ImageMetadata,
   ModelNode,
@@ -28,6 +32,13 @@ export type DownloadCtx = {
    *  can't drift from what was actually sent. */
   combinedPrompt: string;
   settings: Record<string, unknown>;
+  /** Cached fal per-endpoint prices (Settings -> fetch prices), used to
+   *  compute costUsd at write time. A plain snapshot, not a store import —
+   *  keeps this module usable by the orphan-recovery driver. */
+  prices: Record<string, string>;
+  /** User-entered per-endpoint price overrides (Settings -> Costs), any
+   *  provider. Takes priority over `prices` — see perItemPrice(). */
+  priceOverrides?: Record<string, number>;
   /** Uploaded refs (live path). Empty in recovery — see `refSnapshots`. */
   refs: UploadedRef[];
   /** Alternative source for sidecar refs when `refs` (uploaded) is empty.
@@ -42,6 +53,10 @@ export type DownloadCtx = {
   ffmpegPath: string;
   filenameTemplate: string;
   chain?: Omit<ChainMetadataBlock, "nextMediaPaths">;
+  /** Stable id of the open project — stamped into every output's embedded
+   *  media tag + sidecar. Empty string when the project hasn't been
+   *  assigned one yet (degrades gracefully, never blocks a write). */
+  projectId: string;
 };
 
 export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
@@ -65,8 +80,10 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, 1, "txt", false);
     const target = joinPath(ctx.versionDir, filename);
     await cmd.write_text_file(target, firstInline.inlineText ?? "");
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase);
+    const identity = await identifyOutput(ctx, target);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -81,8 +98,10 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       const thumbPath = target.replace(/\.[^.]+$/, ".thumb.png");
       await cmd.download_to_path(firstModel3d.thumbUrl, thumbPath).catch(() => {});
     }
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase);
+    const identity = await identifyOutput(ctx, target);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -93,14 +112,16 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, 1, ext, false);
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstVideo.url, target);
+    const identity = await identifyOutput(ctx, target);
     const thumbPath = target.replace(/\.[^.]+$/, ".thumb.png");
     if (ctx.ffmpegPath) {
       await cmd
         .video_thumbnail_extract(target, thumbPath, ctx.ffmpegPath)
         .catch(() => false);
     }
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -115,23 +136,104 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, i + 1, ext, multipleFiles);
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(f.url, target);
+    const identity = await identifyOutput(ctx, target);
     const iterIdx = ctx.expandToIterations
       ? Math.min(ctx.iterationBase + i, ctx.iterationTotal)
       : ctx.iterationBase;
-    const meta = buildMetadataRecord(ctx, iterIdx);
+    const meta = buildMetadataRecord(ctx, iterIdx, identity);
     await cmd.image_metadata_write(target, meta);
+    await recordAsset(ctx, target, meta, identity);
     written.push(target);
   }
   return written;
 }
 
-function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number): ImageMetadata {
+type OutputIdentity = { assetId: string; contentHash?: string };
+
+/** Mint an asset id, best-effort embed it (+ the project id) into the media
+ *  file, and hash the final bytes. Embedding is enhancement, not a
+ *  requirement — a format we don't embed into (3D/text) or a failed remux
+ *  still gets an id + hash, just not a recoverable in-file tag. Runs after
+ *  the file is fully on disk so the hash matches what's embedded. */
+async function identifyOutput(
+  ctx: DownloadCtx,
+  target: string,
+): Promise<OutputIdentity> {
+  const assetId = crypto.randomUUID();
+  await cmd
+    .media_id_embed(target, assetId, ctx.projectId, ctx.ffmpegPath)
+    .catch(() => false);
+  const contentHash = await cmd.file_hash(target).catch(() => undefined);
+  return { assetId, contentHash };
+}
+
+function assetKind(path: string): AssetRecord["kind"] {
+  const kind = classifyMedia(path);
+  return kind === "image" || kind === "video" || kind === "model3d" ? kind : "other";
+}
+
+/** Enrich the local asset index (best-effort — sidecar write above is
+ *  already the durable commit for this output) and opportunistically flush
+ *  the outbox to Turso. The local upsert is awaited (fast, no network); the
+ *  remote push is fire-and-forget so a slow/offline Turso never delays a
+ *  generation. */
+async function recordAsset(
+  ctx: DownloadCtx,
+  target: string,
+  meta: ImageMetadata,
+  identity: OutputIdentity,
+): Promise<void> {
+  const projectPath = dirname(dirname(ctx.shotPath));
+  const record: AssetRecord = {
+    id: identity.assetId,
+    relPath: relativeTo(projectPath, target),
+    contentHash: identity.contentHash,
+    kind: assetKind(target),
+    provider: meta.provider,
+    modelId: meta.modelId,
+    endpoint: meta.endpoint,
+    combinedPrompt: meta.combinedPrompt,
+    settingsJson: JSON.stringify(meta.settings ?? {}),
+    costUsd: meta.costUsd,
+    createdAt: meta.timestamp,
+  };
+  await cmd.asset_upsert(projectPath, record).catch(() => {});
+
+  const refs: AssetRefRecord[] = meta.refs.map((r, i) => {
+    const snap: RefSnapshot = typeof r === "string" ? { path: r, roleAssignment: null } : r;
+    return {
+      ordinal: i,
+      refAssetId: snap.assetId,
+      refRelPath: relativeTo(projectPath, snap.path),
+      refHash: snap.hash,
+      roleJson: JSON.stringify(snap.roleAssignment ?? null),
+    };
+  });
+  if (refs.length > 0) {
+    await cmd.asset_refs_set(projectPath, identity.assetId, refs).catch(() => {});
+  }
+
+  void cmd.db_sync_outbox(projectPath).catch(() => {});
+}
+
+function buildMetadataRecord(
+  ctx: DownloadCtx,
+  iterationIndex: number,
+  identity: OutputIdentity,
+): ImageMetadata {
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(ctx.settings)) {
     if (k === "seed" && v === -1) continue;
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
   }
+  const costUsd =
+    perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices, ctx.priceOverrides, {
+      isVideo: ctx.node.kind === "video",
+      durationSec: parseDurationSeconds(ctx.settings.duration),
+      resolution:
+        typeof ctx.settings.resolution === "string" ? ctx.settings.resolution : null,
+    }) ?? undefined;
   return {
     provider: ctx.node.provider ?? "fal",
     model: ctx.node.name,
@@ -153,6 +255,9 @@ function buildMetadataRecord(ctx: DownloadCtx, iterationIndex: number): ImageMet
     timestamp: new Date().toISOString(),
     providerResponse: ctx.out.raw,
     chain: ctx.chain,
+    costUsd,
+    assetId: identity.assetId,
+    contentHash: identity.contentHash,
   };
 }
 

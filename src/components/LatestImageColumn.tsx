@@ -48,7 +48,7 @@ export function LatestImageColumn() {
   );
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
-  const timelineActive = tlPlaying || tlPlayhead > 0;
+  const timelineActive = useTimelineStore((s) => s.timelineActive);
 
   const image = useMemo(
     () => pickImage(columns, selectedImagePath, targetVersion, starredGroups),

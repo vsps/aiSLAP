@@ -6,7 +6,7 @@ import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { usePricesStore } from "../stores/pricesStore";
-import { perItemPrice, formatCost } from "../lib/falPrices";
+import { perItemPrice, parseDurationSeconds, formatCost } from "../lib/falPrices";
 import { getImageMetadataCached } from "../lib/metadataCache";
 import { getOsDragTarget, subscribeOsDragTarget } from "../lib/osDragDrop";
 
@@ -70,6 +70,7 @@ export function GalleryColumn({
   // entirely. Time/size-billed and unpriced images are silently excluded from
   // the total and surfaced only as an "unpriced" count in the tooltip.
   const prices = usePricesStore((s) => s.prices);
+  const priceOverrides = usePricesStore((s) => s.overrides);
   const [colCost, setColCost] = useState<{
     total: number;
     unknown: number;
@@ -87,8 +88,18 @@ export function GalleryColumn({
       if (cancelled) return;
       let total = 0;
       let unknown = 0;
-      for (const m of metas) {
-        const amount = m ? perItemPrice(m.provider, m.endpoint, prices) : null;
+      for (let i = 0; i < metas.length; i++) {
+        const m = metas[i];
+        const amount = m
+          ? perItemPrice(m.provider, m.endpoint, prices, priceOverrides, {
+              isVideo: column.images[i].isVideo,
+              durationSec: parseDurationSeconds(m.settings?.duration),
+              resolution:
+                typeof m.settings?.resolution === "string"
+                  ? m.settings.resolution
+                  : null,
+            })
+          : null;
         if (amount != null) total += amount;
         else unknown += 1;
       }
@@ -97,7 +108,7 @@ export function GalleryColumn({
     return () => {
       cancelled = true;
     };
-  }, [column.isSrc, column.images, prices]);
+  }, [column.isSrc, column.images, prices, priceOverrides]);
 
   // Stable per-column callbacks so memo'd Thumbnails skip re-renders.
   const handleSelect = useCallback(

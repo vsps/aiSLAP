@@ -11,9 +11,14 @@ import type {
   PendingSubmission,
   SeqStarredGroup,
   SequenceStacks,
+  ProjectCostScan,
   SequenceTimeline,
   TimelineInit,
   TimelineExportParams,
+  AssetRecord,
+  AssetRefRecord,
+  SyncReport,
+  ReconcileReport,
 } from "./types";
 
 // Thin typed wrapper over Tauri commands. Keep names 1:1 with Rust #[tauri::command] fns.
@@ -96,6 +101,8 @@ export const cmd = {
 
   project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
     rawInvoke("project_starred_scan", { projectPath }),
+  project_cost_scan: (projectPath: string): Promise<ProjectCostScan> =>
+    rawInvoke("project_cost_scan", { projectPath }),
 
   image_set_visible: (imagePath: string, visible: boolean): Promise<void> =>
     rawInvoke("image_set_visible", { imagePath, visible }),
@@ -209,6 +216,54 @@ export const cmd = {
     prefix: string,
   ): Promise<void> =>
     rawInvoke("project_version_prefix_set", { projectPath, prefix }),
+  project_id_get: (projectPath: string): Promise<string | null> =>
+    rawInvoke("project_id_get", { projectPath }),
+  project_id_set: (projectPath: string, projectId: string): Promise<void> =>
+    rawInvoke("project_id_set", { projectPath, projectId }),
+
+  // Asset identity (embedded in media + content hash)
+  file_hash: (path: string): Promise<string> =>
+    rawInvoke("file_hash", { path }),
+  media_id_embed: (
+    path: string,
+    assetId: string,
+    projectId: string,
+    ffmpegPath: string,
+  ): Promise<boolean> =>
+    rawInvoke("media_id_embed", { path, assetId, projectId, ffmpegPath }),
+  media_id_read: (
+    path: string,
+    ffmpegPath: string,
+  ): Promise<{ assetId: string; projectId: string } | null> =>
+    rawInvoke("media_id_read", { path, ffmpegPath }),
+
+  // Local asset index + Turso sync
+  asset_upsert: (projectPath: string, record: AssetRecord): Promise<void> =>
+    rawInvoke("asset_upsert", { projectPath, record }),
+  asset_lookup: (
+    projectPath: string,
+    assetId: string | null,
+    contentHash: string | null,
+  ): Promise<AssetRecord | null> =>
+    rawInvoke("asset_lookup", { projectPath, assetId, contentHash }),
+  asset_refs_set: (
+    projectPath: string,
+    assetId: string,
+    refs: AssetRefRecord[],
+  ): Promise<void> =>
+    rawInvoke("asset_refs_set", { projectPath, assetId, refs }),
+  asset_refs_get: (
+    projectPath: string,
+    assetId: string,
+  ): Promise<AssetRefRecord[]> =>
+    rawInvoke("asset_refs_get", { projectPath, assetId }),
+  db_sync_outbox: (projectPath: string): Promise<SyncReport> =>
+    rawInvoke("db_sync_outbox", { projectPath }),
+  project_reconcile: (
+    projectPath: string,
+    ffmpegPath: string,
+  ): Promise<ReconcileReport> =>
+    rawInvoke("project_reconcile", { projectPath, ffmpegPath }),
 
   // Orphan recovery
   pending_load: (): Promise<PendingSubmission[]> => rawInvoke("pending_load"),

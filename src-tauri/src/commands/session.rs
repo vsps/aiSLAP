@@ -46,6 +46,7 @@ pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
                 created: Utc::now().to_rfc3339(),
                 visible: vec![],
                 version_prefix: "gen".into(),
+                project_id: String::new(),
             },
         )?;
     }
@@ -92,6 +93,7 @@ pub fn sequence_create(project_path: String, name: String) -> AppResult<String> 
             &SequenceSidecar {
                 name: name.clone(),
                 prompt_history: vec![],
+                ..Default::default()
             },
         )?;
     }
@@ -136,6 +138,7 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
                 clip_media_path: None,
                 version_selects: Default::default(),
                 version_comments: Default::default(),
+                ..Default::default()
             },
         )?;
     }
@@ -155,7 +158,7 @@ pub fn version_create_next(shot_path: String) -> AppResult<String> {
 /// Read-modify-write helper for the common shot-sidecar-field-update shape:
 /// validate the shot dir exists, load the sidecar, apply `mutate`, persist,
 /// and hand back the updated sidecar for callers that want it.
-fn with_shot_sidecar(
+pub(crate) fn with_shot_sidecar(
     shot_path: &str,
     mutate: impl FnOnce(&mut ShotSidecar),
 ) -> AppResult<ShotSidecar> {
@@ -271,6 +274,36 @@ pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppRe
     let path = root.join(PROJECT_SIDECAR);
     let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
     sidecar.version_prefix = trimmed;
+    write_sidecar_atomic(&path, &sidecar)
+}
+
+/// Read the project's stable identity UUID. Returns `None` for a project
+/// that hasn't been assigned one yet — the caller (sessionStore) mints one
+/// with `crypto.randomUUID()` and persists it via `project_id_set`, keeping
+/// ID generation on the TS side consistent with every other id in the app.
+#[tauri::command]
+pub fn project_id_get(project_path: String) -> AppResult<Option<String>> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let sidecar: ProjectSidecar = read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    Ok(if sidecar.project_id.is_empty() {
+        None
+    } else {
+        Some(sidecar.project_id)
+    })
+}
+
+#[tauri::command]
+pub fn project_id_set(project_path: String, project_id: String) -> AppResult<()> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let path = root.join(PROJECT_SIDECAR);
+    let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
+    sidecar.project_id = project_id;
     write_sidecar_atomic(&path, &sidecar)
 }
 

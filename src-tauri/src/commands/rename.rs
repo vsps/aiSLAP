@@ -98,19 +98,44 @@ fn rewrite_path_strings_in_subtree(
 
 #[tauri::command]
 pub async fn sequence_rename(sequence_path: String, new_name: String) -> AppResult<String> {
-    run_blocking(move || rename_subtree(&sequence_path, &new_name, /* is_sequence */ true)).await
+    let (out, db_rename) =
+        run_blocking(move || rename_subtree(&sequence_path, &new_name, /* is_sequence */ true))
+            .await?;
+    apply_db_rename(db_rename).await;
+    Ok(out)
 }
 
 #[tauri::command]
 pub async fn shot_rename(shot_path: String, new_name: String) -> AppResult<String> {
-    run_blocking(move || rename_subtree(&shot_path, &new_name, /* is_sequence */ false)).await
+    let (out, db_rename) =
+        run_blocking(move || rename_subtree(&shot_path, &new_name, /* is_sequence */ false))
+            .await?;
+    apply_db_rename(db_rename).await;
+    Ok(out)
+}
+
+/// (project_root, old_rel, new_rel) for the DB's rel_path prefix rewrite —
+/// computed by `rename_subtree` (sync, mid-rename) and applied by the async
+/// command wrapper afterward, mirroring image.rs's `RelinkInfo`/`apply_relinks`.
+type DbRenamePrefix = (PathBuf, String, String);
+
+async fn apply_db_rename(info: Option<DbRenamePrefix>) {
+    if let Some((root, old_rel, new_rel)) = info {
+        if let Err(e) = crate::db::asset_rename_prefix(&root, &old_rel, &new_rel).await {
+            tracing::warn!("asset rename-prefix failed for {old_rel} -> {new_rel}: {e}");
+        }
+    }
 }
 
 /// Rename a sequence or shot folder and keep every reference to it valid.
 /// Phases: (1) rename the folder on disk; (2) rewrite the absolute path stored
 /// inside each JSON sidecar in the subtree so they point at the new location;
 /// (3) remap the project's visible-set entries from the old prefix to the new.
-fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResult<String> {
+fn rename_subtree(
+    old_path: &str,
+    new_name: &str,
+    is_sequence: bool,
+) -> AppResult<(String, Option<DbRenamePrefix>)> {
     let trimmed = new_name.trim();
     if trimmed.is_empty() {
         return Err(AppError::Msg("New name cannot be empty.".into()));
@@ -130,7 +155,7 @@ fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResul
         .to_string();
     if sanitized == current_base {
         // No-op rename — return the existing path so callers can navigate uniformly.
-        return Ok(as_str(&old));
+        return Ok((as_str(&old), None));
     }
     let parent = old
         .parent()
@@ -174,7 +199,10 @@ fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResul
     //    shotPaths, image metadata sidecars).
     rewrite_path_strings_in_subtree(&new_path, &old_prefix, &new_prefix)?;
 
-    // 3) Rewrite the project.json visible[] prefix entries.
+    // 3) Rewrite the project.json visible[] prefix entries, and hand back the
+    //    same old/new rel prefixes for the DB's rel_path rewrite (step 4,
+    //    applied by the async command wrapper — this fn is sync).
+    let mut db_rename = None;
     if let Ok(project_root) = project_root_for(&new_path) {
         if let (Some(old_rel), Some(new_rel)) = (
             old.strip_prefix(&project_root).ok().map(as_str),
@@ -183,8 +211,70 @@ fn rename_subtree(old_path: &str, new_name: &str, is_sequence: bool) -> AppResul
             if let Err(e) = visible_set_rename_prefix(&project_root, &old_rel, &new_rel) {
                 tracing::warn!("visible-set prefix rename failed: {e}");
             }
+            db_rename = Some((project_root, old_rel, new_rel));
         }
     }
 
-    Ok(new_prefix)
+    Ok((new_prefix, db_rename))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::fsutil::PROJECT_SIDECAR;
+    use crate::db::{self, AssetRecord};
+    use crate::domain::ProjectSidecar;
+    use std::fs;
+
+    fn test_project() -> (PathBuf, String) {
+        let project_id = format!("test-rename-{}", uuid::Uuid::new_v4());
+        let root = std::env::temp_dir().join(&project_id);
+        fs::create_dir_all(&root).unwrap();
+        let sidecar = ProjectSidecar {
+            project_id: project_id.clone(),
+            ..Default::default()
+        };
+        write_json_atomic(&root.join(PROJECT_SIDECAR), &sidecar).unwrap();
+        (root, project_id)
+    }
+
+    fn cleanup(root: &Path, project_id: &str) {
+        let _ = fs::remove_dir_all(root);
+        if let Ok(dir) = crate::paths::appdata_dir() {
+            let _ = fs::remove_file(dir.join("db").join(format!("{project_id}.db")));
+        }
+    }
+
+    #[tokio::test]
+    async fn shot_rename_rewrites_the_indexed_assets_rel_path_prefix() {
+        let (root, project_id) = test_project();
+        let shot_dir = root.join("seq1").join("shot1");
+        fs::create_dir_all(&shot_dir).unwrap();
+
+        db::asset_upsert(
+            &root,
+            AssetRecord {
+                id: "asset-1".to_string(),
+                rel_path: "seq1/shot1/gen001/img.png".to_string(),
+                kind: "image".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let new_path = shot_rename(as_str(&shot_dir), "shot1-renamed".to_string())
+            .await
+            .unwrap();
+        assert!(new_path.ends_with("shot1-renamed"));
+
+        let row = db::asset_lookup(&root, Some("asset-1".to_string()), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.rel_path, "seq1/shot1-renamed/gen001/img.png");
+
+        cleanup(&root, &project_id);
+    }
 }
