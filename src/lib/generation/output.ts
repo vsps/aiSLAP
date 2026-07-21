@@ -244,6 +244,16 @@ async function recordAsset(
   void cmd.db_sync_outbox(projectPath).catch(() => {});
 }
 
+/** Some providers echo the actual seed used even when the request left it to
+ *  auto-randomize — e.g. fal's FLUX and Seedance-2.0 both return a top-level
+ *  `seed` in their response. Best-effort only: returns null (never guesses)
+ *  when the raw response has no such field, which is most models. */
+function extractResolvedSeed(raw: unknown): number | null {
+  if (!raw || typeof raw !== "object") return null;
+  const seed = (raw as Record<string, unknown>).seed;
+  return typeof seed === "number" && Number.isFinite(seed) ? seed : null;
+}
+
 function buildMetadataRecord(
   ctx: DownloadCtx,
   iterationIndex: number,
@@ -255,6 +265,12 @@ function buildMetadataRecord(
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
   }
+  // Prefer the provider-reported resolved seed over the requested value —
+  // it reflects what was actually used, whether the request was random
+  // (-1, otherwise omitted above) or an explicit value the provider may not
+  // have honored exactly.
+  const resolvedSeed = extractResolvedSeed(ctx.out.raw);
+  if (resolvedSeed != null) cleaned.seed = resolvedSeed;
   const costUsd =
     perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices, ctx.priceOverrides, {
       isVideo: ctx.node.kind === "video",
