@@ -139,17 +139,23 @@ export function unwrapFalOutput(result: unknown): ProviderOutput {
     return { files, raw: result };
   }
 
+  type FalImage = { url?: string; width?: number; height?: number };
   const imagesField = r["images"];
-  const single = r["image"] as { url?: string } | undefined;
-  const images: { url?: string }[] = Array.isArray(imagesField)
-    ? (imagesField as { url?: string }[])
+  const single = r["image"] as FalImage | undefined;
+  const images: FalImage[] = Array.isArray(imagesField)
+    ? (imagesField as FalImage[])
     : single && typeof single.url === "string"
     ? [single]
     : [];
 
   for (const img of images) {
     if (!img?.url) continue;
-    files.push({ url: img.url, isVideo: isVideoUrl(img.url) });
+    files.push({
+      url: img.url,
+      isVideo: isVideoUrl(img.url),
+      width: typeof img.width === "number" ? img.width : undefined,
+      height: typeof img.height === "number" ? img.height : undefined,
+    });
   }
   return { files, raw: result };
 }

@@ -7,6 +7,7 @@
       "id": "seedream45_txt2img",
       "name": "Seedream 4.5 (txt2img)",
       "endpoint": "fal-ai/bytedance/seedream/v4.5/text-to-image",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -26,6 +27,7 @@
       "id": "seedream45_edit",
       "name": "Seedream 4.5 (edit)",
       "endpoint": "fal-ai/bytedance/seedream/v4.5/edit",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "required": true }

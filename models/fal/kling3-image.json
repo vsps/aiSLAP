@@ -7,6 +7,7 @@
       "id": "kling3_txt2img",
       "name": "Kling 3 (txt2img)",
       "endpoint": "fal-ai/kling-image/v3/text-to-image",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -24,6 +25,7 @@
       "id": "kling3_img2img",
       "name": "Kling 3 (img2img)",
       "endpoint": "fal-ai/kling-image/v3/image-to-image",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }

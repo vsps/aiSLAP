@@ -7,6 +7,7 @@
       "id": "gpt_image_2_txt2img",
       "name": "GPT Image 2 (txt2img)",
       "endpoint": "openai/gpt-image-2",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -25,6 +26,7 @@
       "id": "gpt_image_2_edit",
       "name": "GPT Image 2 (edit)",
       "endpoint": "openai/gpt-image-2/edit",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "required": true }

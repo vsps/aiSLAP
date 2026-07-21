@@ -12,6 +12,13 @@ export type ProviderFile = {
   isVideo: boolean;
   isModel3d?: boolean;
   thumbUrl?: string;
+  /** Pixel dimensions, when the provider's response includes them. Lets
+   *  downloadAndWrite pick the highest-resolution image by actual size
+   *  rather than array position when a response returns more files than
+   *  were requested (some "thinking" image models include a lower-res
+   *  preview alongside the final image — see output.ts). */
+  width?: number;
+  height?: number;
   /** Inline text payload (no URL) written verbatim to a .txt sidecar — used
    *  for non-media outputs like SAM3 image embeddings (base64). */
   inlineText?: string;

@@ -7,6 +7,7 @@
       "id": "flux_schnell_txt2img",
       "name": "FLUX.1 [schnell]",
       "endpoint": "fal-ai/flux/schnell",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -27,6 +28,7 @@
       "id": "flux_dev_txt2img",
       "name": "FLUX.1 [dev]",
       "endpoint": "fal-ai/flux/dev",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -48,6 +50,7 @@
       "id": "flux_pro_txt2img",
       "name": "FLUX.1 [pro]",
       "endpoint": "fal-ai/flux-pro",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -67,6 +70,7 @@
       "id": "flux_schnell_img2img",
       "name": "FLUX.1 [schnell] (img2img)",
       "endpoint": "fal-ai/flux/schnell",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
@@ -92,6 +96,7 @@
       "id": "flux_dev_img2img",
       "name": "FLUX.1 [dev] (img2img)",
       "endpoint": "fal-ai/flux/dev",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
@@ -118,6 +123,7 @@
       "id": "flux_pro_img2img",
       "name": "FLUX.1 [pro] (img2img)",
       "endpoint": "fal-ai/flux-pro",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }

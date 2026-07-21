@@ -7,6 +7,7 @@
       "id": "nano_banana_2_txt2img",
       "name": "Nano Banana 2 (txt2img)",
       "endpoint": "fal-ai/nano-banana-2",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -26,6 +27,7 @@
       "id": "nano_banana_2_img2img",
       "name": "Nano Banana 2 (img2img)",
       "endpoint": "fal-ai/nano-banana-2/edit",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "required": true }
