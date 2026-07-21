@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 type Props = {
   /** Rendered as the standard header row when given; omit for custom headers. */
@@ -23,6 +23,14 @@ export function ModalDialog({
   padded = true,
   children,
 }: Props) {
+  // Track whether the mousedown that started this gesture landed directly on
+  // the backdrop (not bubbled up from the panel) — a plain onClick isn't
+  // enough because dragging a CSS `resize` handle in the panel's corner can
+  // end (mouseup) with the pointer past the panel's edge, over the backdrop,
+  // which would otherwise fire onClose mid-resize. Only close when BOTH the
+  // press and release targeted the backdrop itself.
+  const downOnBackdrop = useRef(false);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -37,11 +45,16 @@ export function ModalDialog({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        downOnBackdrop.current = e.target === e.currentTarget;
+      }}
+      onMouseUp={(e) => {
+        if (downOnBackdrop.current && e.target === e.currentTarget) onClose();
+        downOnBackdrop.current = false;
+      }}
     >
       <div
         className={`bg-panel text-text border border-dim flex flex-col ${padded ? "p-4" : ""} ${panelClassName}`}
-        onClick={(e) => e.stopPropagation()}
       >
         {title != null && <div className="text-sm font-semibold">{title}</div>}
         {children}

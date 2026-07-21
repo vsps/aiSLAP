@@ -81,6 +81,7 @@ export function SettingsDialog({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const modelEntries = useModelsStore((s) => s.entries);
   const [costProvider, setCostProvider] = useState<string>("fal");
+  const [priceTableHeight, setPriceTableHeight] = useState(256);
 
   const currentColors = useMemo<Required<ColorOverrides>>(
     () => ({ ...DEFAULT_COLORS, ...(config.colors ?? {}) }),
@@ -148,6 +149,24 @@ export function SettingsDialog({ onClose }: Props) {
 
   function overrideKeyFor(row: { endpoint: string; resolution: string | null }): string {
     return row.resolution ? `${row.endpoint}::${row.resolution}` : row.endpoint;
+  }
+
+  // Self-contained drag session: onMove/onUp close over startY/startHeight
+  // directly rather than a ref, so add/removeEventListener always operate on
+  // the exact same function instances for this one drag.
+  function startPriceTableResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = priceTableHeight;
+    function onMove(ev: MouseEvent) {
+      setPriceTableHeight(Math.min(600, Math.max(120, startHeight + (ev.clientY - startY))));
+    }
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }
 
   function setPriceOverride(overrideKey: string, raw: string) {
@@ -740,8 +759,16 @@ export function SettingsDialog({ onClose }: Props) {
                 estimates and exports whenever set. Video models are billed
                 per second — enter a $/sec rate, not a flat price.
               </div>
-              <div className="max-h-64 overflow-y-auto thin-scroll mt-1">
-                <table className="w-full text-xs font-mono">
+              <div
+                className="overflow-y-auto thin-scroll mt-1"
+                style={{ height: priceTableHeight }}
+              >
+                <table className="w-full table-fixed text-xs font-mono">
+                  <colgroup>
+                    <col className="w-[34%]" />
+                    <col className="w-[44%]" />
+                    <col className="w-[22%]" />
+                  </colgroup>
                   <thead>
                     <tr className="text-dim text-left">
                       <th className="font-normal pb-1">Model</th>
@@ -756,19 +783,14 @@ export function SettingsDialog({ onClose }: Props) {
                       const override = config.priceOverrides?.[overrideKey];
                       return (
                         <tr key={row.key} className="border-t border-dim/30">
-                          <td
-                            className="py-1 pr-2 truncate max-w-[200px]"
-                            title={row.endpoint}
-                          >
+                          <td className="py-1 pr-2 truncate" title={row.endpoint}>
                             {row.name}
                             {row.resolution && (
                               <span className="text-dim"> · {row.resolution}</span>
                             )}
                           </td>
-                          <td className="py-1 pr-2 text-dim">
-                            <div className="truncate max-w-[220px]" title={known}>
-                              {known ?? "—"}
-                            </div>
+                          <td className="py-1 pr-2 text-dim truncate" title={known}>
+                            {known ?? "—"}
                           </td>
                           <td className="py-1">
                             <div className="flex items-center gap-1">
@@ -800,6 +822,13 @@ export function SettingsDialog({ onClose }: Props) {
                     )}
                   </tbody>
                 </table>
+              </div>
+              <div
+                onMouseDown={startPriceTableResize}
+                className="h-2 mt-0.5 cursor-row-resize flex items-center justify-center group"
+                title="Drag to resize"
+              >
+                <div className="w-8 h-1 rounded-full bg-dim/40 group-hover:bg-accent" />
               </div>
             </Field>
 
