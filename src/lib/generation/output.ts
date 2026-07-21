@@ -61,7 +61,7 @@ export type DownloadCtx = {
 
 export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   const written: string[] = [];
-  const files = ctx.out.files;
+  let files = ctx.out.files;
   if (files.length === 0) {
     // A provider call can return HTTP 200 with no recognized media field —
     // e.g. the model found nothing to segment, or its response shape didn't
@@ -71,6 +71,34 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       `${ctx.node.name} returned no output file. Raw response: ${JSON.stringify(ctx.out.raw).slice(0, 1000)}`,
     );
   }
+
+  // Some "thinking"/iterative image models (e.g. Nano Banana Pro) can return
+  // an extra lower-res preview frame alongside the final image in the same
+  // response, even when only one was requested — the response then has more
+  // entries than num_images actually asked for. Only trim when the model
+  // declares a batch_field (so multi-file outputs with no such concept, like
+  // SAM3's masks, are never touched) and only when the provider handed back
+  // MORE than requested. A well-behaved batch that returns exactly what was
+  // requested is untouched either way.
+  if (ctx.node.batch_field) {
+    const raw = Number(ctx.settings[ctx.node.batch_field]);
+    const requestedCount = Number.isFinite(raw) && raw > 0 ? raw : 1;
+    if (files.length > requestedCount) {
+      // Prefer actual resolution over array position — there's no documented
+      // guarantee previews sort before the final image, only an observed one.
+      // Falls back to keeping the LAST entries only when any file is missing
+      // dimensions (e.g. video/3D providers, or a provider that omits them).
+      const allSized = files.every(
+        (f) => typeof f.width === "number" && typeof f.height === "number",
+      );
+      files = allSized
+        ? [...files]
+            .sort((a, b) => b.width! * b.height! - a.width! * a.height!)
+            .slice(0, requestedCount)
+        : files.slice(-requestedCount);
+    }
+  }
+
   const multipleFiles = files.length > 1;
 
   // Inline-text output (e.g. SAM3 image embedding) — no URL to download; write

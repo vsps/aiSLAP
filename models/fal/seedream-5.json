@@ -7,6 +7,7 @@
       "id": "seedream5_lite_txt2img",
       "name": "Seedream 5.0 Lite (txt2img)",
       "endpoint": "fal-ai/bytedance/seedream/v5/lite/text-to-image",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -26,6 +27,7 @@
       "id": "seedream5_lite_edit",
       "name": "Seedream 5.0 Lite (edit)",
       "endpoint": "fal-ai/bytedance/seedream/v5/lite/edit",
+      "batch_field": "num_images",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "required": true }
