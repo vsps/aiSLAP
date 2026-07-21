@@ -1,7 +1,12 @@
-import { fal } from "@fal-ai/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
+import {
+  ensureRefLifecycleRule,
+  TOS_DEFAULTS,
+  uploadToTos,
+  type TosConfig,
+} from "./tos";
 import type {
   Provider,
   ProviderFile,
@@ -46,36 +51,60 @@ const TOP_LEVEL_FIELDS = new Set([
   "seed",
 ]);
 
+// Ensure the ref-expiry lifecycle rule at most once per session — cheap
+// insurance, but not worth a GET+PUT round-trip on every submission.
+let lifecycleEnsured = false;
+
 export class BytedanceProvider implements Provider {
   private key = "";
+  private tos: TosConfig | null = null;
 
   async prepare(): Promise<void> {
-    const key = await cmd.provider_key_get("bytedance").catch(() => "");
+    const [key, ak, sk, cfg] = await Promise.all([
+      cmd.provider_key_get("bytedance").catch(() => ""),
+      cmd.provider_key_get("tos_ak").catch(() => ""),
+      cmd.provider_key_get("tos_sk").catch(() => ""),
+      cmd.config_load().catch(() => null),
+    ]);
     if (!key) throw new Error("BYTEDANCE_API_KEY not configured — open Settings.");
     this.key = key;
+
+    // TOS is only needed to host reference material. A text-only job has no
+    // refs and never calls uploadFile, so missing TOS creds must NOT fail
+    // prepare() — leave `tos` null and let uploadFile throw if a ref shows up.
+    const bucket = cfg?.tos?.bucket || TOS_DEFAULTS.bucket;
+    if (!ak || !sk || !bucket) return;
+
+    this.tos = {
+      accessKeyId: ak,
+      secretAccessKey: sk,
+      region: cfg?.tos?.region || TOS_DEFAULTS.region,
+      bucket,
+      endpoint: cfg?.tos?.endpoint || TOS_DEFAULTS.endpoint,
+    };
+
+    // Best-effort: install the expiry rule so uploaded refs don't accumulate.
+    // Never block generation on it — uploads work whether or not it succeeds.
+    if (!lifecycleEnsured) {
+      lifecycleEnsured = true;
+      const days = cfg?.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays;
+      void ensureRefLifecycleRule(this.tos, days).catch(() => {
+        lifecycleEnsured = false; // let a later submit retry
+      });
+    }
   }
 
-  // Confirmed live: Ark validates content[].{video_url,audio_url}.url as a
-  // real fetchable web URL — a data: URI is rejected outright, and Ark's own
-  // Files API returns an opaque id that's also rejected ("invalid url") when
-  // dropped into that field, so there's no ByteDance-native way to host a
-  // local video/audio file. Images tolerate a data: URI fine; video/audio
-  // route through fal.ai's public object storage instead (requires a
-  // FAL_KEY, independent of which provider is actually generating).
-  async uploadFile(file: File, _signal: AbortSignal): Promise<string> {
-    if (classifyFile(file) === "image") return fileToDataUri(file);
-    return this.uploadToFalStorage(file);
-  }
-
-  private async uploadToFalStorage(file: File): Promise<string> {
-    const falKey = await cmd.provider_key_get("fal").catch(() => "");
-    if (!falKey) {
+  // Ark rejects inline data: URIs for reference material — every ref (image,
+  // video, audio) must be a fetchable URL. We upload to the user's TOS bucket
+  // and hand Ark a presigned GET URL (bucket stays private; refs auto-expire
+  // via the lifecycle rule installed in prepare()).
+  async uploadFile(file: File, signal: AbortSignal): Promise<string> {
+    if (!this.tos) {
       throw new Error(
-        "ByteDance video/audio references need a public URL — configure a FAL_KEY in Settings (used only to host the file via fal.ai storage).",
+        "ByteDance references need TOS object storage — configure the TOS Access Key ID, Secret Access Key, and bucket in Settings → APIs.",
       );
     }
-    fal.config({ credentials: falKey, fetch: tauriFetch as unknown as typeof fetch });
-    return fal.storage.upload(file);
+    return uploadToTos(file, this.tos, signal);
   }
 
   async run(
@@ -235,23 +264,3 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function classifyFile(file: File): "image" | "video" | "audio" {
-  const type = file.type.toLowerCase();
-  if (type.startsWith("video/")) return "video";
-  if (type.startsWith("audio/")) return "audio";
-  if (type.startsWith("image/")) return "image";
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  if (["mp4", "mov", "webm", "mkv", "avi"].includes(ext)) return "video";
-  if (["mp3", "wav", "m4a", "aac", "ogg"].includes(ext)) return "audio";
-  return "image";
-}
-
-async function fileToDataUri(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  const b64 = btoa(binary);
-  const type = file.type || "application/octet-stream";
-  return `data:${type};base64,${b64}`;
-}

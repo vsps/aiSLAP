@@ -9,6 +9,7 @@ import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { invalidateConfigCache } from "../lib/metadataCache";
+import { ensureRefLifecycleRule, TOS_DEFAULTS } from "../lib/providers/tos";
 import { ModalDialog } from "./ModalDialog";
 import {
   DEFAULT_CONFIG,
@@ -53,11 +54,14 @@ export function SettingsDialog({ onClose }: Props) {
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
   const [bytedanceKey, setBytedanceKey] = useState("");
+  const [tosAk, setTosAk] = useState("");
+  const [tosSk, setTosSk] = useState("");
   const [tursoUrl, setTursoUrl] = useState("");
   const [tursoToken, setTursoToken] = useState("");
   const [revealKey, setRevealKey] = useState(false);
   const [revealReplicate, setRevealReplicate] = useState(false);
   const [revealBytedance, setRevealBytedance] = useState(false);
+  const [revealTosSk, setRevealTosSk] = useState(false);
   const [revealTursoToken, setRevealTursoToken] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [originalColors, setOriginalColors] = useState<
@@ -161,10 +165,12 @@ export function SettingsDialog({ onClose }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [k, rk, bk, tu, tt, c] = await Promise.all([
+      const [k, rk, bk, ak, sk, tu, tt, c] = await Promise.all([
         cmd.provider_key_get("fal").catch(() => ""),
         cmd.provider_key_get("replicate").catch(() => ""),
         cmd.provider_key_get("bytedance").catch(() => ""),
+        cmd.provider_key_get("tos_ak").catch(() => ""),
+        cmd.provider_key_get("tos_sk").catch(() => ""),
         cmd.provider_key_get("turso_url").catch(() => ""),
         cmd.provider_key_get("turso_token").catch(() => ""),
         cmd.config_load().catch(() => null),
@@ -172,6 +178,8 @@ export function SettingsDialog({ onClose }: Props) {
       setFalKey(k);
       setReplicateKey(rk);
       setBytedanceKey(bk);
+      setTosAk(ak);
+      setTosSk(sk);
       setTursoUrl(tu);
       setTursoToken(tt);
       if (c) {
@@ -214,12 +222,26 @@ export function SettingsDialog({ onClose }: Props) {
     setPricesBusy(true);
     setPricesStatus("Fetching…");
     try {
-      const endpoints = useModelsStore
+      const falEntries = useModelsStore
         .getState()
-        .entries.filter((e) => (e.node.provider ?? "fal") === "fal")
-        .map((e) => e.node.endpoint);
-      const unique = [...new Set(endpoints)];
-      const prices = await fetchFalPrices(unique);
+        .entries.filter((e) => (e.node.provider ?? "fal") === "fal");
+      const unique = [...new Set(falEntries.map((e) => e.node.endpoint))];
+
+      // Models priced per resolution get a real "$X per Y" extracted per
+      // tier (see expandResolutionPrices) instead of the raw scraped
+      // paragraph — only attempted when there's more than one tier to tell
+      // apart.
+      const resolutionsByEndpoint: Record<string, string[]> = {};
+      for (const e of falEntries) {
+        const resParam = e.node.parameters.find(
+          (p): p is EnumParam => p.type === "enum" && p.name === "resolution",
+        );
+        if (resParam && resParam.options.length >= 2) {
+          resolutionsByEndpoint[e.node.endpoint] = resParam.options;
+        }
+      }
+
+      const prices = await fetchFalPrices(unique, resolutionsByEndpoint);
       const fetchedAt = new Date().toISOString();
 
       // Persist immediately into the on-disk config (merged into a fresh
@@ -238,9 +260,11 @@ export function SettingsDialog({ onClose }: Props) {
         falPrices: prices,
         falPricesFetchedAt: fetchedAt,
       }));
-      setPricesStatus(
-        `${Object.keys(prices).length} of ${unique.length} fal models priced.`,
-      );
+      // Count distinct priced endpoints, not raw key count — tiered models
+      // now contribute extra `${endpoint}::${resolution}` keys alongside
+      // the flat one, which would otherwise inflate this total.
+      const pricedCount = unique.filter((e) => e in prices).length;
+      setPricesStatus(`${pricedCount} of ${unique.length} fal models priced.`);
     } catch (e) {
       setPricesStatus(`Error: ${String(e)}`);
     } finally {
@@ -287,18 +311,71 @@ export function SettingsDialog({ onClose }: Props) {
     setConfig((c) => ({ ...c, colors: undefined }));
   }
 
+  function setTosField(key: "bucket" | "region" | "endpoint", value: string) {
+    setConfig((c) => ({
+      ...c,
+      tos: {
+        bucket: c.tos?.bucket ?? TOS_DEFAULTS.bucket,
+        region: c.tos?.region ?? TOS_DEFAULTS.region,
+        endpoint: c.tos?.endpoint ?? TOS_DEFAULTS.endpoint,
+        refExpiryDays: c.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays,
+        [key]: value,
+      },
+    }));
+  }
+
+  function setTosExpiry(days: number) {
+    setConfig((c) => ({
+      ...c,
+      tos: {
+        bucket: c.tos?.bucket ?? TOS_DEFAULTS.bucket,
+        region: c.tos?.region ?? TOS_DEFAULTS.region,
+        endpoint: c.tos?.endpoint ?? TOS_DEFAULTS.endpoint,
+        refExpiryDays: days,
+      },
+    }));
+  }
+
   async function save() {
     setBusy(true);
     try {
+      const ak = tosAk.trim();
+      const sk = tosSk.trim();
       await cmd.provider_key_set("fal", falKey.trim());
       await cmd.provider_key_set("replicate", replicateKey.trim());
       await cmd.provider_key_set("bytedance", bytedanceKey.trim());
+      await cmd.provider_key_set("tos_ak", ak);
+      await cmd.provider_key_set("tos_sk", sk);
       await cmd.provider_key_set("turso_url", tursoUrl.trim());
       await cmd.provider_key_set("turso_token", tursoToken.trim());
       await cmd.config_save(config);
       invalidateConfigCache();
       usePricesStore.getState().setOverrides(config.priceOverrides ?? {});
       setOriginalColors(config.colors);
+
+      // Best-effort: install/refresh the TOS ref-expiry lifecycle rule when
+      // creds + bucket are present. Failure is surfaced but doesn't block the
+      // save — uploads still work without the rule (refs just won't auto-expire).
+      const bucket = config.tos?.bucket || TOS_DEFAULTS.bucket;
+      if (ak && sk && bucket) {
+        try {
+          await ensureRefLifecycleRule(
+            {
+              accessKeyId: ak,
+              secretAccessKey: sk,
+              region: config.tos?.region || TOS_DEFAULTS.region,
+              bucket,
+              endpoint: config.tos?.endpoint || TOS_DEFAULTS.endpoint,
+            },
+            config.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays,
+          );
+        } catch (e) {
+          await showMessage(
+            `Saved, but couldn't set the TOS lifecycle rule: ${String(e)}`,
+            { kind: "warning" },
+          );
+        }
+      }
       onClose();
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
@@ -311,7 +388,7 @@ export function SettingsDialog({ onClose }: Props) {
     <ModalDialog
       onClose={handleClose}
       padded={false}
-      panelClassName="max-w-[640px] w-full shadow-xl"
+      panelClassName="w-[640px] h-[640px] min-w-[440px] min-h-[360px] max-w-[95vw] max-h-[90vh] resize overflow-auto shadow-xl"
     >
       <div className="px-4 py-2 bg-surface text-text text-sm">Settings</div>
 
@@ -332,7 +409,7 @@ export function SettingsDialog({ onClose }: Props) {
         ))}
       </div>
 
-      <div className="p-4 flex flex-col gap-4 max-h-[70vh] overflow-y-auto thin-scroll">
+      <div className="p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto thin-scroll">
         {tab === "General" && (
           <>
             <Field label="Max concurrent submissions">
@@ -505,6 +582,76 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
+            <Field label="TOS storage (ByteDance references)">
+              <input
+                type="text"
+                value={tosAk}
+                onChange={(e) => setTosAk(e.currentTarget.value)}
+                className="w-full bg-inset px-2 py-1 font-mono text-xs"
+                placeholder="Access Key ID (AKLT…)"
+              />
+              <div className="flex gap-1 mt-1">
+                <input
+                  type={revealTosSk ? "text" : "password"}
+                  value={tosSk}
+                  onChange={(e) => setTosSk(e.currentTarget.value)}
+                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="Secret Access Key"
+                />
+                <button
+                  className="px-2 bg-bg text-xs"
+                  onClick={() => setRevealTosSk((v) => !v)}
+                >
+                  {revealTosSk ? "hide" : "show"}
+                </button>
+              </div>
+              <div className="flex gap-1 mt-1">
+                <input
+                  type="text"
+                  value={config.tos?.bucket ?? TOS_DEFAULTS.bucket}
+                  onChange={(e) => setTosField("bucket", e.currentTarget.value)}
+                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="bucket"
+                  title="TOS bucket name"
+                />
+                <input
+                  type="text"
+                  value={config.tos?.region ?? TOS_DEFAULTS.region}
+                  onChange={(e) => setTosField("region", e.currentTarget.value)}
+                  className="w-32 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="region"
+                  title="TOS region (used in the signature)"
+                />
+              </div>
+              <input
+                type="text"
+                value={config.tos?.endpoint ?? TOS_DEFAULTS.endpoint}
+                onChange={(e) => setTosField("endpoint", e.currentTarget.value)}
+                className="w-full bg-inset px-2 py-1 font-mono text-xs mt-1"
+                placeholder="endpoint host"
+                title="TOS endpoint host suffix"
+              />
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs text-dim">Refs expire after</span>
+                <select
+                  value={config.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays}
+                  onChange={(e) => setTosExpiry(parseInt(e.currentTarget.value, 10))}
+                  className="bg-inset px-2 py-1 text-xs font-mono"
+                >
+                  {[1, 3, 7, 30].map((d) => (
+                    <option key={d} value={d}>
+                      {d} day{d === 1 ? "" : "s"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="text-xs text-dim mt-1">
+                AK/SK stored in <code>.env</code>. Uploaded references get a
+                presigned URL (bucket stays private) and auto-delete via a
+                bucket lifecycle rule set on save.
+              </div>
+            </Field>
+
             <Field label="TURSO_DATABASE_URL (optional)">
               <input
                 type="text"
@@ -586,11 +733,12 @@ export function SettingsDialog({ onClose }: Props) {
                 </span>
               </div>
               <div className="text-xs text-dim mt-1">
-                Known price comes from the fal.ai fetch above (fal only, one
-                blended price per model). Override is used for cost estimates
-                and exports whenever set. Video models are billed per second
-                — enter a $/sec rate, not a flat price; models priced per
-                resolution get one override row per resolution.
+                Known price comes from the fal.ai fetch above (fal only).
+                Models priced per resolution show a distinct value per tier
+                when one could be extracted cleanly — otherwise the raw fal
+                text (hover for the full text). Override is used for cost
+                estimates and exports whenever set. Video models are billed
+                per second — enter a $/sec rate, not a flat price.
               </div>
               <div className="max-h-64 overflow-y-auto thin-scroll mt-1">
                 <table className="w-full text-xs font-mono">
@@ -603,8 +751,8 @@ export function SettingsDialog({ onClose }: Props) {
                   </thead>
                   <tbody>
                     {priceRows.map((row) => {
-                      const known = prices[row.endpoint];
                       const overrideKey = overrideKeyFor(row);
+                      const known = prices[overrideKey] ?? prices[row.endpoint];
                       const override = config.priceOverrides?.[overrideKey];
                       return (
                         <tr key={row.key} className="border-t border-dim/30">
@@ -617,7 +765,11 @@ export function SettingsDialog({ onClose }: Props) {
                               <span className="text-dim"> · {row.resolution}</span>
                             )}
                           </td>
-                          <td className="py-1 pr-2 text-dim">{known ?? "—"}</td>
+                          <td className="py-1 pr-2 text-dim">
+                            <div className="truncate max-w-[220px]" title={known}>
+                              {known ?? "—"}
+                            </div>
+                          </td>
                           <td className="py-1">
                             <div className="flex items-center gap-1">
                               <input

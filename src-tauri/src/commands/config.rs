@@ -60,6 +60,8 @@ fn env_var_for(provider: &str) -> String {
         "replicate" => "REPLICATE_API_TOKEN".to_string(),
         "turso_url" => "TURSO_DATABASE_URL".to_string(),
         "turso_token" => "TURSO_AUTH_TOKEN".to_string(),
+        "tos_ak" => "TOS_ACCESS_KEY_ID".to_string(),
+        "tos_sk" => "TOS_SECRET_ACCESS_KEY".to_string(),
         other => format!("{}_API_KEY", other.to_uppercase()),
     }
 }

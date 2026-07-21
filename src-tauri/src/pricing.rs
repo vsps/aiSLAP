@@ -98,7 +98,11 @@ pub fn per_item_price(
     if provider.unwrap_or("fal") != "fal" {
         return None;
     }
-    let parsed = parse_fal_price(prices.get(endpoint)?)?;
+    let text = ctx
+        .resolution
+        .and_then(|r| prices.get(&format!("{endpoint}::{r}")))
+        .or_else(|| prices.get(endpoint))?;
+    let parsed = parse_fal_price(text)?;
     if is_per_item_unit(&parsed.unit) {
         return Some(parsed.amount);
     }
@@ -204,5 +208,28 @@ mod tests {
         let ctx_720p = CostContext { is_video: false, duration_sec: None, resolution: Some("720p") };
         assert_eq!(per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_1080p), Some(0.02));
         assert_eq!(per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_720p), Some(0.01));
+    }
+
+    #[test]
+    fn resolution_scoped_scraped_price_falls_back_to_flat_endpoint_price() {
+        // Mirrors expandResolutionPrices() output in falPrices.ts: a tiered
+        // model gets one compound key per resolution plus the flat blended
+        // text as a fallback for callers with no resolution context.
+        let mut prices = HashMap::new();
+        prices.insert("fal-ai/vid::720p".to_string(), "$0.10 per second".to_string());
+        prices.insert("fal-ai/vid::1080p".to_string(), "$0.15 per second".to_string());
+        prices.insert(
+            "fal-ai/vid".to_string(),
+            "Your request will cost $0.10 per second for 720p, $0.15 per second for 1080p.".to_string(),
+        );
+        let overrides = HashMap::new();
+        let ctx_720p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("720p") };
+        let ctx_1080p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("1080p") };
+        let ctx_unknown_res = CostContext { is_video: true, duration_sec: Some(5.0), resolution: None };
+        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_720p), Some(0.5));
+        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_1080p), Some(0.75));
+        // No resolution context: falls back to the flat text, which resolves
+        // to the first ($0.10/sec) tier rather than failing outright.
+        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_unknown_res), Some(0.5));
     }
 }

@@ -270,6 +270,17 @@ export type Config = {
    *  falPrices. Takes priority over a scraped price when set — the only way
    *  to price non-fal models, since only fal has a scraper. */
   priceOverrides?: Record<string, number>;
+  /** BytePlus TOS object storage — hosts ByteDance reference material as
+   *  fetchable URLs. Credentials (AK/SK) live in .env; these are the
+   *  non-secret targeting fields. Defaults in lib/providers/tos.ts. */
+  tos?: {
+    bucket: string;
+    region: string;
+    /** Host suffix, e.g. "tos-ap-southeast-1.bytepluses.com". */
+    endpoint: string;
+    /** Days before uploaded refs auto-expire via the bucket lifecycle rule. */
+    refExpiryDays?: number;
+  };
 };
 
 export const DEFAULT_MAX_CONCURRENT_JOBS = 3;
