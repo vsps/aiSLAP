@@ -40,7 +40,9 @@
         { "name": "aspect_ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "aspect_ratio", "default": "auto", "options": ["auto", "16:9", "9:16"] },
         { "name": "duration", "label": "Duration", "type": "enum", "api_field": "duration", "default": "8s", "options": ["4s", "6s", "8s"] },
         { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "1080p", "options": ["720p", "1080p"] },
-        { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true }
+        { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
+        { "name": "negative_prompt", "label": "Neg Prompt", "type": "enum", "api_field": "negative_prompt", "default": "", "options": [""] },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 }
       ]
     },
     {

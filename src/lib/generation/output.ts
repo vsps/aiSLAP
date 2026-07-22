@@ -6,6 +6,7 @@ import { cmd } from "../tauri";
 import { basename, dirname, joinPath, relativeTo } from "../paths";
 import { perItemPrice, parseDurationSeconds } from "../falPrices";
 import { classifyMedia } from "../media";
+import { negativePromptParam, splitNegativePrompt } from "../args";
 import type {
   AssetRecord,
   AssetRefRecord,
@@ -244,6 +245,16 @@ async function recordAsset(
   void cmd.db_sync_outbox(projectPath).catch(() => {});
 }
 
+/** Some providers echo the actual seed used even when the request left it to
+ *  auto-randomize — e.g. fal's FLUX and Seedance-2.0 both return a top-level
+ *  `seed` in their response. Best-effort only: returns null (never guesses)
+ *  when the raw response has no such field, which is most models. */
+function extractResolvedSeed(raw: unknown): number | null {
+  if (!raw || typeof raw !== "object") return null;
+  const seed = (raw as Record<string, unknown>).seed;
+  return typeof seed === "number" && Number.isFinite(seed) ? seed : null;
+}
+
 function buildMetadataRecord(
   ctx: DownloadCtx,
   iterationIndex: number,
@@ -254,6 +265,22 @@ function buildMetadataRecord(
     if (k === "seed" && v === -1) continue;
     if (ctx.node.batch_field && k === ctx.node.batch_field) continue;
     cleaned[k] = v;
+  }
+  // Prefer the provider-reported resolved seed over the requested value —
+  // it reflects what was actually used, whether the request was random
+  // (-1, otherwise omitted above) or an explicit value the provider may not
+  // have honored exactly.
+  const resolvedSeed = extractResolvedSeed(ctx.out.raw);
+  if (resolvedSeed != null) cleaned.seed = resolvedSeed;
+
+  // Models with a negative_prompt field have no dedicated settings control
+  // for it — it's carved out of the combined prompt at submit time (see
+  // splitNegativePrompt/buildArgs). Persist the actual value used here too,
+  // rather than only ever showing the empty-string stub from settings.
+  const negParam = negativePromptParam(ctx.node);
+  if (negParam) {
+    const { negativePrompt } = splitNegativePrompt(ctx.combinedPrompt);
+    if (negativePrompt) cleaned[negParam.api_field] = negativePrompt;
   }
   const costUsd =
     perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices, ctx.priceOverrides, {
