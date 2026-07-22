@@ -6,6 +6,7 @@ import { cmd } from "../tauri";
 import { basename, dirname, joinPath, relativeTo } from "../paths";
 import { perItemPrice, parseDurationSeconds } from "../falPrices";
 import { classifyMedia } from "../media";
+import { negativePromptParam, splitNegativePrompt } from "../args";
 import type {
   AssetRecord,
   AssetRefRecord,
@@ -271,6 +272,16 @@ function buildMetadataRecord(
   // have honored exactly.
   const resolvedSeed = extractResolvedSeed(ctx.out.raw);
   if (resolvedSeed != null) cleaned.seed = resolvedSeed;
+
+  // Models with a negative_prompt field have no dedicated settings control
+  // for it — it's carved out of the combined prompt at submit time (see
+  // splitNegativePrompt/buildArgs). Persist the actual value used here too,
+  // rather than only ever showing the empty-string stub from settings.
+  const negParam = negativePromptParam(ctx.node);
+  if (negParam) {
+    const { negativePrompt } = splitNegativePrompt(ctx.combinedPrompt);
+    if (negativePrompt) cleaned[negParam.api_field] = negativePrompt;
+  }
   const costUsd =
     perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices, ctx.priceOverrides, {
       isVideo: ctx.node.kind === "video",

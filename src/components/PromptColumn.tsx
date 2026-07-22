@@ -10,6 +10,7 @@ import { useScriptStore } from "../stores/scriptStore";
 import { findSequenceBody, findShotBody } from "../lib/script";
 import { basename } from "../lib/paths";
 import { confirmAction } from "../lib/dialog";
+import { negativePromptParam } from "../lib/args";
 import { useLayoutStore } from "../stores/layoutStore";
 import { IconBtn } from "./IconBtn";
 import { LlmPromptModal } from "./LlmPromptModal";
@@ -91,6 +92,7 @@ function SequencePromptColumn({ title }: { title: string }) {
 
   const sequencePromptIncluded = activeLink?.sequencePromptIncluded !== false;
   const sequenceScriptIncluded = activeLink?.sequenceScriptIncluded !== false;
+  const negPromptSupported = !!(activeLink?.model && negativePromptParam(activeLink.model));
 
   if (collapsed) {
     return (
@@ -108,7 +110,9 @@ function SequencePromptColumn({ title }: { title: string }) {
         title="Click to collapse"
         onClick={(e) => onHeaderClick(e, () => toggleCollapsed("seqPrompt"))}
       >
-        <span>{title}</span>
+        <span title={negPromptSupported ? "Separate the negative prompt with a ---" : undefined}>
+          {title}
+        </span>
         {history.entries.length > 0 && (
           <span className="text-xs opacity-60 font-mono">
             {atLive ? history.entries.length : `${history.cursor + 1}/${history.entries.length}`}
@@ -242,6 +246,7 @@ function ShotPromptColumn({ title }: { title: string }) {
   const shotScriptIncluded = activeLink?.shotScriptIncluded !== false;
   const shotPromptsIncluded =
     activeLink?.shotPromptsIncluded ?? shotPrompts.map(() => true);
+  const negPromptSupported = !!(activeLink?.model && negativePromptParam(activeLink.model));
 
   // Replace all shot prompts with AI-split sections, after a warning. Returns
   // whether the split was applied (false when the user cancels).
@@ -270,7 +275,9 @@ function ShotPromptColumn({ title }: { title: string }) {
         title="Click to collapse"
         onClick={(e) => onHeaderClick(e, () => toggleCollapsed("shotPrompt"))}
       >
-        <span>{title}</span>
+        <span title={negPromptSupported ? "Separate the negative prompt with a ---" : undefined}>
+          {title}
+        </span>
         {entries.length > 0 && (
           <span className="text-xs opacity-60 font-mono">
             {atLive ? entries.length : `${safeCursor + 1}/${entries.length}`}

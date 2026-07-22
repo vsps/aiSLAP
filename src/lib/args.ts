@@ -37,6 +37,31 @@ export function splitPromptsByDelimiter(text: string, delim = "---"): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** Models that accept a negative_prompt field have no dedicated input for it
+ *  (there's nowhere in the settings panel to type one) — instead, a `---`
+ *  anywhere in the combined prompt splits it: everything before is the
+ *  actual prompt, everything after (to the end) is the negative prompt.
+ *  Matches a run of 3+ dashes so "----" etc. doesn't leave a stray dash
+ *  behind. No delimiter present → the whole text is the prompt. */
+export function splitNegativePrompt(text: string): {
+  prompt: string;
+  negativePrompt: string;
+} {
+  const m = text.match(/-{3,}/);
+  if (!m || m.index === undefined) return { prompt: text, negativePrompt: "" };
+  return {
+    prompt: text.slice(0, m.index).trim(),
+    negativePrompt: text.slice(m.index + m[0].length).trim(),
+  };
+}
+
+/** The model's negative_prompt parameter, if it declares one — same lookup
+ *  used by buildArgs (to route the split) and buildMetadataRecord (to
+ *  persist what was actually sent). */
+export function negativePromptParam(node: ModelNode) {
+  return node.parameters.find((p) => p.name === "negative_prompt");
+}
+
 export function buildArgs(
   node: ModelNode,
   combinedPrompt: string,
@@ -64,7 +89,16 @@ export function buildArgs(
   // there silently constrains segmentation to match that text, causing
   // spurious "no mask" results even with valid point/box prompts.
   const wantsPrompt = node.inputs.some((i) => i.api_field === "prompt");
-  if (wantsPrompt && combinedPrompt.length > 0) args["prompt"] = combinedPrompt;
+  if (wantsPrompt && combinedPrompt.length > 0) {
+    const negParam = negativePromptParam(node);
+    if (negParam) {
+      const { prompt, negativePrompt } = splitNegativePrompt(combinedPrompt);
+      args["prompt"] = prompt;
+      if (negativePrompt) args[negParam.api_field] = negativePrompt;
+    } else {
+      args["prompt"] = combinedPrompt;
+    }
+  }
 
   // SAM-style geometry-prompt nodes (type "prompts") don't expose a text
   // input, but fal's `prompt` field on those endpoints still defaults to a
