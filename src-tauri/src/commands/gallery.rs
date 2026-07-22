@@ -104,12 +104,19 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
         _ => a.version.cmp(&b.version),
     });
 
-    // SEL must always be the rightmost column, regardless of sort order.
+    // SEL must always sit immediately after SHOT SRC (falling back to right
+    // after GLOBAL SRC, or the front, if this shot has no SRC folder yet) —
+    // independent of the alphabetical sort above, which would otherwise
+    // place it wherever its name happens to fall (e.g. before SHOT SRC).
     if let Some(sel_idx) = cols.iter().position(|c| c.version == SEL_DIR) {
-        if sel_idx < cols.len() - 1 {
-            let sel_col = cols.remove(sel_idx);
-            cols.push(sel_col);
-        }
+        let sel_col = cols.remove(sel_idx);
+        let insert_at = cols
+            .iter()
+            .position(|c| c.version == "SHOT SRC")
+            .or_else(|| cols.iter().position(|c| c.version == "GLOBAL SRC"))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        cols.insert(insert_at, sel_col);
     }
 
     Ok(cols)
