@@ -20,11 +20,41 @@ const POLL_MS = 5000;
 const MAX_POLLS = 240; // ~20 min at POLL_MS=5000 — safety net, not an expected duration
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired", "cancelled"]);
 
+// AI MediaKit (BytePlus VOD) — a separate product from Ark: different host,
+// separate API key, flat (non content[]-wrapped) request/response shapes.
+// Reuses this same Provider instance since it's still "a ByteDance capability".
+const MEDIAKIT_BASE_URL = "https://mediakit.ap-southeast-1.bytepluses.com/api/v1";
+const MEDIAKIT_ENHANCE_ENDPOINT = "mediakit-enhance-video";
+const MEDIAKIT_TERMINAL_STATUSES = new Set(["completed", "failed"]);
+// Only the terminal values are documented; anything else is treated as
+// still-running (same defensive style as Ark's TERMINAL_STATUSES above).
+const MEDIAKIT_TOP_LEVEL_FIELDS = new Set([
+  "video_url",
+  "scene",
+  "resolution",
+  "tool_version",
+  "fps",
+  "bit_depth",
+]);
+
 type Task = {
   id?: string;
   task_id?: string;
   status: string;
   content?: { video_url?: string };
+  error?: { code?: string; message?: string };
+};
+
+type MediaKitTask = {
+  task_id?: string;
+  status: string;
+  result?: {
+    video_url?: string;
+    duration?: number;
+    fps?: number;
+    resolution?: string;
+    tool_version?: string;
+  };
   error?: { code?: string; message?: string };
 };
 
@@ -57,17 +87,23 @@ let lifecycleEnsured = false;
 
 export class BytedanceProvider implements Provider {
   private key = "";
+  private mediaKitKey = "";
   private tos: TosConfig | null = null;
 
   async prepare(): Promise<void> {
-    const [key, ak, sk, cfg] = await Promise.all([
+    const [key, mediaKitKey, ak, sk, cfg] = await Promise.all([
       cmd.provider_key_get("bytedance").catch(() => ""),
+      cmd.provider_key_get("bytedance_mediakit").catch(() => ""),
       cmd.provider_key_get("tos_ak").catch(() => ""),
       cmd.provider_key_get("tos_sk").catch(() => ""),
       cmd.config_load().catch(() => null),
     ]);
-    if (!key) throw new Error("BYTEDANCE_API_KEY not configured — open Settings.");
+    // Neither key is required here — Ark and MediaKit are independent APIs
+    // sharing this provider instance, so a MediaKit-only (or Ark-only) setup
+    // must not be blocked by the other's missing key. Each run*() method
+    // throws for its own key at point of use instead.
     this.key = key;
+    this.mediaKitKey = mediaKitKey;
 
     // TOS is only needed to host reference material. A text-only job has no
     // refs and never calls uploadFile, so missing TOS creds must NOT fail
@@ -114,10 +150,24 @@ export class BytedanceProvider implements Provider {
     onProgress: (e: ProviderProgress) => void,
     hooks?: ProviderRunHooks,
   ): Promise<ProviderOutput> {
+    if (endpoint === MEDIAKIT_ENHANCE_ENDPOINT) {
+      return this.runMediaKit(input, signal, onProgress, hooks);
+    }
+    return this.runArk(endpoint, input, signal, onProgress, hooks);
+  }
+
+  private async runArk(
+    endpoint: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    onProgress: (e: ProviderProgress) => void,
+    hooks?: ProviderRunHooks,
+  ): Promise<ProviderOutput> {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!this.key) throw new Error("BYTEDANCE_API_KEY not configured — open Settings.");
 
     const body = buildRequestBody(endpoint, input);
-    let task = await this.request<Task>("POST", BASE_URL, body);
+    let task = await this.request<Task>("POST", BASE_URL, this.key, body);
     const taskId = task.id ?? task.task_id;
     if (!taskId) {
       throw new Error(
@@ -127,7 +177,7 @@ export class BytedanceProvider implements Provider {
     if (hooks?.onSubmitted) await hooks.onSubmitted(taskId);
 
     const onAbort = () => {
-      void this.request("DELETE", `${BASE_URL}/${taskId}`).catch(() => {});
+      void this.request("DELETE", `${BASE_URL}/${taskId}`, this.key).catch(() => {});
     };
     signal.addEventListener("abort", onAbort, { once: true });
 
@@ -150,7 +200,7 @@ export class BytedanceProvider implements Provider {
         }
         await sleep(POLL_MS, signal);
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
-        task = await this.request<Task>("GET", `${BASE_URL}/${taskId}`);
+        task = await this.request<Task>("GET", `${BASE_URL}/${taskId}`, this.key);
         if (task.status !== lastStatus) {
           lastStatus = task.status ?? "";
           onProgress({ kind: task.status === "running" ? "running" : "queued" });
@@ -174,12 +224,74 @@ export class BytedanceProvider implements Provider {
     }
   }
 
-  private async request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  // AI MediaKit has no documented cancel/delete endpoint — aborting only
+  // stops local polling; the task keeps running/billing on BytePlus's side.
+  private async runMediaKit(
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    onProgress: (e: ProviderProgress) => void,
+    hooks?: ProviderRunHooks,
+  ): Promise<ProviderOutput> {
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!this.mediaKitKey) {
+      throw new Error("BYTEDANCE_MEDIAKIT_API_KEY not configured — open Settings.");
+    }
+
+    const body = buildMediaKitRequestBody(input);
+    let task = await this.request<MediaKitTask>(
+      "POST",
+      `${MEDIAKIT_BASE_URL}/tools/enhance-video`,
+      this.mediaKitKey,
+      body,
+    );
+    const taskId = task.task_id;
+    if (!taskId) {
+      throw new Error(
+        `MediaKit task creation returned no task_id. Raw response: ${JSON.stringify(task).slice(0, 500)}`,
+      );
+    }
+    if (hooks?.onSubmitted) await hooks.onSubmitted(taskId);
+
+    let lastStatus = "";
+    let polls = 0;
+    onProgress({ kind: "queued" });
+
+    while (!MEDIAKIT_TERMINAL_STATUSES.has(task.status ?? "")) {
+      if (++polls > MAX_POLLS) {
+        throw new Error(
+          `MediaKit task never reached a recognized terminal status after ${MAX_POLLS} polls. Last raw response: ${JSON.stringify(task).slice(0, 500)}`,
+        );
+      }
+      await sleep(POLL_MS, signal);
+      if (signal.aborted) throw new DOMException("aborted", "AbortError");
+      task = await this.request<MediaKitTask>(
+        "GET",
+        `${MEDIAKIT_BASE_URL}/tasks/${taskId}`,
+        this.mediaKitKey,
+      );
+      if (task.status !== lastStatus) {
+        lastStatus = task.status ?? "";
+        onProgress({ kind: "running" });
+      }
+    }
+
+    if (task.status !== "completed") {
+      const detail = task.error
+        ? [task.error.code, task.error.message].filter(Boolean).join(": ")
+        : `MediaKit task ended with status "${task.status}". Raw response: ${JSON.stringify(task).slice(0, 500)}`;
+      throw new Error(detail);
+    }
+
+    onProgress({ kind: "completed" });
+    return unwrapMediaKit(task);
+  }
+
+  private async request<T>(method: string, url: string, key: string, body?: unknown): Promise<T> {
     const res = await tauriFetch(url, {
       method,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${this.key}`,
+        Authorization: `Bearer ${key}`,
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -242,6 +354,26 @@ function toUrlList(v: unknown): string[] {
 function unwrap(task: Task): ProviderOutput {
   const files: ProviderFile[] = [];
   const videoUrl = task.content?.video_url;
+  if (videoUrl) files.push({ url: videoUrl, isVideo: true });
+  return { files, raw: task };
+}
+
+function buildMediaKitRequestBody(input: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (!MEDIAKIT_TOP_LEVEL_FIELDS.has(k) || v === undefined || v === "") continue;
+    // fps=0 means "keep source fps" (the API's own default when omitted) —
+    // not a value worth sending.
+    if (k === "fps" && v === 0) continue;
+    // bit_depth is an enum param (string options) but the API wants an int.
+    body[k] = k === "bit_depth" ? Number(v) : v;
+  }
+  return body;
+}
+
+function unwrapMediaKit(task: MediaKitTask): ProviderOutput {
+  const files: ProviderFile[] = [];
+  const videoUrl = task.result?.video_url;
   if (videoUrl) files.push({ url: videoUrl, isVideo: true });
   return { files, raw: task };
 }
