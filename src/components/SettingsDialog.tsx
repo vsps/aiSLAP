@@ -54,6 +54,7 @@ export function SettingsDialog({ onClose }: Props) {
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
   const [bytedanceKey, setBytedanceKey] = useState("");
+  const [mediaKitKey, setMediaKitKey] = useState("");
   const [tosAk, setTosAk] = useState("");
   const [tosSk, setTosSk] = useState("");
   const [tursoUrl, setTursoUrl] = useState("");
@@ -61,6 +62,7 @@ export function SettingsDialog({ onClose }: Props) {
   const [revealKey, setRevealKey] = useState(false);
   const [revealReplicate, setRevealReplicate] = useState(false);
   const [revealBytedance, setRevealBytedance] = useState(false);
+  const [revealMediaKit, setRevealMediaKit] = useState(false);
   const [revealTosSk, setRevealTosSk] = useState(false);
   const [revealTursoToken, setRevealTursoToken] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
@@ -184,10 +186,11 @@ export function SettingsDialog({ onClose }: Props) {
 
   useEffect(() => {
     void (async () => {
-      const [k, rk, bk, ak, sk, tu, tt, c] = await Promise.all([
+      const [k, rk, bk, mk, ak, sk, tu, tt, c] = await Promise.all([
         cmd.provider_key_get("fal").catch(() => ""),
         cmd.provider_key_get("replicate").catch(() => ""),
         cmd.provider_key_get("bytedance").catch(() => ""),
+        cmd.provider_key_get("bytedance_mediakit").catch(() => ""),
         cmd.provider_key_get("tos_ak").catch(() => ""),
         cmd.provider_key_get("tos_sk").catch(() => ""),
         cmd.provider_key_get("turso_url").catch(() => ""),
@@ -197,6 +200,7 @@ export function SettingsDialog({ onClose }: Props) {
       setFalKey(k);
       setReplicateKey(rk);
       setBytedanceKey(bk);
+      setMediaKitKey(mk);
       setTosAk(ak);
       setTosSk(sk);
       setTursoUrl(tu);
@@ -363,6 +367,7 @@ export function SettingsDialog({ onClose }: Props) {
       await cmd.provider_key_set("fal", falKey.trim());
       await cmd.provider_key_set("replicate", replicateKey.trim());
       await cmd.provider_key_set("bytedance", bytedanceKey.trim());
+      await cmd.provider_key_set("bytedance_mediakit", mediaKitKey.trim());
       await cmd.provider_key_set("tos_ak", ak);
       await cmd.provider_key_set("tos_sk", sk);
       await cmd.provider_key_set("turso_url", tursoUrl.trim());
@@ -598,6 +603,29 @@ export function SettingsDialog({ onClose }: Props) {
                 >
                   {revealBytedance ? "hide" : "show"}
                 </button>
+              </div>
+            </Field>
+
+            <Field label="BYTEDANCE_MEDIAKIT_API_KEY">
+              <div className="flex gap-1">
+                <input
+                  type={revealMediaKit ? "text" : "password"}
+                  value={mediaKitKey}
+                  onChange={(e) => setMediaKitKey(e.currentTarget.value)}
+                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  placeholder="AI MediaKit API key…"
+                />
+                <button
+                  className="px-2 bg-bg text-xs"
+                  onClick={() => setRevealMediaKit((v) => !v)}
+                >
+                  {revealMediaKit ? "hide" : "show"}
+                </button>
+              </div>
+              <div className="text-xs text-dim mt-1">
+                Separate from the Ark key above — used for AI MediaKit video
+                enhancement. Get one from the BytePlus console's AI MediaKit
+                → API Key page.
               </div>
             </Field>
 
