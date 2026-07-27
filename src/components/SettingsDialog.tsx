@@ -110,7 +110,7 @@ export function SettingsDialog({ onClose }: Props) {
   );
 
   // One row per model, or one row per resolution option for models whose
-  // cost varies by resolution — fal's scraper only ever returns one blended
+  // cost varies by resolution — fal's pricing API only ever returns one flat
   // price per model, so a resolution split only ever affects the override.
   type PriceRow = {
     key: string;
@@ -242,6 +242,10 @@ export function SettingsDialog({ onClose }: Props) {
 
   async function fetchPrices() {
     if (pricesBusy) return;
+    if (!falKey.trim()) {
+      setPricesStatus("fal API key not configured — enter it in the APIs tab above.");
+      return;
+    }
     setPricesBusy(true);
     setPricesStatus("Fetching…");
     try {
@@ -250,21 +254,7 @@ export function SettingsDialog({ onClose }: Props) {
         .entries.filter((e) => (e.node.provider ?? "fal") === "fal");
       const unique = [...new Set(falEntries.map((e) => e.node.endpoint))];
 
-      // Models priced per resolution get a real "$X per Y" extracted per
-      // tier (see expandResolutionPrices) instead of the raw scraped
-      // paragraph — only attempted when there's more than one tier to tell
-      // apart.
-      const resolutionsByEndpoint: Record<string, string[]> = {};
-      for (const e of falEntries) {
-        const resParam = e.node.parameters.find(
-          (p): p is EnumParam => p.type === "enum" && p.name === "resolution",
-        );
-        if (resParam && resParam.options.length >= 2) {
-          resolutionsByEndpoint[e.node.endpoint] = resParam.options;
-        }
-      }
-
-      const prices = await fetchFalPrices(unique, resolutionsByEndpoint);
+      const prices = await fetchFalPrices(unique, falKey);
       const fetchedAt = new Date().toISOString();
 
       // Persist immediately into the on-disk config (merged into a fresh
@@ -283,9 +273,6 @@ export function SettingsDialog({ onClose }: Props) {
         falPrices: prices,
         falPricesFetchedAt: fetchedAt,
       }));
-      // Count distinct priced endpoints, not raw key count — tiered models
-      // now contribute extra `${endpoint}::${resolution}` keys alongside
-      // the flat one, which would otherwise inflate this total.
       const pricedCount = unique.filter((e) => e in prices).length;
       setPricesStatus(`${pricedCount} of ${unique.length} fal models priced.`);
     } catch (e) {
@@ -758,7 +745,7 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
               <div className="text-xs text-dim mt-1">
                 {pricesStatus ??
-                  "Pulls per-model prices from fal.ai's model gallery (unofficial — prices are estimates)."}
+                  "Pulls per-model prices from fal's official pricing API (requires the fal API key, set above)."}
               </div>
             </Field>
 
@@ -780,12 +767,17 @@ export function SettingsDialog({ onClose }: Props) {
                 </span>
               </div>
               <div className="text-xs text-dim mt-1">
-                Known price comes from the fal.ai fetch above (fal only).
-                Models priced per resolution show a distinct value per tier
-                when one could be extracted cleanly — otherwise the raw fal
-                text (hover for the full text). Override is used for cost
-                estimates and exports whenever set. Video models are billed
-                per second — enter a $/sec rate, not a flat price.
+                <span className="text-accent">Known price</span> comes straight
+                from fal's pricing API (fal only) — one flat rate per model, so
+                every resolution row of the same model shows the same value.
+                Override is the only way to price a specific resolution
+                differently, and always wins for cost estimates and exports
+                when set. Video models are billed per second — enter a $/sec
+                rate, not a flat price. A few models (FLUX, Topaz image
+                upscale) are billed per megapixel — their actual cost is
+                measured from the real output size at generation time, not
+                from this table; an override for one of these is still a
+                flat $ amount, not a $/megapixel rate.
               </div>
               <div
                 className="overflow-y-auto thin-scroll mt-1"
@@ -817,7 +809,7 @@ export function SettingsDialog({ onClose }: Props) {
                               <span className="text-dim"> · {row.resolution}</span>
                             )}
                           </td>
-                          <td className="py-1 pr-2 text-dim truncate" title={known}>
+                          <td className="py-1 pr-2 text-accent truncate" title={known}>
                             {known ?? "—"}
                           </td>
                           <td className="py-1">

@@ -58,6 +58,7 @@ pub fn run() {
             commands::media::video_thumbnail_extract,
             commands::media::video_info_probe,
             commands::media::timeline_export,
+            commands::media::image_dimensions_read,
             commands::timeline::timeline_init,
             commands::timeline::sequence_timeline_save,
             commands::session::shot_clip_media_set,

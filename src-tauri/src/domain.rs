@@ -115,7 +115,7 @@ pub struct Config {
     pub colors: Option<ColorOverrides>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fal_lifecycle: Option<String>,
-    /// Per-endpoint price texts fetched from fal's gallery API (frontend-managed).
+    /// Per-endpoint price texts fetched from fal's official pricing API (frontend-managed).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fal_prices: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

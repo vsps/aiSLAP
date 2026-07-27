@@ -191,6 +191,11 @@ export const cmd = {
   ): Promise<{ fps: number | null; durationSec: number | null }> =>
     rawInvoke("video_info_probe", { videoPath, ffmpegPath }),
 
+  image_dimensions_read: (
+    path: string,
+  ): Promise<{ width: number; height: number } | null> =>
+    rawInvoke("image_dimensions_read", { path }),
+
   // Timeline
   timeline_init: (seqPath: string): Promise<TimelineInit> =>
     rawInvoke("timeline_init", { seqPath }),
