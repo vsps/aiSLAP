@@ -284,7 +284,12 @@ fn process_image_sidecar(
     let duration_sec = settings.and_then(|s| s.get("duration")).and_then(|v| {
         v.as_f64().or_else(|| v.as_str().and_then(parse_duration_seconds))
     });
-    let ctx = CostContext { is_video, duration_sec, resolution };
+    // megapixels is None here — this is a retroactive, offline scan over
+    // already-written sidecars; real dimension reading (see
+    // media::image_dimensions_read) only happens at generation time in
+    // output.ts. An area-billed model's pre-existing sidecar with no costUsd
+    // stays unpriced through this path, same as before this field existed.
+    let ctx = CostContext { is_video, duration_sec, resolution, megapixels: None };
     let amount = match per_item_price(provider, endpoint, prices, overrides, &ctx) {
         Some(a) => a,
         None => return Ok(None),

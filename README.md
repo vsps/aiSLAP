@@ -71,7 +71,7 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 - LLM prompt enhancement
 - prompt history
 - full metadata sidecar saved with media
-- per-model cost tracking — scraped fal.ai prices (resolution-aware) plus manual overrides for any provider, rolled up per shot/sequence/project
+- per-model cost tracking — fal.ai's official pricing API plus manual overrides (any provider, resolution-aware) rolled up per shot/sequence/project, with fal's own live cost estimate stamped onto each successful generation
 - generated assets keep a stable identity (embedded id + content hash) that survives renames, moves, and copies
 - local SQLite asset index, rebuildable from the sidecars at any time, with optional sync to a shared Turso (cloud SQLite) database
 - orphan recovery — reconnect to in-flight generations after a crash or restart

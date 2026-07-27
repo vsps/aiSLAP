@@ -20,6 +20,12 @@ const POLL_MS = 5000;
 const MAX_POLLS = 240; // ~20 min at POLL_MS=5000 — safety net, not an expected duration
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired", "cancelled"]);
 
+// Seedream image generation — a third Ark surface alongside the video task
+// API above: synchronous request/response (no task id, no polling), and a
+// flat (non content[]-wrapped) body shape of its own.
+const IMAGE_GEN_BASE_URL = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations";
+const IMAGE_GEN_MODELS = new Set(["seedream-5-0-pro", "seedream-5-0-lite"]);
+
 // AI MediaKit (BytePlus VOD) — a separate product from Ark: different host,
 // separate API key, flat (non content[]-wrapped) request/response shapes.
 // Reuses this same Provider instance since it's still "a ByteDance capability".
@@ -42,6 +48,18 @@ type Task = {
   task_id?: string;
   status: string;
   content?: { video_url?: string };
+  error?: { code?: string; message?: string };
+};
+
+type ImageGenData = {
+  url?: string;
+  b64_json?: string;
+  size?: string;
+  error?: { code?: string; message?: string };
+};
+
+type ImageGenResponse = {
+  data?: ImageGenData[];
   error?: { code?: string; message?: string };
 };
 
@@ -153,7 +171,36 @@ export class BytedanceProvider implements Provider {
     if (endpoint === MEDIAKIT_ENHANCE_ENDPOINT) {
       return this.runMediaKit(input, signal, onProgress, hooks);
     }
+    if (IMAGE_GEN_MODELS.has(endpoint)) {
+      return this.runImageGen(endpoint, input, signal, onProgress);
+    }
     return this.runArk(endpoint, input, signal, onProgress, hooks);
+  }
+
+  // Seedream images/generations is synchronous — one request, one response,
+  // no task id to poll or cancel mid-flight (hence no `hooks`/AbortSignal
+  // wiring beyond the pre-flight check: once the request is in-flight there's
+  // nothing local to abort).
+  private async runImageGen(
+    endpoint: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    onProgress: (e: ProviderProgress) => void,
+  ): Promise<ProviderOutput> {
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!this.key) throw new Error("BYTEDANCE_API_KEY not configured — open Settings.");
+
+    const body = buildImageGenRequestBody(endpoint, input);
+    onProgress({ kind: "running" });
+    const res = await this.request<ImageGenResponse>("POST", IMAGE_GEN_BASE_URL, this.key, body);
+    if (res.error) {
+      throw new Error(
+        [res.error.code, res.error.message].filter(Boolean).join(": ") ||
+          "ByteDance image generation failed.",
+      );
+    }
+    onProgress({ kind: "completed" });
+    return unwrapImageGen(res);
   }
 
   private async runArk(
@@ -356,6 +403,59 @@ function unwrap(task: Task): ProviderOutput {
   const videoUrl = task.content?.video_url;
   if (videoUrl) files.push({ url: videoUrl, isVideo: true });
   return { files, raw: task };
+}
+
+// Fields that pass straight through to the images/generations body.
+// `max_images` is deliberately excluded — Ark only accepts it nested under
+// sequential_image_generation_options, handled separately below.
+const IMAGE_GEN_TOP_LEVEL_FIELDS = new Set([
+  "size",
+  "sequential_image_generation",
+  "output_format",
+  "watermark",
+]);
+
+function buildImageGenRequestBody(
+  endpoint: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { model: endpoint, response_format: "url" };
+
+  if (typeof input.prompt === "string" && input.prompt.length > 0) {
+    body.prompt = input.prompt;
+  }
+
+  const images = toUrlList(input.image_urls);
+  if (images.length === 1) body.image = images[0];
+  else if (images.length > 1) body.image = images;
+
+  for (const [k, v] of Object.entries(input)) {
+    if (IMAGE_GEN_TOP_LEVEL_FIELDS.has(k) && v !== undefined && v !== "") body[k] = v;
+  }
+
+  if (body.sequential_image_generation === "auto") {
+    const maxImages = Number(input.max_images);
+    if (Number.isFinite(maxImages) && maxImages > 0) {
+      body.sequential_image_generation_options = { max_images: maxImages };
+    }
+  }
+
+  return body;
+}
+
+function unwrapImageGen(res: ImageGenResponse): ProviderOutput {
+  const files: ProviderFile[] = [];
+  for (const d of res.data ?? []) {
+    if (!d.url) continue; // per-image content-filter failures carry `error` instead of `url`
+    const file: ProviderFile = { url: d.url, isVideo: false };
+    const m = d.size?.match(/^(\d+)x(\d+)$/);
+    if (m) {
+      file.width = Number(m[1]);
+      file.height = Number(m[2]);
+    }
+    files.push(file);
+  }
+  return { files, raw: res };
 }
 
 function buildMediaKitRequestBody(input: Record<string, unknown>): Record<string, unknown> {

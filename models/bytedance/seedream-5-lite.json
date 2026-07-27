@@ -1,0 +1,49 @@
+{
+  "provider": "bytedance",
+  "family": "Seedream 5.0 Lite",
+  "category": "ByteDance/Image Generation",
+  "nodes": [
+    {
+      "id": "bytedance_seedream5_lite_txt2img",
+      "name": "Seedream 5.0 Lite (txt2img)",
+      "endpoint": "seedream-5-0-lite",
+      "batch_field": "max_images",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
+      ],
+      "outputs": [
+        { "name": "images", "data_type": "IMAGE", "api_field": "images" }
+      ],
+      "parameters": [
+        { "name": "size", "label": "Size", "type": "enum", "api_field": "size", "default": "2K", "options": ["2K", "3K", "4K"] },
+        { "name": "sequential_image_generation", "label": "Sequential", "type": "enum", "api_field": "sequential_image_generation", "default": "disabled", "options": ["disabled", "auto"] },
+        { "name": "max_images", "label": "Max Images", "type": "int", "api_field": "max_images", "default": 1, "min": 1, "max": 15 },
+        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "jpeg", "options": ["jpeg", "png"] },
+        { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": true }
+      ]
+    },
+    {
+      "id": "bytedance_seedream5_lite_edit",
+      "name": "Seedream 5.0 Lite (edit)",
+      "endpoint": "seedream-5-0-lite",
+      "batch_field": "max_images",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "required": true }
+      ],
+      "outputs": [
+        { "name": "images", "data_type": "IMAGE", "api_field": "images" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_urls", "max": 14 }
+      ],
+      "parameters": [
+        { "name": "size", "label": "Size", "type": "enum", "api_field": "size", "default": "2K", "options": ["2K", "3K", "4K"] },
+        { "name": "sequential_image_generation", "label": "Sequential", "type": "enum", "api_field": "sequential_image_generation", "default": "disabled", "options": ["disabled", "auto"] },
+        { "name": "max_images", "label": "Max Images", "type": "int", "api_field": "max_images", "default": 1, "min": 1, "max": 15 },
+        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "jpeg", "options": ["jpeg", "png"] },
+        { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": true }
+      ]
+    }
+  ]
+}

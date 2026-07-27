@@ -4,9 +4,10 @@
 
 import { cmd } from "../tauri";
 import { basename, dirname, joinPath, relativeTo } from "../paths";
-import { perItemPrice, parseDurationSeconds } from "../falPrices";
+import { estimateGenerationCost, perItemPrice, parseDurationSeconds } from "../falPrices";
 import { classifyMedia } from "../media";
 import { negativePromptParam, splitNegativePrompt } from "../args";
+import { pushLog } from "../../stores/logStore";
 import type {
   AssetRecord,
   AssetRefRecord,
@@ -102,6 +103,14 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
 
   const multipleFiles = files.length > 1;
 
+  // Ask fal for the authoritative cost of this job (one call covers every
+  // file this job produced — fal bills each item in a batch uniformly, so
+  // dividing the total evenly is accurate and far cheaper than one call per
+  // file). Never blocks or fails the write: any missing key, network error,
+  // or non-fal provider just leaves this null, and buildMetadataRecord falls
+  // back to the local perItemPrice() approximation.
+  const costPerFile = await estimateCostPerFile(ctx, files.length);
+
   // Inline-text output (e.g. SAM3 image embedding) — no URL to download; write
   // the payload verbatim to a .txt sidecar. Not a viewable gallery tile.
   const firstInline = files.find((f) => f.inlineText !== undefined);
@@ -110,7 +119,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const target = joinPath(ctx.versionDir, filename);
     await cmd.write_text_file(target, firstInline.inlineText ?? "");
     const identity = await identifyOutput(ctx, target);
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx, target, meta, identity);
     written.push(target);
@@ -128,7 +137,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       await cmd.download_to_path(firstModel3d.thumbUrl, thumbPath).catch(() => {});
     }
     const identity = await identifyOutput(ctx, target);
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx, target, meta, identity);
     written.push(target);
@@ -148,7 +157,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
         .video_thumbnail_extract(target, thumbPath, ctx.ffmpegPath)
         .catch(() => false);
     }
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx, target, meta, identity);
     written.push(target);
@@ -165,16 +174,45 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, i + 1, ext, multipleFiles);
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(f.url, target);
+    const megapixels = await readMegapixels(target);
     const identity = await identifyOutput(ctx, target);
     const iterIdx = ctx.expandToIterations
       ? Math.min(ctx.iterationBase + i, ctx.iterationTotal)
       : ctx.iterationBase;
-    const meta = buildMetadataRecord(ctx, iterIdx, identity);
+    const meta = buildMetadataRecord(ctx, iterIdx, identity, costPerFile, megapixels);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx, target, meta, identity);
     written.push(target);
   }
   return written;
+}
+
+/** Real output pixel count / 1,000,000, read from the downloaded file's own
+ *  header — used to price per-megapixel-billed models (e.g. FLUX, Topaz
+ *  upscale) exactly, per isPerAreaUnit in falPrices.ts. Never guessed from a
+ *  named size preset or an upscale model's input-dependent output size.
+ *  Null for anything imagesize doesn't recognize (non-image outputs) —
+ *  best-effort, never blocks the write. */
+async function readMegapixels(target: string): Promise<number | null> {
+  const dims = await cmd.image_dimensions_read(target).catch(() => null);
+  return dims ? (dims.width * dims.height) / 1_000_000 : null;
+}
+
+/** fal's own authoritative per-output cost for this job (see
+ *  estimateGenerationCost), divided evenly across every file the job
+ *  produced. Returns null for non-fal providers, a missing fal key, or any
+ *  failed/unavailable estimate — callers fall back to the local
+ *  perItemPrice() computation in that case. */
+async function estimateCostPerFile(ctx: DownloadCtx, fileCount: number): Promise<number | null> {
+  if ((ctx.node.provider ?? "fal") !== "fal") return null;
+  const apiKey = await cmd.provider_key_get("fal").catch(() => "");
+  if (!apiKey) return null;
+  const total = await estimateGenerationCost(apiKey, ctx.node.endpoint, fileCount);
+  if (total == null) {
+    pushLog("INFO", `fal cost estimate unavailable for ${ctx.node.name} — using local price estimate.`);
+    return null;
+  }
+  return total / fileCount;
 }
 
 type OutputIdentity = { assetId: string; contentHash?: string };
@@ -259,6 +297,8 @@ function buildMetadataRecord(
   ctx: DownloadCtx,
   iterationIndex: number,
   identity: OutputIdentity,
+  estimatedCostPerFile: number | null,
+  megapixels: number | null,
 ): ImageMetadata {
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(ctx.settings)) {
@@ -282,13 +322,20 @@ function buildMetadataRecord(
     const { negativePrompt } = splitNegativePrompt(ctx.combinedPrompt);
     if (negativePrompt) cleaned[negParam.api_field] = negativePrompt;
   }
+  // Prefer fal's own live estimate for this job (see estimateCostPerFile);
+  // fall back to the local per-item computation when it wasn't available —
+  // missing key, network error, non-fal provider, and an endpoint fal's
+  // pricing API doesn't know about all collapse to the same fallback.
   const costUsd =
+    estimatedCostPerFile ??
     perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices, ctx.priceOverrides, {
       isVideo: ctx.node.kind === "video",
       durationSec: parseDurationSeconds(ctx.settings.duration),
       resolution:
         typeof ctx.settings.resolution === "string" ? ctx.settings.resolution : null,
-    }) ?? undefined;
+      megapixels,
+    }) ??
+    undefined;
   return {
     provider: ctx.node.provider ?? "fal",
     model: ctx.node.name,
