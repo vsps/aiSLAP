@@ -101,6 +101,26 @@ function defaultsFor(params: Parameter[]): Record<string, unknown> {
   return out;
 }
 
+// Two models can share an api_field name (e.g. "duration") with incompatible
+// shapes — fal/replicate seedance-2 use an enum of strings ("auto", "5", ...)
+// while bytedance seedance-2 uses a raw int 4-15. Carrying the outgoing value
+// over by name alone would hand the new model a value outside its own type,
+// which the API then rejects. Only carry a value across models when it's
+// actually valid for the incoming param.
+function isCompatibleValue(param: Parameter, v: unknown): boolean {
+  switch (param.type) {
+    case "enum":
+      return typeof v === "string" && param.options.includes(v);
+    case "int":
+    case "float":
+      return typeof v === "number" && Number.isFinite(v) && v >= param.min && v <= param.max;
+    case "bool":
+      return typeof v === "boolean";
+    case "prompts":
+      return Array.isArray(v);
+  }
+}
+
 // Session-only memory of each link's per-model settings, so switching a link's
 // model and back restores what was there (disk persistence already covers the
 // active settings across reloads). Keyed by link id + model id to avoid bleed
@@ -200,9 +220,10 @@ export const useGenerationStore = create<State & Actions>((set) => {
           const cached = settingsCache.get(cacheKey(link.id, model.id));
           if (cached) next = { ...next, ...cached };
           if (link.model) {
-            const fields = new Set(model.parameters.map((p) => p.api_field));
+            const paramByField = new Map(model.parameters.map((p) => [p.api_field, p]));
             for (const [k, v] of Object.entries(link.settings)) {
-              if (fields.has(k)) next[k] = v;
+              const param = paramByField.get(k);
+              if (param && isCompatibleValue(param, v)) next[k] = v;
             }
           }
         }

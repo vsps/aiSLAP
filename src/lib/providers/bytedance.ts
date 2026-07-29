@@ -20,11 +20,59 @@ const POLL_MS = 5000;
 const MAX_POLLS = 240; // ~20 min at POLL_MS=5000 — safety net, not an expected duration
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired", "cancelled"]);
 
+// Seedream image generation — a third Ark surface alongside the video task
+// API above: synchronous request/response (no task id, no polling), and a
+// flat (non content[]-wrapped) body shape of its own.
+const IMAGE_GEN_BASE_URL = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations";
+const IMAGE_GEN_MODELS = new Set(["seedream-5-0-pro", "seedream-5-0-lite"]);
+
+// AI MediaKit (BytePlus VOD) — a separate product from Ark: different host,
+// separate API key, flat (non content[]-wrapped) request/response shapes.
+// Reuses this same Provider instance since it's still "a ByteDance capability".
+const MEDIAKIT_BASE_URL = "https://mediakit.ap-southeast-1.bytepluses.com/api/v1";
+const MEDIAKIT_ENHANCE_ENDPOINT = "mediakit-enhance-video";
+const MEDIAKIT_TERMINAL_STATUSES = new Set(["completed", "failed"]);
+// Only the terminal values are documented; anything else is treated as
+// still-running (same defensive style as Ark's TERMINAL_STATUSES above).
+const MEDIAKIT_TOP_LEVEL_FIELDS = new Set([
+  "video_url",
+  "scene",
+  "resolution",
+  "tool_version",
+  "fps",
+  "bit_depth",
+]);
+
 type Task = {
   id?: string;
   task_id?: string;
   status: string;
   content?: { video_url?: string };
+  error?: { code?: string; message?: string };
+};
+
+type ImageGenData = {
+  url?: string;
+  b64_json?: string;
+  size?: string;
+  error?: { code?: string; message?: string };
+};
+
+type ImageGenResponse = {
+  data?: ImageGenData[];
+  error?: { code?: string; message?: string };
+};
+
+type MediaKitTask = {
+  task_id?: string;
+  status: string;
+  result?: {
+    video_url?: string;
+    duration?: number;
+    fps?: number;
+    resolution?: string;
+    tool_version?: string;
+  };
   error?: { code?: string; message?: string };
 };
 
@@ -57,17 +105,23 @@ let lifecycleEnsured = false;
 
 export class BytedanceProvider implements Provider {
   private key = "";
+  private mediaKitKey = "";
   private tos: TosConfig | null = null;
 
   async prepare(): Promise<void> {
-    const [key, ak, sk, cfg] = await Promise.all([
+    const [key, mediaKitKey, ak, sk, cfg] = await Promise.all([
       cmd.provider_key_get("bytedance").catch(() => ""),
+      cmd.provider_key_get("bytedance_mediakit").catch(() => ""),
       cmd.provider_key_get("tos_ak").catch(() => ""),
       cmd.provider_key_get("tos_sk").catch(() => ""),
       cmd.config_load().catch(() => null),
     ]);
-    if (!key) throw new Error("BYTEDANCE_API_KEY not configured — open Settings.");
+    // Neither key is required here — Ark and MediaKit are independent APIs
+    // sharing this provider instance, so a MediaKit-only (or Ark-only) setup
+    // must not be blocked by the other's missing key. Each run*() method
+    // throws for its own key at point of use instead.
     this.key = key;
+    this.mediaKitKey = mediaKitKey;
 
     // TOS is only needed to host reference material. A text-only job has no
     // refs and never calls uploadFile, so missing TOS creds must NOT fail
@@ -114,10 +168,53 @@ export class BytedanceProvider implements Provider {
     onProgress: (e: ProviderProgress) => void,
     hooks?: ProviderRunHooks,
   ): Promise<ProviderOutput> {
+    if (endpoint === MEDIAKIT_ENHANCE_ENDPOINT) {
+      return this.runMediaKit(input, signal, onProgress, hooks);
+    }
+    if (IMAGE_GEN_MODELS.has(endpoint)) {
+      return this.runImageGen(endpoint, input, signal, onProgress);
+    }
+    return this.runArk(endpoint, input, signal, onProgress, hooks);
+  }
+
+  // Seedream images/generations is synchronous — one request, one response,
+  // no task id to poll or cancel mid-flight (hence no `hooks`/AbortSignal
+  // wiring beyond the pre-flight check: once the request is in-flight there's
+  // nothing local to abort).
+  private async runImageGen(
+    endpoint: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    onProgress: (e: ProviderProgress) => void,
+  ): Promise<ProviderOutput> {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!this.key) throw new Error("BYTEDANCE_API_KEY not configured — open Settings.");
+
+    const body = buildImageGenRequestBody(endpoint, input);
+    onProgress({ kind: "running" });
+    const res = await this.request<ImageGenResponse>("POST", IMAGE_GEN_BASE_URL, this.key, body);
+    if (res.error) {
+      throw new Error(
+        [res.error.code, res.error.message].filter(Boolean).join(": ") ||
+          "ByteDance image generation failed.",
+      );
+    }
+    onProgress({ kind: "completed" });
+    return unwrapImageGen(res);
+  }
+
+  private async runArk(
+    endpoint: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    onProgress: (e: ProviderProgress) => void,
+    hooks?: ProviderRunHooks,
+  ): Promise<ProviderOutput> {
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!this.key) throw new Error("BYTEDANCE_API_KEY not configured — open Settings.");
 
     const body = buildRequestBody(endpoint, input);
-    let task = await this.request<Task>("POST", BASE_URL, body);
+    let task = await this.request<Task>("POST", BASE_URL, this.key, body);
     const taskId = task.id ?? task.task_id;
     if (!taskId) {
       throw new Error(
@@ -127,7 +224,7 @@ export class BytedanceProvider implements Provider {
     if (hooks?.onSubmitted) await hooks.onSubmitted(taskId);
 
     const onAbort = () => {
-      void this.request("DELETE", `${BASE_URL}/${taskId}`).catch(() => {});
+      void this.request("DELETE", `${BASE_URL}/${taskId}`, this.key).catch(() => {});
     };
     signal.addEventListener("abort", onAbort, { once: true });
 
@@ -150,7 +247,7 @@ export class BytedanceProvider implements Provider {
         }
         await sleep(POLL_MS, signal);
         if (signal.aborted) throw new DOMException("aborted", "AbortError");
-        task = await this.request<Task>("GET", `${BASE_URL}/${taskId}`);
+        task = await this.request<Task>("GET", `${BASE_URL}/${taskId}`, this.key);
         if (task.status !== lastStatus) {
           lastStatus = task.status ?? "";
           onProgress({ kind: task.status === "running" ? "running" : "queued" });
@@ -174,12 +271,74 @@ export class BytedanceProvider implements Provider {
     }
   }
 
-  private async request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  // AI MediaKit has no documented cancel/delete endpoint — aborting only
+  // stops local polling; the task keeps running/billing on BytePlus's side.
+  private async runMediaKit(
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    onProgress: (e: ProviderProgress) => void,
+    hooks?: ProviderRunHooks,
+  ): Promise<ProviderOutput> {
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!this.mediaKitKey) {
+      throw new Error("BYTEDANCE_MEDIAKIT_API_KEY not configured — open Settings.");
+    }
+
+    const body = buildMediaKitRequestBody(input);
+    let task = await this.request<MediaKitTask>(
+      "POST",
+      `${MEDIAKIT_BASE_URL}/tools/enhance-video`,
+      this.mediaKitKey,
+      body,
+    );
+    const taskId = task.task_id;
+    if (!taskId) {
+      throw new Error(
+        `MediaKit task creation returned no task_id. Raw response: ${JSON.stringify(task).slice(0, 500)}`,
+      );
+    }
+    if (hooks?.onSubmitted) await hooks.onSubmitted(taskId);
+
+    let lastStatus = "";
+    let polls = 0;
+    onProgress({ kind: "queued" });
+
+    while (!MEDIAKIT_TERMINAL_STATUSES.has(task.status ?? "")) {
+      if (++polls > MAX_POLLS) {
+        throw new Error(
+          `MediaKit task never reached a recognized terminal status after ${MAX_POLLS} polls. Last raw response: ${JSON.stringify(task).slice(0, 500)}`,
+        );
+      }
+      await sleep(POLL_MS, signal);
+      if (signal.aborted) throw new DOMException("aborted", "AbortError");
+      task = await this.request<MediaKitTask>(
+        "GET",
+        `${MEDIAKIT_BASE_URL}/tasks/${taskId}`,
+        this.mediaKitKey,
+      );
+      if (task.status !== lastStatus) {
+        lastStatus = task.status ?? "";
+        onProgress({ kind: "running" });
+      }
+    }
+
+    if (task.status !== "completed") {
+      const detail = task.error
+        ? [task.error.code, task.error.message].filter(Boolean).join(": ")
+        : `MediaKit task ended with status "${task.status}". Raw response: ${JSON.stringify(task).slice(0, 500)}`;
+      throw new Error(detail);
+    }
+
+    onProgress({ kind: "completed" });
+    return unwrapMediaKit(task);
+  }
+
+  private async request<T>(method: string, url: string, key: string, body?: unknown): Promise<T> {
     const res = await tauriFetch(url, {
       method,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${this.key}`,
+        Authorization: `Bearer ${key}`,
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -242,6 +401,79 @@ function toUrlList(v: unknown): string[] {
 function unwrap(task: Task): ProviderOutput {
   const files: ProviderFile[] = [];
   const videoUrl = task.content?.video_url;
+  if (videoUrl) files.push({ url: videoUrl, isVideo: true });
+  return { files, raw: task };
+}
+
+// Fields that pass straight through to the images/generations body.
+// `max_images` is deliberately excluded — Ark only accepts it nested under
+// sequential_image_generation_options, handled separately below.
+const IMAGE_GEN_TOP_LEVEL_FIELDS = new Set([
+  "size",
+  "sequential_image_generation",
+  "output_format",
+  "watermark",
+]);
+
+function buildImageGenRequestBody(
+  endpoint: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { model: endpoint, response_format: "url" };
+
+  if (typeof input.prompt === "string" && input.prompt.length > 0) {
+    body.prompt = input.prompt;
+  }
+
+  const images = toUrlList(input.image_urls);
+  if (images.length === 1) body.image = images[0];
+  else if (images.length > 1) body.image = images;
+
+  for (const [k, v] of Object.entries(input)) {
+    if (IMAGE_GEN_TOP_LEVEL_FIELDS.has(k) && v !== undefined && v !== "") body[k] = v;
+  }
+
+  if (body.sequential_image_generation === "auto") {
+    const maxImages = Number(input.max_images);
+    if (Number.isFinite(maxImages) && maxImages > 0) {
+      body.sequential_image_generation_options = { max_images: maxImages };
+    }
+  }
+
+  return body;
+}
+
+function unwrapImageGen(res: ImageGenResponse): ProviderOutput {
+  const files: ProviderFile[] = [];
+  for (const d of res.data ?? []) {
+    if (!d.url) continue; // per-image content-filter failures carry `error` instead of `url`
+    const file: ProviderFile = { url: d.url, isVideo: false };
+    const m = d.size?.match(/^(\d+)x(\d+)$/);
+    if (m) {
+      file.width = Number(m[1]);
+      file.height = Number(m[2]);
+    }
+    files.push(file);
+  }
+  return { files, raw: res };
+}
+
+function buildMediaKitRequestBody(input: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (!MEDIAKIT_TOP_LEVEL_FIELDS.has(k) || v === undefined || v === "") continue;
+    // fps=0 means "keep source fps" (the API's own default when omitted) —
+    // not a value worth sending.
+    if (k === "fps" && v === 0) continue;
+    // bit_depth is an enum param (string options) but the API wants an int.
+    body[k] = k === "bit_depth" ? Number(v) : v;
+  }
+  return body;
+}
+
+function unwrapMediaKit(task: MediaKitTask): ProviderOutput {
+  const files: ProviderFile[] = [];
+  const videoUrl = task.result?.video_url;
   if (videoUrl) files.push({ url: videoUrl, isVideo: true });
   return { files, raw: task };
 }

@@ -48,6 +48,17 @@ pub fn is_per_second_unit(unit: &str) -> bool {
         .is_match(unit)
 }
 
+/// Area-billed units (fal's official pricing API reports "megapixels" for
+/// e.g. the FLUX family and Topaz image upscale) — distinct from
+/// is_per_item_unit()/is_per_second_unit() because the total depends on the
+/// output's actual pixel dimensions, not a flat amount or a duration.
+/// Mirrors isPerAreaUnit().
+pub fn is_per_area_unit(unit: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)^megapixels?\b").unwrap())
+        .is_match(unit)
+}
+
 /// Parse a `duration` setting value (already extracted to a plain string,
 /// e.g. "8", "8s") to seconds. Mirrors parseDurationSeconds(); non-numeric
 /// values (e.g. seedance-2's "auto") return None.
@@ -67,14 +78,19 @@ pub struct CostContext<'a> {
     pub is_video: bool,
     pub duration_sec: Option<f64>,
     pub resolution: Option<&'a str>,
+    /// Actual output pixel count / 1,000,000, for area-billed units (see
+    /// is_per_area_unit). Measured from the real output file, never guessed
+    /// from a named size preset — `None` when unknown (e.g. not yet wired up
+    /// for this call site, or the file's dimensions couldn't be read).
+    pub megapixels: Option<f64>,
 }
 
 /// Per-output price for one endpoint. A user-entered override always wins
 /// when present — it's the only way to price non-fal models, or a specific
-/// resolution, since only fal has a scraper and only at the model level. For
-/// video, both an override and a scraped price are interpreted as $/sec and
-/// multiplied by `ctx.duration_sec`; without a known duration a per-second
-/// price can't be resolved to a total (None). Mirrors perItemPrice().
+/// resolution, since only fal has a pricing API and only at the model level.
+/// For video, both an override and a fetched price are interpreted as $/sec
+/// and multiplied by `ctx.duration_sec`; without a known duration a
+/// per-second price can't be resolved to a total (None). Mirrors perItemPrice().
 pub fn per_item_price(
     provider: Option<&str>,
     endpoint: &str,
@@ -108,6 +124,9 @@ pub fn per_item_price(
     }
     if ctx.is_video && is_per_second_unit(&parsed.unit) {
         return ctx.duration_sec.map(|d| parsed.amount * d);
+    }
+    if is_per_area_unit(&parsed.unit) {
+        return ctx.megapixels.map(|mp| parsed.amount * mp);
     }
     None
 }
@@ -148,6 +167,7 @@ mod tests {
         is_video: false,
         duration_sec: None,
         resolution: None,
+        megapixels: None,
     };
 
     #[test]
@@ -183,18 +203,18 @@ mod tests {
         let prices = HashMap::new();
         let mut overrides = HashMap::new();
         overrides.insert("fal-ai/vid".to_string(), 0.05);
-        let video_5s = CostContext { is_video: true, duration_sec: Some(5.0), resolution: None };
-        let video_unknown = CostContext { is_video: true, duration_sec: None, resolution: None };
+        let video_5s = CostContext { is_video: true, duration_sec: Some(5.0), resolution: None, megapixels: None };
+        let video_unknown = CostContext { is_video: true, duration_sec: None, resolution: None, megapixels: None };
         assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_5s), Some(0.25));
         assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_unknown), None);
     }
 
     #[test]
-    fn video_scraped_per_second_price_multiplies_by_duration() {
+    fn video_fetched_per_second_price_multiplies_by_duration() {
         let mut prices = HashMap::new();
         prices.insert("fal-ai/vid".to_string(), "$0.08 per second".to_string());
         let overrides = HashMap::new();
-        let video_10s = CostContext { is_video: true, duration_sec: Some(10.0), resolution: None };
+        let video_10s = CostContext { is_video: true, duration_sec: Some(10.0), resolution: None, megapixels: None };
         assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_10s), Some(0.8));
     }
 
@@ -204,17 +224,21 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("fal-ai/img::1080p".to_string(), 0.02);
         overrides.insert("fal-ai/img".to_string(), 0.01);
-        let ctx_1080p = CostContext { is_video: false, duration_sec: None, resolution: Some("1080p") };
-        let ctx_720p = CostContext { is_video: false, duration_sec: None, resolution: Some("720p") };
+        let ctx_1080p = CostContext { is_video: false, duration_sec: None, resolution: Some("1080p"), megapixels: None };
+        let ctx_720p = CostContext { is_video: false, duration_sec: None, resolution: Some("720p"), megapixels: None };
         assert_eq!(per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_1080p), Some(0.02));
         assert_eq!(per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_720p), Some(0.01));
     }
 
     #[test]
-    fn resolution_scoped_scraped_price_falls_back_to_flat_endpoint_price() {
-        // Mirrors expandResolutionPrices() output in falPrices.ts: a tiered
-        // model gets one compound key per resolution plus the flat blended
-        // text as a fallback for callers with no resolution context.
+    fn resolution_scoped_fetched_price_falls_back_to_flat_endpoint_price() {
+        // fal's official pricing API only ever returns one flat unit_price
+        // per endpoint (see falPrices.ts), so `prices` in production never
+        // actually contains a `::resolution` compound key — only
+        // `priceOverrides` can. This test just confirms the compound-key
+        // lookup is still a no-op passthrough to the flat key when `prices`
+        // happens to hold one anyway (e.g. cached config.json data from
+        // before that migration), rather than a real currently-populated path.
         let mut prices = HashMap::new();
         prices.insert("fal-ai/vid::720p".to_string(), "$0.10 per second".to_string());
         prices.insert("fal-ai/vid::1080p".to_string(), "$0.15 per second".to_string());
@@ -223,13 +247,32 @@ mod tests {
             "Your request will cost $0.10 per second for 720p, $0.15 per second for 1080p.".to_string(),
         );
         let overrides = HashMap::new();
-        let ctx_720p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("720p") };
-        let ctx_1080p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("1080p") };
-        let ctx_unknown_res = CostContext { is_video: true, duration_sec: Some(5.0), resolution: None };
+        let ctx_720p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("720p"), megapixels: None };
+        let ctx_1080p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("1080p"), megapixels: None };
+        let ctx_unknown_res = CostContext { is_video: true, duration_sec: Some(5.0), resolution: None, megapixels: None };
         assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_720p), Some(0.5));
         assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_1080p), Some(0.75));
         // No resolution context: falls back to the flat text, which resolves
         // to the first ($0.10/sec) tier rather than failing outright.
         assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_unknown_res), Some(0.5));
+    }
+
+    #[test]
+    fn area_billed_price_multiplies_by_measured_megapixels() {
+        let mut prices = HashMap::new();
+        prices.insert("fal-ai/flux/dev".to_string(), "$0.025 per megapixels".to_string());
+        let overrides = HashMap::new();
+        // 1024x1024 = 1.048576 MP — a real measured output size, not a guess.
+        let ctx = CostContext { is_video: false, duration_sec: None, resolution: None, megapixels: Some(1.048576) };
+        let amount = per_item_price(Some("fal"), "fal-ai/flux/dev", &prices, &overrides, &ctx).unwrap();
+        assert!((amount - 0.025 * 1.048576).abs() < 1e-9);
+    }
+
+    #[test]
+    fn area_billed_price_without_measured_dimensions_returns_none() {
+        let mut prices = HashMap::new();
+        prices.insert("fal-ai/flux/dev".to_string(), "$0.025 per megapixels".to_string());
+        let overrides = HashMap::new();
+        assert_eq!(per_item_price(Some("fal"), "fal-ai/flux/dev", &prices, &overrides, &NOT_VIDEO), None);
     }
 }

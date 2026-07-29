@@ -175,7 +175,15 @@ export function buildArgs(
         if (urls.length > 0) args[role.api_field] = urls;
         continue;
       }
-      const slice = selectForRole(role, bucket, unassigned, sourceConsumed);
+      // When the role's api_field matches a declared input, only fall back to
+      // unassigned refs of that same media kind — otherwise a leftover
+      // unassigned IMAGE ref (e.g. from an earlier node in the same shot) can
+      // get silently sent as a VIDEO-only role's source (and vice versa).
+      // No match (e.g. a role with no corresponding `inputs` entry) leaves
+      // expectedKind undefined, preserving the old unfiltered behavior.
+      const roleInput = node.inputs.find((i) => i.api_field === role.api_field);
+      const expectedKind = roleInput ? DATA_TYPE_TO_KIND[roleInput.data_type] : undefined;
+      const slice = selectForRole(role, bucket, unassigned, sourceConsumed, expectedKind);
       if (slice.length === 0) continue;
       if (role.role === "source") sourceConsumed = true;
       const urls = slice.map((s) => s.url);
@@ -244,13 +252,16 @@ function selectForRole(
   bucket: Record<string, UploadedRef[]>,
   unassigned: UploadedRef[],
   sourceConsumed: boolean,
+  expectedKind?: MediaKind,
 ): UploadedRef[] {
   if (role.exclusive) {
     return (bucket[role.role] ?? []).slice(0, 1);
   }
   let picked = bucket[role.role] ?? [];
   if (picked.length === 0 && role.role === "source" && !sourceConsumed) {
-    picked = unassigned;
+    picked = expectedKind
+      ? unassigned.filter((u) => classifyMedia(u.ref.path) === expectedKind)
+      : unassigned;
   }
   return role.max ? picked.slice(0, role.max) : picked;
 }

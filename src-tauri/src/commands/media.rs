@@ -5,6 +5,30 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{run_blocking, AppError, AppResult};
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Read an image's real pixel dimensions straight from its file header (no
+/// full decode — `imagesize` reads only the first handful of bytes). Used to
+/// price per-megapixel-billed models exactly from the actual output size,
+/// rather than guessing from a named size preset or an upscale model's
+/// input-dependent output size (see `pricing::is_per_area_unit`). `None` —
+/// not an error — for anything not a recognized image format; best-effort,
+/// never blocks a generation or write.
+#[tauri::command]
+pub async fn image_dimensions_read(path: String) -> AppResult<Option<ImageDimensions>> {
+    run_blocking(move || {
+        Ok(imagesize::size(&path)
+            .ok()
+            .map(|s| ImageDimensions { width: s.width as u32, height: s.height as u32 }))
+    })
+    .await
+}
+
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoInfo {

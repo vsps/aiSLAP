@@ -42,12 +42,13 @@ dependencies = [
 
 [[package]]
 name = "aislap"
-version = "0.3.3"
+version = "0.3.5"
 dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
  "dirs 5.0.1",
+ "imagesize",
  "img-parts",
  "libsql",
  "regex",
@@ -2244,6 +2245,12 @@ dependencies = [
  "icu_normalizer",
  "icu_properties",
 ]
+
+[[package]]
+name = "imagesize"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
 
 [[package]]
 name = "img-parts"

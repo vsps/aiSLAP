@@ -122,7 +122,7 @@ export async function bootstrap(): Promise<() => void> {
   applyColors(config?.colors);
 
   // Seed cached fal prices (fetched manually via Settings) so cost labels
-  // work without re-hitting the gallery API.
+  // work without re-hitting fal's pricing API.
   usePricesStore
     .getState()
     .setPrices(config?.falPrices ?? {}, config?.falPricesFetchedAt ?? null);

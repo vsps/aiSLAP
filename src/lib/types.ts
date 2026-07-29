@@ -263,12 +263,12 @@ export type Config = {
   colors?: ColorOverrides;
   /** fal.ai object lifecycle: "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never" | seconds. Unset = fal default. */
   falLifecycle?: FalLifecycle;
-  /** Per-endpoint price texts fetched from fal's gallery API (see lib/falPrices.ts). */
+  /** Per-endpoint price texts fetched from fal's official pricing API (see lib/falPrices.ts). */
   falPrices?: Record<string, string>;
   falPricesFetchedAt?: string;
   /** Per-endpoint user-entered price overrides (any provider), keyed like
-   *  falPrices. Takes priority over a scraped price when set — the only way
-   *  to price non-fal models, since only fal has a scraper. */
+   *  falPrices. Takes priority over a fetched price when set — the only way
+   *  to price non-fal models, since only fal has a pricing API. */
   priceOverrides?: Record<string, number>;
   /** BytePlus TOS object storage — hosts ByteDance reference material as
    *  fetchable URLs. Credentials (AK/SK) live in .env; these are the

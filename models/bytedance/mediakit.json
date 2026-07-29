@@ -1,0 +1,28 @@
+{
+  "provider": "bytedance",
+  "family": "AI MediaKit",
+  "category": "ByteDance/Utility",
+  "nodes": [
+    {
+      "id": "bytedance_mediakit_enhance_video",
+      "name": "Video Enhancement",
+      "endpoint": "mediakit-enhance-video",
+      "inputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "video_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "tool_version", "label": "Version", "type": "enum", "api_field": "tool_version", "default": "standard", "options": ["standard", "professional"] },
+        { "name": "scene", "label": "Scene", "type": "enum", "api_field": "scene", "default": "aigc", "options": ["aigc", "short_series", "ugc", "old_film"] },
+        { "name": "resolution", "label": "Output Resolution", "type": "enum", "api_field": "resolution", "default": "1080p", "options": ["720p", "1080p", "4k"] },
+        { "name": "fps", "label": "Target FPS (0 = keep source)", "type": "int", "api_field": "fps", "default": 0, "min": 0, "max": 120 },
+        { "name": "bit_depth", "label": "Bit Depth (Professional only)", "type": "enum", "api_field": "bit_depth", "default": "", "options": ["", "8", "10", "12"] }
+      ]
+    }
+  ]
+}
