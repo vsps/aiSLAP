@@ -24,7 +24,7 @@ const TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired", "cancelled"
 // API above: synchronous request/response (no task id, no polling), and a
 // flat (non content[]-wrapped) body shape of its own.
 const IMAGE_GEN_BASE_URL = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations";
-const IMAGE_GEN_MODELS = new Set(["seedream-5-0-pro", "seedream-5-0-lite"]);
+const IMAGE_GEN_MODELS = new Set(["dola-seedream-5-0-pro-260628", "seedream-5-0-lite"]);
 
 // AI MediaKit (BytePlus VOD) — a separate product from Ark: different host,
 // separate API key, flat (non content[]-wrapped) request/response shapes.
