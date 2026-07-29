@@ -32,6 +32,30 @@ function videoThumbCandidate(videoPath: string): string {
   return `${stem}.thumb.png`;
 }
 
+// Generous tile count so the strip stays covered even for a tall/narrow
+// source image next to a long clip; unused copies are just clipped by
+// overflow-hidden and cost nothing extra (same cached request).
+const TILE_COUNT = 24;
+
+/** Fits the thumbnail to the clip's height and repeats it horizontally
+ *  (filmstrip-style) instead of stretching a single frame across the clip. */
+function TiledThumb({ src, onError }: { src: string; onError?: () => void }) {
+  return (
+    <div className="absolute inset-0 flex overflow-hidden">
+      {Array.from({ length: TILE_COUNT }, (_, i) => (
+        <img
+          key={i}
+          src={src}
+          alt=""
+          className="h-full w-auto shrink-0"
+          onError={i === 0 ? onError : undefined}
+          draggable={false}
+        />
+      ))}
+    </div>
+  );
+}
+
 function hashHue(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) {
@@ -185,21 +209,13 @@ export function TimelineClip({
               <Icon name="videocam" size={20} />
             </div>
           ) : (
-            <img
+            <TiledThumb
               src={fileSrc(videoThumbCandidate(resolved.path))}
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover"
               onError={() => setThumbBroken(true)}
-              draggable={false}
             />
           )
         ) : (
-          <img
-            src={fileSrc(resolved.path)}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
-          />
+          <TiledThumb src={fileSrc(resolved.path)} />
         )
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-dim text-xs">
