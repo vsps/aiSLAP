@@ -9,6 +9,7 @@ import {
 } from "../stores/timelineStore";
 import { fileSrc } from "../lib/assets";
 import { IconBtn } from "./IconBtn";
+import { ComparePreview } from "./ComparePreview";
 import { PathContextMenu } from "./PathContextMenu";
 import { performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
@@ -49,6 +50,11 @@ export function LatestImageColumn() {
   const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const timelineActive = useTimelineStore((s) => s.timelineActive);
+
+  const compareMode = useSessionStore((s) => s.compareMode);
+  const compareA = useSessionStore((s) => s.compareA);
+  const compareB = useSessionStore((s) => s.compareB);
+  const setCompareMode = useSessionStore((s) => s.setCompareMode);
 
   const image = useMemo(
     () => pickImage(columns, selectedImagePath, targetVersion, starredGroups),
@@ -199,7 +205,10 @@ export function LatestImageColumn() {
             />
           </div>
         )}
-        {!timelineActive && (
+        {!timelineActive && compareMode && (
+          <ComparePreview pathA={compareA} pathB={compareB} />
+        )}
+        {!timelineActive && !compareMode && (
           <div className="absolute inset-0 flex items-center justify-center">
             {image ? (
               image.isVideo ? (
@@ -227,8 +236,17 @@ export function LatestImageColumn() {
           </div>
         )}
       </div>
-      {!timelineActive && image && (
+      {!timelineActive && (
         <div className="flex items-center justify-center gap-2 py-1">
+          <IconBtn
+            name="compare"
+            size={22}
+            fill={compareMode}
+            title={compareMode ? "Exit compare mode" : "Compare mode"}
+            onClick={() => setCompareMode(!compareMode)}
+          />
+          {image && (
+            <>
           <IconBtn
             name="zoom_in"
             size={22}
@@ -300,6 +318,8 @@ export function LatestImageColumn() {
               title="Crop"
               onClick={() => void performImageAction("crop", image.path)}
             />
+          )}
+            </>
           )}
         </div>
       )}

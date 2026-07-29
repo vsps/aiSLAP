@@ -84,6 +84,7 @@ export function Gallery() {
   const viewMode = useSessionStore((s) => s.viewMode);
   const setViewMode = useSessionStore((s) => s.setViewMode);
   const setImageDrag = useSessionStore((s) => s.setImageDrag);
+  const setCompareSlot = useSessionStore((s) => s.setCompareSlot);
   const setSelectedImage = useSessionStore((s) => s.setSelectedImage);
   const rescanShot = useSessionStore((s) => s.rescanShot);
   const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
@@ -208,6 +209,16 @@ export function Gallery() {
       return !!(el as HTMLElement).closest("[data-ref-drop]");
     }
 
+    function findCompareSlotAt(x: number, y: number): "a" | "b" | null {
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      const slot = (el as HTMLElement).closest<HTMLElement>(
+        "[data-compare-drop]",
+      );
+      const drop = slot?.dataset.compareDrop;
+      return drop === "a" || drop === "b" ? drop : null;
+    }
+
     function findStackedTargetAt(
       x: number,
       y: number,
@@ -282,6 +293,7 @@ export function Gallery() {
     const onUp = (e: PointerEvent) => {
       const current = dragState;
       const hitRef = isOverRefPanel(e.clientX, e.clientY);
+      const hitCompareSlot = findCompareSlotAt(e.clientX, e.clientY);
       // Stacked-style targets are picked up from any view that stamps the
       // markers — stacked view stamps both cell+row; favorite/trace stamp
       // row only. Columns view stamps neither, so this stays null there.
@@ -292,6 +304,10 @@ export function Gallery() {
       if (!current) return;
       if (hitRef) {
         void commitRefDrop(current.fromPath);
+        return;
+      }
+      if (hitCompareSlot) {
+        setCompareSlot(hitCompareSlot, current.fromPath);
         return;
       }
       if (hitStacked) {

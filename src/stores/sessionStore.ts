@@ -40,6 +40,11 @@ type State = {
   imageDrag: { fromPath: string } | null;
   targetVersion: string | null;
 
+  /** Preview compare mode — wipe/flicker A vs B. Ephemeral, reset per shot. */
+  compareMode: boolean;
+  compareA: string | null;
+  compareB: string | null;
+
   sequenceHistory: PromptHistoryChannel;
   shotHistory: PromptHistoryChannel;
   /** Per-version short comments for the current shot, keyed by version dir name. */
@@ -88,6 +93,9 @@ type Actions = {
   setRenameImage: (path: string | null) => void;
   setImageDrag: (drag: State["imageDrag"]) => void;
   setTrace: (state: State["traceActive"]) => void;
+
+  setCompareMode: (enabled: boolean) => void;
+  setCompareSlot: (slot: "a" | "b", path: string | null) => void;
 
   setViewMode: (mode: ViewMode) => void;
   rescanStarred: () => Promise<void>;
@@ -162,6 +170,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
     renameImagePath: null,
     imageDrag: null,
     targetVersion: null,
+
+    compareMode: false,
+    compareA: null,
+    compareB: null,
 
     sequenceHistory: emptyChannel(),
     shotHistory: emptyChannel(),
@@ -269,6 +281,9 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         columns,
         targetVersion: latestVersion(columns),
         selectedImagePath: null,
+        compareMode: false,
+        compareA: null,
+        compareB: null,
         versionComments: sidecar.versionComments ?? {},
         shotHistory: {
           entries: sidecar.promptHistory,
@@ -352,6 +367,14 @@ export const useSessionStore = create<State & Actions>((set, get) => {
 
     setTrace(state) {
       set({ traceActive: state });
+    },
+
+    setCompareMode(enabled) {
+      set({ compareMode: enabled });
+    },
+
+    setCompareSlot(slot, path) {
+      set(slot === "a" ? { compareA: path } : { compareB: path });
     },
 
     setViewMode(mode) {

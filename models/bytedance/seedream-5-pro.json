@@ -6,7 +6,7 @@
     {
       "id": "bytedance_seedream5_pro_txt2img",
       "name": "Seedream 5.0 Pro (txt2img)",
-      "endpoint": "seedream-5-0-pro",
+      "endpoint": "dola-seedream-5-0-pro-260628",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true }
       ],
@@ -22,7 +22,7 @@
     {
       "id": "bytedance_seedream5_pro_edit",
       "name": "Seedream 5.0 Pro (edit)",
-      "endpoint": "seedream-5-0-pro",
+      "endpoint": "dola-seedream-5-0-pro-260628",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
         { "name": "image", "data_type": "IMAGE", "api_field": "image_urls", "api_format": "array", "required": true }
