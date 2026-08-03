@@ -424,15 +424,20 @@ pub async fn project_tag_delete(project_path: String, name: String) -> AppResult
     Ok(defs)
 }
 
-/// Rebuild the tag index from the sidecars on disk. Much cheaper than
-/// `project_reconcile` — no content hashing, and only files that actually
-/// carry tags are touched.
+/// Rebuild the tag index *and* the vocabulary from the sidecars on disk.
+/// Much cheaper than `project_reconcile` — no content hashing, and only files
+/// that actually carry tags are touched.
+///
+/// This is the repair path for any drift between the three layers: the
+/// sidecars win, so every tag name found on disk is re-indexed and gets a
+/// `tagDefs` entry if the project doesn't have one.
 #[tauri::command]
 pub async fn project_tags_reindex(project_path: String) -> AppResult<u32> {
     let (root, updates) = run_blocking(move || {
         let root = PathBuf::from(&project_path);
         let project_id = db::read_project_id(&root)?;
         let mut updates = Vec::new();
+        let mut discovered: Vec<String> = Vec::new();
         for media in project_media(&root) {
             let value = read_sidecar_value(&media);
             let Some(obj) = value.as_object() else {
@@ -442,10 +447,12 @@ pub async fn project_tags_reindex(project_path: String) -> AppResult<u32> {
             if tags.is_empty() {
                 continue;
             }
+            discovered.extend(tags.iter().cloned());
             if let Some(update) = write_tags(&media, &root, &project_id, tags)? {
                 updates.push(update);
             }
         }
+        ensure_tag_defs(&root, &normalize_tags(discovered))?;
         Ok((root, updates))
     })
     .await?;
@@ -891,7 +898,20 @@ mod tests {
             .tags_for("seq1/shot1/gen001/a.png")
             .is_empty());
 
+        // Vocabulary drift (what a project nested under another project's
+        // project.json produced): the sidecar has the tag, project.json
+        // doesn't know it. Reindex must rebuild both.
+        let mut sidecar = load_sidecar(&root).unwrap();
+        sidecar.tag_defs.clear();
+        save_sidecar(&root, &sidecar).unwrap();
+
         assert_eq!(project_tags_reindex(as_str(&root)).await.unwrap(), 1);
+        let names: Vec<String> = project_tag_defs_get(as_str(&root))
+            .unwrap()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, vec!["fav".to_string()]);
         assert_eq!(
             db::tags_all(&root)
                 .await

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import type { GalleryColumn, TagDef, TagFilterMode } from "../lib/types";
 import { cmd } from "../lib/tauri";
@@ -33,6 +34,32 @@ export const UNKNOWN_TAG_COLOR = "var(--color-dim)";
 
 export function tagColor(defs: TagDef[], name: string): string {
   return defs.find((d) => eq(d.name, name))?.color || UNKNOWN_TAG_COLOR;
+}
+
+/** The vocabulary as the UI should offer it: the project's `tagDefs`, plus
+ *  any tag actually carried by a loaded image that they don't know about.
+ *
+ *  The sidecars are the source of truth for tag *names* — `tagDefs` only adds
+ *  a color — so the picker and filter bar must not go blank just because
+ *  project.json has drifted (a project nested under another project's
+ *  `project.json` used to send every write to the outer one). Discovered tags
+ *  render in the fallback color until the vocabulary is repaired. */
+export function useEffectiveTagDefs(): TagDef[] {
+  const defs = useTagsStore((s) => s.defs);
+  const columns = useSessionStore((s) => s.columns);
+  const taggedGroups = useSessionStore((s) => s.taggedGroups);
+  return useMemo(() => {
+    const byKey = new Map<string, TagDef>();
+    for (const d of defs) byKey.set(d.name.toLowerCase(), d);
+    const add = (t: string) => {
+      const k = t.toLowerCase();
+      if (!byKey.has(k)) byKey.set(k, { name: t, color: UNKNOWN_TAG_COLOR });
+    };
+    for (const c of columns) for (const i of c.images) (i.tags ?? []).forEach(add);
+    for (const s of taggedGroups)
+      for (const sh of s.shots) for (const i of sh.images) (i.tags ?? []).forEach(add);
+    return [...byKey.values()];
+  }, [defs, columns, taggedGroups]);
 }
 
 /** Does an image's tag list satisfy the active filter? */
