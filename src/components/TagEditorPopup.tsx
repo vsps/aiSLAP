@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { useSessionStore } from "../stores/sessionStore";
-import { useTagsStore, tagColor } from "../stores/tagsStore";
+import { useEffectiveTagDefs, useTagsStore, tagColor } from "../stores/tagsStore";
 import { usePopupDismiss, useClampedPosition } from "../lib/popup";
 import { basename } from "../lib/paths";
 import { Icon } from "../lib/icon";
@@ -36,7 +36,7 @@ type Target = { path: string; anchor: { x: number; y: number } | null };
 
 function Editor({ target }: { target: Target }) {
   const close = useSessionStore((s) => s.setTagEditor);
-  const defs = useTagsStore((s) => s.defs);
+  const defs = useEffectiveTagDefs();
   const setImageTags = useTagsStore((s) => s.setImageTags);
 
   const tags = useImageTags(target.path);

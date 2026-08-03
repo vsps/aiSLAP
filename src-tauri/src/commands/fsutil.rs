@@ -115,20 +115,28 @@ pub(crate) fn version_prefix_for(path: &Path) -> String {
     }
 }
 
-/// Walk up the parent chain and return the *topmost* ancestor that contains a
-/// `project.json`. Going to the top (rather than stopping at the first hit)
-/// protects against orphan sidecars accidentally left inside a project — e.g.,
-/// from a folder that was once opened as a standalone project.
+/// Walk up the parent chain and return the *nearest* ancestor that contains a
+/// `project.json`.
+///
+/// This used to return the topmost hit, to survive an orphan sidecar left
+/// inside a project by a folder that had once been opened standalone. That
+/// guard is now redundant — `project_open` refuses to write `project.json`
+/// into any folder holding a `sequence.json`/`shot.json`, so a sequence or
+/// shot folder can no longer be turned into a stray project through the UI.
+/// Meanwhile the topmost rule actively broke the opposite (and far more
+/// common) case: open `<parent>` once, open the real project nested inside it
+/// later, and every path-derived lookup silently resolves to `<parent>` —
+/// wrong tag vocabulary, wrong index DB, wrong version prefix. Nearest-wins
+/// matches what the user actually opened.
 pub(crate) fn project_root_for(path: &Path) -> AppResult<PathBuf> {
-    let mut found: Option<PathBuf> = None;
     let mut cur: Option<&Path> = Some(path);
     while let Some(p) = cur {
         if p.join(PROJECT_SIDECAR).is_file() {
-            found = Some(p.to_path_buf());
+            return Ok(p.to_path_buf());
         }
         cur = p.parent();
     }
-    found.ok_or_else(|| AppError::Msg(format!("no project root for {}", as_str(path))))
+    Err(AppError::Msg(format!("no project root for {}", as_str(path))))
 }
 
 /// Forward-slash path relative to project root. Returns None if `path` is not
@@ -262,6 +270,39 @@ mod tests {
         assert_eq!(sanitize("a/b\\c:d*e?f\"g<h>i|j"), "a_b_c_d_e_f_g_h_i_j");
         assert_eq!(sanitize("plain name"), "plain name");
         assert_eq!(sanitize("tab\there"), "tab_here");
+    }
+
+    #[test]
+    fn project_root_is_the_nearest_marker_not_the_topmost() {
+        // outer/project.json + outer/inner/project.json — a real layout
+        // (a folder opened once as a project, with the actual project nested
+        // inside it later). The inner one must win.
+        let base = std::env::temp_dir().join(format!("aislap-root-{}", uuid::Uuid::new_v4()));
+        let outer = base.join("outer");
+        let inner = outer.join("inner");
+        let deep = inner.join("seq").join("shot").join("gen001");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(outer.join(PROJECT_SIDECAR), "{}").unwrap();
+        std::fs::write(inner.join(PROJECT_SIDECAR), "{}").unwrap();
+
+        assert_eq!(
+            project_root_for(&deep.join("a.png")).unwrap().file_name(),
+            Some(std::ffi::OsStr::new("inner"))
+        );
+        // Only the outer marker in scope → that's the root.
+        let sibling = outer.join("other");
+        std::fs::create_dir_all(&sibling).unwrap();
+        assert_eq!(
+            project_root_for(&sibling).unwrap().file_name(),
+            Some(std::ffi::OsStr::new("outer"))
+        );
+        // No marker anywhere above → an error, not a silent wrong answer.
+        let orphan = std::env::temp_dir().join(format!("aislap-orphan-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&orphan).unwrap();
+        assert!(project_root_for(&orphan).is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&orphan);
     }
 
     #[test]

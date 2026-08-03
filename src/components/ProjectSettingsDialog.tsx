@@ -611,6 +611,7 @@ function TagManager() {
   const renameTag = useTagsStore((s) => s.renameTag);
   const deleteTag = useTagsStore((s) => s.deleteTag);
   const setColor = useTagsStore((s) => s.setColor);
+  const loadDefs = useTagsStore((s) => s.loadDefs);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<{
     name: string;
@@ -650,6 +651,10 @@ function TagManager() {
     if (!projectPath) return;
     await run(async () => {
       setReindexed(await cmd.project_tags_reindex(projectPath));
+      // Reindex repairs the vocabulary from the sidecars too — pull it back,
+      // and refresh the gallery so the dots pick up their colors.
+      await loadDefs(projectPath);
+      await useSessionStore.getState().rescanShot();
     });
   }
 
@@ -671,8 +676,9 @@ function TagManager() {
       <div className="text-xs text-dim">
         Tags live in each image's <code>.json</code> sidecar, so they follow the
         file when it's copied, moved, or renamed. Rebuilding re-reads those
-        sidecars into the local index — cheaper than a full reconcile, and the
-        fix if tags ever look out of date.
+        sidecars into the local index and re-derives the tag list below from
+        them — cheaper than a full reconcile, and the fix if tags ever look out
+        of date or the list here looks empty.
       </div>
       {reindexed !== null && (
         <div className="text-xs font-mono text-text">

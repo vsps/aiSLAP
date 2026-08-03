@@ -1,4 +1,4 @@
-import { useTagsStore } from "../stores/tagsStore";
+import { useEffectiveTagDefs, useTagsStore } from "../stores/tagsStore";
 import { ToggleGroup } from "./ToggleGroup";
 import { Icon } from "../lib/icon";
 import type { TagFilterMode } from "../lib/types";
@@ -11,7 +11,7 @@ const MODES: { value: TagFilterMode; label: string }[] = [
 /** Chip row above the gallery. Narrows the columns view client-side and
  *  drives the project-wide tag view's query — one filter, both surfaces. */
 export function TagFilterBar() {
-  const defs = useTagsStore((s) => s.defs);
+  const defs = useEffectiveTagDefs();
   const activeFilter = useTagsStore((s) => s.activeFilter);
   const filterMode = useTagsStore((s) => s.filterMode);
   const toggleFilter = useTagsStore((s) => s.toggleFilter);
