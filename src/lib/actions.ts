@@ -12,6 +12,7 @@ import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { useScriptStore } from "../stores/scriptStore";
+import { useTagsStore } from "../stores/tagsStore";
 import type {
   ChainLink,
   ImageMetadata,
@@ -29,6 +30,19 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return true;
   }
+}
+
+/** A sidecar can exist without describing a generation: tagging a file that
+ *  never had one (an OS-dragged reference image) writes a sidecar holding
+ *  only its identity and tags. Restoring "settings" from that would wipe the
+ *  current prompt for nothing, so treat it as no metadata. */
+function hasGenerationMetadata(
+  meta: ImageMetadata | null,
+): meta is ImageMetadata {
+  return (
+    !!meta &&
+    !!(meta.modelId || meta.prompt || meta.shotPrompt || meta.combinedPrompt)
+  );
 }
 
 function normalizeRefs(raw: (RefSnapshot | string)[] | undefined): RefImage[] {
@@ -61,7 +75,9 @@ async function resolveRefPath(
     [null, ref.hash],
   ] as const) {
     if (!id && !hash) continue;
-    const row = await cmd.asset_lookup(projectPath, id ?? null, hash ?? null).catch(() => null);
+    const row = await cmd
+      .asset_lookup(projectPath, id ?? null, hash ?? null)
+      .catch(() => null);
     if (!row) continue;
     const abs = joinPath(projectPath, row.relPath);
     if (await pathExists(abs)) return abs;
@@ -102,7 +118,8 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
   let skipped = 0;
   for (const r of refs) {
     const resolved = await resolveRefPath(projectPath, r);
-    if (resolved) valid.push(resolved === r.path ? r : { ...r, path: resolved });
+    if (resolved)
+      valid.push(resolved === r.path ? r : { ...r, path: resolved });
     else skipped++;
   }
   gen.setRefImages(valid);
@@ -137,7 +154,8 @@ export async function restoreChainFromMetadata(
     const refs: RefImage[] = [];
     for (const r of p.refImages ?? []) {
       const resolved = await resolveRefPath(projectPath, r);
-      if (resolved) refs.push(resolved === r.path ? r : { ...r, path: resolved });
+      if (resolved)
+        refs.push(resolved === r.path ? r : { ...r, path: resolved });
       else skippedRefs++;
     }
     restored.push(
@@ -389,8 +407,6 @@ export type ImageAction =
   | "copy_settings"
   | "copy_prompt"
   | "copy_to_global_src"
-  | "copy_to_sel"
-  | "move_to_sel"
   | "set_clip_media"
   | "trace"
   | "refresh"
@@ -399,7 +415,9 @@ export type ImageAction =
   | "rename"
   | "edit"
   | "crop"
-  | "toggle_star"
+  | "edit_tags"
+  | "toggle_fav"
+  | "toggle_select"
   | "restore_chain"
   | "show_info";
 
@@ -447,8 +465,16 @@ async function copyImageToClipboard(path: string): Promise<void> {
 // Module-level per-path handlers — stable references for memo'd Thumbnails.
 export const selectImagePath = (path: string) =>
   void performImageAction("select", path);
-export const toggleStarPath = (path: string) =>
-  void performImageAction("toggle_star", path);
+
+/** Open the tag editor for a thumbnail, anchored to the element that asked
+ *  (falls back to a centered popover when there's no on-screen origin). */
+export const editTagsAt = (path: string, anchor?: DOMRect) =>
+  useSessionStore
+    .getState()
+    .setTagEditor(
+      path,
+      anchor ? { x: anchor.left, y: anchor.bottom + 4 } : null,
+    );
 
 export async function performImageAction(
   action: ImageAction,
@@ -501,20 +527,15 @@ export async function performImageAction(
       }
       return;
     }
-    case "copy_to_sel":
-    case "move_to_sel": {
-      const { shotPath } = session;
-      if (!shotPath) {
-        await showMessage("No shot open", { kind: "warning" });
-        return;
-      }
+    case "edit_tags":
+      session.setTagEditor(path);
+      return;
+    case "toggle_fav":
+    case "toggle_select": {
       try {
-        const fn =
-          action === "copy_to_sel"
-            ? cmd.image_copy_to_sel
-            : cmd.image_move_to_sel;
-        await fn(shotPath, path);
-        await session.rescanShot();
+        await useTagsStore
+          .getState()
+          .toggleImageTag(path, action === "toggle_fav" ? "fav" : "select");
       } catch (e) {
         await showMessage(String(e), { kind: "error" });
       }
@@ -538,7 +559,7 @@ export async function performImageAction(
     }
     case "copy_settings": {
       const meta = await cmd.image_metadata_read(path).catch(() => null);
-      if (!meta) {
+      if (!hasGenerationMetadata(meta)) {
         await showMessage("No metadata for this image", { kind: "warning" });
         return;
       }
@@ -588,7 +609,7 @@ export async function performImageAction(
     }
     case "copy_prompt": {
       const meta = await cmd.image_metadata_read(path).catch(() => null);
-      if (!meta) {
+      if (!hasGenerationMetadata(meta)) {
         await showMessage("No metadata for this image", { kind: "warning" });
         return;
       }
@@ -636,25 +657,6 @@ export async function performImageAction(
       }
       const { nodes, parents } = await computeTraceSet(path);
       session.setTrace({ imagePath: path, traceSet: nodes, parents });
-      return;
-    }
-    case "toggle_star": {
-      try {
-        const img = session.columns
-          .flatMap((c) => c.images)
-          .find((i) => i.path === path);
-        const currentlyVisible = img?.starred ?? false;
-        await cmd.image_set_visible(path, !currentlyVisible);
-        await session.rescanShot();
-        if (
-          session.viewMode === "starred" &&
-          useSessionStore.getState().projectPath
-        ) {
-          await useSessionStore.getState().rescanStarred();
-        }
-      } catch (e) {
-        await showMessage(String(e), { kind: "error" });
-      }
       return;
     }
     case "delete": {

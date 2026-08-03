@@ -192,21 +192,22 @@ export type GalleryImage = {
   isVideo: boolean;
   isModel3d?: boolean;
   thumbPath?: string;
-  starred?: boolean;
+  /** Tag names on this image, resolved at scan time. */
+  tags?: string[];
   /** True when the image hasn't been generated yet — renders a placeholder tile. */
   pending?: boolean;
 };
 
-export type ShotStarredGroup = {
+export type ShotTaggedGroup = {
   shotPath: string;
   shotName: string;
   images: GalleryImage[];
 };
 
-export type SeqStarredGroup = {
+export type SeqTaggedGroup = {
   seqPath: string;
   seqName: string;
-  shots: ShotStarredGroup[];
+  shots: ShotTaggedGroup[];
 };
 
 export type GalleryColumn = {
@@ -537,6 +538,33 @@ export type ImageMetadata = {
    *  embedding. Fallback identity when embedded tags get stripped by an
    *  external tool (re-encode, re-export, etc). */
   contentHash?: string;
+  /** User tag names. The sidecar is the source of truth for these — the
+   *  SQLite index is a rebuildable cache of them, and they ride along with
+   *  the file on copy/move/rename for free. Written by image_tags_set;
+   *  never set at generation time. */
+  tags?: string[];
+};
+
+// ---------- Tags ----------
+
+/** A project's tag vocabulary entry (project.json `tagDefs`). Images
+ *  reference a tag by name, so this only carries the display color. */
+export type TagDef = {
+  name: string;
+  /** CSS color, assigned round-robin from a palette on first use. */
+  color: string;
+};
+
+/** "any" matches an image carrying at least one of the filter's tags; "all"
+ *  requires every one. An empty filter means "anything tagged". */
+export type TagFilterMode = "any" | "all";
+
+export type TagMigrationReport = {
+  /** False when the project had already been migrated — the counts are then
+   *  meaningless and nothing was touched. */
+  ran: boolean;
+  starred: number;
+  selects: number;
 };
 
 // ---------- Local asset index (db.rs) ----------
@@ -580,6 +608,9 @@ export type ReconcileReport = {
   sidecarBackfilled: number;
   dbIngested: number;
   relinked: number;
+  /** Assets whose indexed tags disagreed with their sidecar — the sidecar
+   *  wins, so this is how externally-edited tags get back into the index. */
+  tagsSynced: number;
 };
 
 // ---------- Cost aggregation (project_cost_scan) ----------

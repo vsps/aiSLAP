@@ -1,8 +1,9 @@
 // Shared, session-lifetime cache for image sidecar metadata reads. A
-// generated image's sidecar never changes after it's written (aside from the
-// separate starred flag, which isn't stored here), so once read a path never
-// needs to be re-fetched. Used by bulk consumers (e.g. per-column cost
-// totals) that would otherwise re-read the same files on every render.
+// generated image's sidecar is written once and then only ever changed by an
+// explicit user action (tagging), so once read a path never needs to be
+// re-fetched until something invalidates it. Used by bulk consumers (e.g.
+// per-column cost totals) that would otherwise re-read the same files on
+// every render.
 import { cmd } from "./tauri";
 import type { Config, ImageMetadata } from "./types";
 
@@ -17,6 +18,12 @@ export function getImageMetadataCached(
     cache.set(path, p);
   }
   return p;
+}
+
+/** Drop a path's cached sidecar after writing to it (tags live in there —
+ *  see tagsStore.setImageTags), so the next read sees the new contents. */
+export function invalidateImageMetadata(path: string): void {
+  cache.delete(path);
 }
 
 // Config rarely changes and is read per-thumbnail hover (for the ffmpeg

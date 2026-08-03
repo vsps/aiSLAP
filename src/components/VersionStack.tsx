@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { VersionStack as VersionStackData } from "../lib/types";
 import { Thumbnail } from "./Thumbnail";
-import { performImageAction } from "../lib/actions";
+import { editTagsAt, performImageAction } from "../lib/actions";
 
 type Props = {
   shotPath: string;
@@ -56,10 +56,12 @@ export function VersionStack({
     void performImageAction("select", selectImgPath);
     if (rootRef.current) onOpenPicker(rootRef.current.getBoundingClientRect());
   }, [selectImgPath, onOpenPicker]);
-  const handleToggleStar = useCallback(() => {
-    if (!selectImgPath) return;
-    void performImageAction("toggle_star", selectImgPath);
-  }, [selectImgPath]);
+  const handleEditTags = useCallback(
+    (_path: string, anchor?: DOMRect) => {
+      if (selectImgPath) editTagsAt(selectImgPath, anchor);
+    },
+    [selectImgPath],
+  );
   const handleToggleClipMedia = useCallback(() => {
     if (!selectImgPath) return;
     onToggleClipMedia(selectImgPath);
@@ -116,7 +118,7 @@ export function VersionStack({
               selected={selectedGlobally}
               columnVersion={stack.version}
               onSelect={handleSelect}
-              onToggleStar={handleToggleStar}
+              onEditTags={handleEditTags}
               clipMediaSelected={clipMediaSelected}
               onToggleClipMedia={handleToggleClipMedia}
               onDragStart={handleThumbDragStart}

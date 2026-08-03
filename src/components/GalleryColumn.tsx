@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
-import type { ImageAction } from "../lib/actions";
+import { editTagsAt, type ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
 import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
@@ -115,9 +115,9 @@ export function GalleryColumn({
     (path: string) => onImageAction("select", path),
     [onImageAction],
   );
-  const handleToggleStar = useCallback(
-    (path: string) => onImageAction("toggle_star", path),
-    [onImageAction],
+  const handleEditTags = useCallback(
+    (path: string, anchor?: DOMRect) => editTagsAt(path, anchor),
+    [],
   );
   const handleToggleClipMedia = useCallback(
     (path: string) => {
@@ -282,7 +282,7 @@ export function GalleryColumn({
                 columnVersion={column.version}
                 isDragSource={dragState?.fromPath === img.path}
                 onSelect={handleSelect}
-                onToggleStar={handleToggleStar}
+                onEditTags={handleEditTags}
                 onDragStart={onDragStart}
                 clipMediaSelected={img.path === clipMediaPath}
                 onToggleClipMedia={

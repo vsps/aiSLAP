@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
-import { showMessage, confirmAction, pickDirectory, pickFile } from "../lib/dialog";
+import {
+  showMessage,
+  confirmAction,
+  pickDirectory,
+  pickFile,
+} from "../lib/dialog";
 import { useScriptStore } from "../stores/scriptStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { useTagsStore } from "../stores/tagsStore";
 import { normalizeTitle, parseScript } from "../lib/script";
 import { ModalDialog } from "./ModalDialog";
 import type { Config, ReconcileReport } from "../lib/types";
@@ -26,6 +32,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const projectPath = useSessionStore((s) => s.projectPath);
   const scriptRaw = useScriptStore((s) => s.raw);
   const saveScript = useScriptStore((s) => s.save);
+  const defs = useTagsStore((s) => s.defs);
   const [config, setConfig] = useState<Config | null>(null);
   const [script, setScript] = useState(scriptRaw);
   const [busy, setBusy] = useState(false);
@@ -42,7 +49,8 @@ export function ProjectSettingsDialog({ onClose }: Props) {
 
   // Asset index reconcile
   const [reconcileBusy, setReconcileBusy] = useState(false);
-  const [reconcileReport, setReconcileReport] = useState<ReconcileReport | null>(null);
+  const [reconcileReport, setReconcileReport] =
+    useState<ReconcileReport | null>(null);
 
   async function reconcileAssetIndex() {
     if (!projectPath) return;
@@ -87,27 +95,34 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const versionPrefixValid = VERSION_PREFIX_RE.test(versionPrefix);
   const versionPrefixDirty = versionPrefix !== versionPrefixOriginal;
 
-  // Export selects
+  // Export by tag
   const [exportModal, setExportModal] = useState<{
     destDir: string;
-    mode: "preserve" | "dump";
+    layout: "preserve" | "dump";
+    tags: string[];
   } | null>(null);
 
   async function startExport() {
     if (!projectPath) return;
-    const dir = await pickDirectory("Select destination for SEL exports");
+    const dir = await pickDirectory("Select destination for tagged exports");
     if (!dir) return;
-    setExportModal({ destDir: dir, mode: "preserve" });
+    setExportModal({
+      destDir: dir,
+      layout: "preserve",
+      tags: defs.some((d) => d.name === "select") ? ["select"] : [],
+    });
   }
 
   async function confirmExport() {
     if (!projectPath || !exportModal) return;
     setBusy(true);
     try {
-      const count = await cmd.export_selects(
+      const count = await cmd.export_by_tag(
         projectPath,
+        exportModal.tags,
+        "any",
         exportModal.destDir,
-        exportModal.mode,
+        exportModal.layout,
       );
       setExportModal(null);
       await showMessage(`Exported ${count} file(s) to ${exportModal.destDir}`, {
@@ -137,7 +152,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   }
 
   async function importScript() {
-    const picked = await pickFile("Import script", { extensions: ["md", "txt"] });
+    const picked = await pickFile("Import script", {
+      extensions: ["md", "txt"],
+    });
     if (!picked || picked.length === 0) return;
     try {
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
@@ -397,19 +414,21 @@ export function ProjectSettingsDialog({ onClose }: Props) {
           </div>
           <div className="text-xs text-dim">
             Scans every generated file: assigns an id to anything from before
-            asset identity existed, and relinks files moved since the last
-            scan. Runs automatically on project open — use this after moving
-            files around outside the app.
+            asset identity existed, and relinks files moved since the last scan.
+            Runs automatically on project open — use this after moving files
+            around outside the app.
           </div>
           {reconcileReport && (
             <div className="text-xs font-mono text-text">
               Scanned {reconcileReport.scanned} · backfilled{" "}
               {reconcileReport.sidecarBackfilled} · ingested{" "}
-              {reconcileReport.dbIngested} · relinked{" "}
-              {reconcileReport.relinked}
+              {reconcileReport.dbIngested} · relinked {reconcileReport.relinked}{" "}
+              · tags {reconcileReport.tagsSynced}
             </div>
           )}
         </div>
+
+        <TagManager />
       </div>
 
       <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
@@ -428,7 +447,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
           disabled={busy || !projectPath}
           onClick={startExport}
         >
-          EXPORT SELECTS
+          EXPORT BY TAG
         </button>
         <button
           className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
@@ -443,7 +462,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
         <div className="absolute inset-0 bg-black/70 flex items-center justify-center p-6">
           <div className="bg-panel border border-dim shadow-xl w-full max-w-sm flex flex-col">
             <div className="px-4 py-2 bg-surface text-text text-sm">
-              Export selects
+              Export by tag
             </div>
             <div className="px-4 py-3 flex flex-col gap-3 text-xs">
               <div>
@@ -453,24 +472,66 @@ export function ProjectSettingsDialog({ onClose }: Props) {
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <div className="text-dim mb-1">Mode:</div>
+                <div className="text-dim mb-1">
+                  Tags{" "}
+                  <span className="opacity-60">
+                    (none selected = everything tagged)
+                  </span>
+                  :
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {defs.length === 0 && (
+                    <span className="text-dim">No tags in this project.</span>
+                  )}
+                  {defs.map((d) => {
+                    const on = exportModal.tags.includes(d.name);
+                    return (
+                      <button
+                        key={d.name}
+                        type="button"
+                        onClick={() =>
+                          setExportModal({
+                            ...exportModal,
+                            tags: on
+                              ? exportModal.tags.filter((t) => t !== d.name)
+                              : [...exportModal.tags, d.name],
+                          })
+                        }
+                        className={`flex items-center gap-1 px-1.5 py-[1px] border ${
+                          on
+                            ? "bg-accent text-bg border-accent"
+                            : "bg-bg border-dim hover:bg-panel"
+                        }`}
+                      >
+                        <span
+                          className="w-[6px] h-[6px]"
+                          style={{ background: d.color }}
+                        />
+                        {d.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="text-dim mb-1">Layout:</div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
-                    checked={exportModal.mode === "preserve"}
+                    checked={exportModal.layout === "preserve"}
                     onChange={() =>
-                      setExportModal({ ...exportModal, mode: "preserve" })
+                      setExportModal({ ...exportModal, layout: "preserve" })
                     }
                   />
                   <span>Preserve folders</span>
-                  <span className="text-dim">(dest/SEQ/SHOT/SEL)</span>
+                  <span className="text-dim">(dest/SEQ/SHOT/VERSION)</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
-                    checked={exportModal.mode === "dump"}
+                    checked={exportModal.layout === "dump"}
                     onChange={() =>
-                      setExportModal({ ...exportModal, mode: "dump" })
+                      setExportModal({ ...exportModal, layout: "dump" })
                     }
                   />
                   <span>Dump in one folder</span>
@@ -539,5 +600,141 @@ export function ProjectSettingsDialog({ onClose }: Props) {
         </div>
       )}
     </ModalDialog>
+  );
+}
+
+/** Rename / recolor / delete the project's tags. Renaming and deleting
+ *  rewrite every affected sidecar, so both are confirmed before they run. */
+function TagManager() {
+  const projectPath = useSessionStore((s) => s.projectPath);
+  const defs = useTagsStore((s) => s.defs);
+  const renameTag = useTagsStore((s) => s.renameTag);
+  const deleteTag = useTagsStore((s) => s.deleteTag);
+  const setColor = useTagsStore((s) => s.setColor);
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<{
+    name: string;
+    draft: string;
+  } | null>(null);
+  const [reindexed, setReindexed] = useState<number | null>(null);
+
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function commitRename() {
+    if (!editing) return;
+    const next = editing.draft.trim();
+    const from = editing.name;
+    setEditing(null);
+    if (!next || next === from) return;
+    await run(() => renameTag(from, next));
+  }
+
+  async function removeTag(name: string) {
+    const ok = await confirmAction(
+      `Remove the "${name}" tag from every image in this project?`,
+      { title: "Delete tag", kind: "warning" },
+    );
+    if (ok) await run(() => deleteTag(name));
+  }
+
+  async function reindex() {
+    if (!projectPath) return;
+    await run(async () => {
+      setReindexed(await cmd.project_tags_reindex(projectPath));
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+          Tags
+        </div>
+        <button
+          type="button"
+          className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+          disabled={busy || !projectPath}
+          onClick={reindex}
+        >
+          {busy ? "Working…" : "Rebuild tag index"}
+        </button>
+      </div>
+      <div className="text-xs text-dim">
+        Tags live in each image's <code>.json</code> sidecar, so they follow the
+        file when it's copied, moved, or renamed. Rebuilding re-reads those
+        sidecars into the local index — cheaper than a full reconcile, and the
+        fix if tags ever look out of date.
+      </div>
+      {reindexed !== null && (
+        <div className="text-xs font-mono text-text">
+          Reindexed {reindexed} tagged file(s)
+        </div>
+      )}
+      {defs.length === 0 ? (
+        <div className="text-xs text-dim">
+          No tags yet — add one from any thumbnail.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          {defs.map((d) => (
+            <div key={d.name} className="flex items-center gap-2 text-xs">
+              <input
+                type="color"
+                value={d.color || "#9b31f2"}
+                disabled={busy}
+                onChange={(e) =>
+                  void run(() => setColor(d.name, e.target.value))
+                }
+                title={`Color for "${d.name}"`}
+                className="w-5 h-5 bg-inset border border-dim p-0 cursor-pointer"
+              />
+              {editing?.name === d.name ? (
+                <input
+                  autoFocus
+                  value={editing.draft}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setEditing({ name: d.name, draft: e.target.value })
+                  }
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void commitRename();
+                    if (e.key === "Escape") setEditing(null);
+                  }}
+                  className="flex-1 min-w-0 bg-inset px-1 py-[1px] outline-none"
+                />
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setEditing({ name: d.name, draft: d.name })}
+                  title="Rename (rewrites every sidecar using this tag)"
+                  className="flex-1 min-w-0 text-left px-1 py-[1px] truncate hover:bg-panel"
+                >
+                  {d.name}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void removeTag(d.name)}
+                className="px-1.5 py-[1px] bg-bg hover:bg-panel disabled:opacity-50"
+              >
+                DELETE
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

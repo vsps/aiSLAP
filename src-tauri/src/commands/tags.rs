@@ -1,0 +1,993 @@
+//! User-defined image tags.
+//!
+//! Three layers, in order of authority:
+//!   1. the per-image sidecar's `tags` array — the source of truth, and the
+//!      reason tags survive a copy/move/rename with no path bookkeeping at
+//!      all (the sidecar travels with the media triple);
+//!   2. `db::asset_tags` — a rebuildable index so a gallery scan is one
+//!      query instead of one sidecar read per file;
+//!   3. `project.json`'s `tagDefs` — the project's vocabulary, holding the
+//!      one thing a tag name can't carry: its color.
+//!
+//! Anything that writes a tag writes the sidecar first and the index second,
+//! same contract as the rest of the DB layer.
+
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+use crate::commands::fsutil::{
+    as_str, is_media_ext, project_root_for, relativize, sidecar_path, PROJECT_SIDECAR, SEL_DIR,
+};
+use crate::commands::gallery::try_make_gallery_image;
+use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
+use crate::db::{self, AssetRecord, TagUpdate};
+use crate::domain::{GalleryImage, ProjectSidecar, TagDef};
+use crate::error::{run_blocking, AppError, AppResult};
+use crate::fsjson::{ensure_dir, read_json_or_default, write_json_atomic};
+
+/// Tags carried over from the systems this replaced: the star became `fav`,
+/// the SEL folder became `select`.
+pub(crate) const TAG_FAV: &str = "fav";
+pub(crate) const TAG_SELECT: &str = "select";
+
+/// Colors handed out round-robin as new tags appear. Deliberately literal
+/// hex rather than theme tokens — a tag color is user data that ends up in
+/// project.json, not part of the app's palette.
+const PALETTE: &[&str] = &[
+    "#9b31f2", "#4ade80", "#fbbf24", "#f87171", "#38bdf8", "#f472b6", "#a3e635", "#fb923c",
+];
+
+const MAX_TAG_LEN: usize = 40;
+
+// ---------- normalization ----------
+
+/// Canonical form of a user-typed tag: trimmed, inner whitespace collapsed,
+/// length-capped. `None` for anything that normalizes to nothing.
+pub(crate) fn normalize_tag(raw: &str) -> Option<String> {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    Some(collapsed.chars().take(MAX_TAG_LEN).collect())
+}
+
+/// Normalize a whole list, dropping empties and case-insensitive duplicates
+/// while keeping the caller's order (which is the order they'll be drawn in).
+pub(crate) fn normalize_tags<I, S>(raw: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for item in raw {
+        let Some(tag) = normalize_tag(item.as_ref()) else {
+            continue;
+        };
+        if seen.insert(tag.to_lowercase()) {
+            out.push(tag);
+        }
+    }
+    out
+}
+
+/// Pull the `tags` array out of a parsed sidecar object.
+pub(crate) fn tags_from_sidecar(obj: &Map<String, Value>) -> Vec<String> {
+    let Some(arr) = obj.get("tags").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    normalize_tags(arr.iter().filter_map(|v| v.as_str()))
+}
+
+fn eq_tag(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
+// ---------- sidecar reading/writing ----------
+
+fn read_sidecar_value(media: &Path) -> Value {
+    let path = sidecar_path(media);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| Value::Object(Map::new())),
+        Err(_) => Value::Object(Map::new()),
+    }
+}
+
+fn ffmpeg_path() -> String {
+    crate::paths::config_path()
+        .and_then(|p| read_json_or_default::<crate::domain::Config>(&p))
+        .map(|c| c.ffmpeg_path)
+        .unwrap_or_default()
+}
+
+/// Give a media file an identity if it doesn't have one, mutating `obj` in
+/// place. Same mint-embed-hash sequence as `reidentify_copy` and reconcile's
+/// legacy backfill — a tag is the first durable thing many SRC/legacy files
+/// ever get, so tagging is a reasonable moment to index them. Returns true
+/// when `obj` changed.
+fn ensure_identity(media: &Path, project_id: &str, obj: &mut Map<String, Value>) -> bool {
+    if obj.get("assetId").and_then(|v| v.as_str()).is_some() {
+        return false;
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    // Best-effort, exactly as elsewhere: a format we can't embed into still
+    // gets an id, just not a recoverable in-file tag.
+    let _ = media_id_embed_impl(media, &id, project_id, &ffmpeg_path());
+    obj.insert("assetId".into(), Value::String(id));
+    if let Ok(hash) = file_hash_impl(media) {
+        obj.insert("contentHash".into(), Value::String(hash));
+    }
+    true
+}
+
+/// Map a sidecar object onto the index record used to ingest a file the
+/// index hasn't seen. Mirrors `reidentify_copy`'s mapping; only ever used as
+/// an insert-if-absent fallback, never to overwrite a live row.
+fn record_from_sidecar(
+    media: &Path,
+    project_root: &Path,
+    project_id: &str,
+    asset_id: &str,
+    obj: &Map<String, Value>,
+) -> Option<AssetRecord> {
+    let rel_path = relativize(media, project_root)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    Some(AssetRecord {
+        id: asset_id.to_string(),
+        project_id: Some(project_id.to_string()),
+        rel_path,
+        content_hash: obj
+            .get("contentHash")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        kind: db::media_kind(media).to_string(),
+        provider: obj
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        model_id: obj
+            .get("modelId")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        endpoint: obj
+            .get("endpoint")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        combined_prompt: obj
+            .get("combinedPrompt")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        settings_json: obj.get("settings").map(|v| v.to_string()),
+        cost_usd: obj.get("costUsd").and_then(|v| v.as_f64()),
+        created_at: obj
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| now.clone()),
+        updated_at: Some(now),
+        deleted_at: None,
+    })
+}
+
+/// Write `tags` onto one media file: sidecar first (creating one for files
+/// that never had it — an OS-dragged reference image, say), then hand back
+/// the index work for the async caller to apply.
+fn write_tags(
+    media: &Path,
+    project_root: &Path,
+    project_id: &str,
+    tags: Vec<String>,
+) -> AppResult<Option<TagUpdate>> {
+    let mut value = read_sidecar_value(media);
+    if !value.is_object() {
+        value = Value::Object(Map::new());
+    }
+    let obj = value.as_object_mut().expect("object above");
+
+    ensure_identity(media, project_id, obj);
+    if tags.is_empty() {
+        obj.remove("tags");
+    } else {
+        obj.insert("tags".into(), serde_json::json!(tags));
+    }
+    write_json_atomic(&sidecar_path(media), &value)?;
+
+    let obj = value.as_object().expect("object above");
+    let Some(asset_id) = obj.get("assetId").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    Ok(Some(TagUpdate {
+        asset_id: asset_id.to_string(),
+        record: record_from_sidecar(media, project_root, project_id, asset_id, obj),
+        tags,
+    }))
+}
+
+// ---------- vocabulary (project.json) ----------
+
+fn load_sidecar(project_root: &Path) -> AppResult<ProjectSidecar> {
+    read_json_or_default(&project_root.join(PROJECT_SIDECAR))
+}
+
+fn save_sidecar(project_root: &Path, sidecar: &ProjectSidecar) -> AppResult<()> {
+    write_json_atomic(&project_root.join(PROJECT_SIDECAR), sidecar)
+}
+
+/// Append a definition for every name that doesn't have one yet, picking the
+/// next palette color. Returns the full vocabulary.
+fn ensure_tag_defs(project_root: &Path, names: &[String]) -> AppResult<Vec<TagDef>> {
+    let mut sidecar = load_sidecar(project_root)?;
+    let mut added = false;
+    for name in names {
+        if sidecar.tag_defs.iter().any(|d| eq_tag(&d.name, name)) {
+            continue;
+        }
+        let color = PALETTE[sidecar.tag_defs.len() % PALETTE.len()].to_string();
+        sidecar.tag_defs.push(TagDef {
+            name: name.clone(),
+            color,
+        });
+        added = true;
+    }
+    if added {
+        save_sidecar(project_root, &sidecar)?;
+    }
+    Ok(sidecar.tag_defs)
+}
+
+// ---------- filesystem walk ----------
+
+/// Every media file in the project, at any depth (so `SRC`/`SEL` and any
+/// hand-made folder are covered — unlike reconcile, which only looks at
+/// `<seq>/<shot>/<version>/`). Skips hidden/system dirs and thumb adjuncts.
+fn walk_media(root: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if path.is_dir() {
+            if !name.starts_with('.') && !name.starts_with('$') {
+                walk_media(&path, out);
+            }
+        } else if is_media_ext(&path) && !name.ends_with(".thumb.png") {
+            out.push(path);
+        }
+    }
+}
+
+fn project_media(project_root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    walk_media(project_root, &mut out);
+    out.sort();
+    out
+}
+
+/// Rewrite every sidecar in the project whose tags `edit` changes. Used by
+/// rename and delete, which have to reach files the index may not know
+/// about — the sidecar is the record that has to be right.
+fn sweep_tags(
+    project_root: &Path,
+    edit: impl Fn(&[String]) -> Option<Vec<String>>,
+) -> AppResult<Vec<TagUpdate>> {
+    let project_id = db::read_project_id(project_root)?;
+    let mut updates = Vec::new();
+    for media in project_media(project_root) {
+        let value = read_sidecar_value(&media);
+        let Some(obj) = value.as_object() else {
+            continue;
+        };
+        let current = tags_from_sidecar(obj);
+        let Some(next) = edit(&current) else {
+            continue;
+        };
+        if let Some(update) = write_tags(&media, project_root, &project_id, next)? {
+            updates.push(update);
+        }
+    }
+    Ok(updates)
+}
+
+/// Apply index work, logging rather than failing: the sidecars are already
+/// written by the time this runs, and the index rebuilds from them.
+async fn apply_updates(project_root: &Path, updates: &[TagUpdate]) -> u32 {
+    match db::asset_tags_apply(project_root, updates).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("tag index update failed: {e}");
+            0
+        }
+    }
+}
+
+// ---------- commands ----------
+
+/// Set the complete tag list for one image. Returns the normalized list that
+/// was actually written.
+#[tauri::command]
+pub async fn image_tags_set(image_path: String, tags: Vec<String>) -> AppResult<Vec<String>> {
+    let (root, applied, update) = run_blocking(move || {
+        let media = PathBuf::from(&image_path);
+        if !media.is_file() {
+            return Err(AppError::Msg(format!("not a file: {image_path}")));
+        }
+        let root = project_root_for(&media)?;
+        let project_id = db::read_project_id(&root)?;
+        let tags = normalize_tags(tags);
+        ensure_tag_defs(&root, &tags)?;
+        let update = write_tags(&media, &root, &project_id, tags.clone())?;
+        Ok((root, tags, update))
+    })
+    .await?;
+    if let Some(update) = update {
+        apply_updates(&root, &[update]).await;
+    }
+    Ok(applied)
+}
+
+#[tauri::command]
+pub fn project_tag_defs_get(project_path: String) -> AppResult<Vec<TagDef>> {
+    Ok(load_sidecar(&PathBuf::from(&project_path))?.tag_defs)
+}
+
+/// Replace the vocabulary wholesale — used by the tag manager for recolor
+/// and reorder. Names are not touched here; renaming goes through
+/// `project_tag_rename` so the sidecars come along.
+#[tauri::command]
+pub fn project_tag_defs_set(project_path: String, defs: Vec<TagDef>) -> AppResult<Vec<TagDef>> {
+    let root = PathBuf::from(&project_path);
+    let mut sidecar = load_sidecar(&root)?;
+    sidecar.tag_defs = defs;
+    save_sidecar(&root, &sidecar)?;
+    Ok(sidecar.tag_defs)
+}
+
+#[tauri::command]
+pub async fn project_tag_rename(
+    project_path: String,
+    old_name: String,
+    new_name: String,
+) -> AppResult<Vec<TagDef>> {
+    let (root, defs, updates) = run_blocking(move || {
+        let root = PathBuf::from(&project_path);
+        let old =
+            normalize_tag(&old_name).ok_or_else(|| AppError::Msg("no tag to rename".into()))?;
+        let new =
+            normalize_tag(&new_name).ok_or_else(|| AppError::Msg("new name is empty".into()))?;
+        if eq_tag(&old, &new) {
+            return Ok((root.clone(), load_sidecar(&root)?.tag_defs, Vec::new()));
+        }
+        let updates = sweep_tags(&root, |current| {
+            if !current.iter().any(|t| eq_tag(t, &old)) {
+                return None;
+            }
+            // Normalizing after the swap collapses the case where the image
+            // already carried the destination tag as well.
+            Some(normalize_tags(current.iter().map(|t| {
+                if eq_tag(t, &old) {
+                    new.clone()
+                } else {
+                    t.clone()
+                }
+            })))
+        })?;
+
+        let mut sidecar = load_sidecar(&root)?;
+        let already = sidecar.tag_defs.iter().any(|d| eq_tag(&d.name, &new));
+        sidecar
+            .tag_defs
+            .retain(|d| !already || !eq_tag(&d.name, &old));
+        for def in sidecar.tag_defs.iter_mut() {
+            if eq_tag(&def.name, &old) {
+                def.name = new.clone();
+            }
+        }
+        save_sidecar(&root, &sidecar)?;
+        Ok((root, sidecar.tag_defs, updates))
+    })
+    .await?;
+    apply_updates(&root, &updates).await;
+    Ok(defs)
+}
+
+#[tauri::command]
+pub async fn project_tag_delete(project_path: String, name: String) -> AppResult<Vec<TagDef>> {
+    let (root, defs, updates) = run_blocking(move || {
+        let root = PathBuf::from(&project_path);
+        let target =
+            normalize_tag(&name).ok_or_else(|| AppError::Msg("no tag to delete".into()))?;
+        let updates = sweep_tags(&root, |current| {
+            if !current.iter().any(|t| eq_tag(t, &target)) {
+                return None;
+            }
+            Some(
+                current
+                    .iter()
+                    .filter(|t| !eq_tag(t, &target))
+                    .cloned()
+                    .collect(),
+            )
+        })?;
+        let mut sidecar = load_sidecar(&root)?;
+        sidecar.tag_defs.retain(|d| !eq_tag(&d.name, &target));
+        save_sidecar(&root, &sidecar)?;
+        Ok((root, sidecar.tag_defs, updates))
+    })
+    .await?;
+    apply_updates(&root, &updates).await;
+    Ok(defs)
+}
+
+/// Rebuild the tag index from the sidecars on disk. Much cheaper than
+/// `project_reconcile` — no content hashing, and only files that actually
+/// carry tags are touched.
+#[tauri::command]
+pub async fn project_tags_reindex(project_path: String) -> AppResult<u32> {
+    let (root, updates) = run_blocking(move || {
+        let root = PathBuf::from(&project_path);
+        let project_id = db::read_project_id(&root)?;
+        let mut updates = Vec::new();
+        for media in project_media(&root) {
+            let value = read_sidecar_value(&media);
+            let Some(obj) = value.as_object() else {
+                continue;
+            };
+            let tags = tags_from_sidecar(obj);
+            if tags.is_empty() {
+                continue;
+            }
+            if let Some(update) = write_tags(&media, &root, &project_id, tags)? {
+                updates.push(update);
+            }
+        }
+        Ok((root, updates))
+    })
+    .await?;
+    Ok(apply_updates(&root, &updates).await)
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagMigrationReport {
+    /// False when this project had already been migrated — the other counts
+    /// are then meaningless and no files were touched.
+    pub ran: bool,
+    pub starred: u32,
+    pub selects: u32,
+}
+
+/// One-shot conversion of the two things tags replaced: `project.json`'s
+/// `visible` list becomes the `fav` tag, and everything already sitting in a
+/// `SEL/` folder becomes the `select` tag. The SEL files themselves are left
+/// exactly where they are — only the marking moves.
+#[tauri::command]
+pub async fn project_tags_migrate(project_path: String) -> AppResult<TagMigrationReport> {
+    let (root, report, updates) = run_blocking(move || {
+        let root = PathBuf::from(&project_path);
+        let sidecar = load_sidecar(&root)?;
+        if sidecar.tags_migrated {
+            return Ok((root, TagMigrationReport::default(), Vec::new()));
+        }
+        let project_id = db::read_project_id(&root)?;
+
+        // media path -> tags to add
+        let mut additions: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+        let mut starred = 0u32;
+        for rel in &sidecar.visible {
+            let abs = root.join(rel);
+            if !abs.is_file() {
+                continue;
+            }
+            additions.entry(abs).or_default().push(TAG_FAV.to_string());
+            starred += 1;
+        }
+        let mut selects = 0u32;
+        for media in project_media(&root) {
+            let in_sel = media
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == SEL_DIR);
+            if !in_sel {
+                continue;
+            }
+            additions
+                .entry(media)
+                .or_default()
+                .push(TAG_SELECT.to_string());
+            selects += 1;
+        }
+
+        let mut updates = Vec::new();
+        for (media, added) in additions {
+            let value = read_sidecar_value(&media);
+            let existing = value.as_object().map(tags_from_sidecar).unwrap_or_default();
+            let merged = normalize_tags(existing.into_iter().chain(added));
+            if let Some(update) = write_tags(&media, &root, &project_id, merged)? {
+                updates.push(update);
+            }
+        }
+
+        let mut sidecar = load_sidecar(&root)?;
+        let mut used: Vec<String> = Vec::new();
+        if starred > 0 {
+            used.push(TAG_FAV.to_string());
+        }
+        if selects > 0 {
+            used.push(TAG_SELECT.to_string());
+        }
+        sidecar.visible.clear();
+        sidecar.tags_migrated = true;
+        save_sidecar(&root, &sidecar)?;
+        ensure_tag_defs(&root, &used)?;
+
+        Ok((
+            root,
+            TagMigrationReport {
+                ran: true,
+                starred,
+                selects,
+            },
+            updates,
+        ))
+    })
+    .await?;
+    apply_updates(&root, &updates).await;
+    Ok(report)
+}
+
+// ---------- querying ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShotTaggedGroup {
+    pub shot_path: String,
+    pub shot_name: String,
+    pub images: Vec<GalleryImage>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeqTaggedGroup {
+    pub seq_path: String,
+    pub seq_name: String,
+    pub shots: Vec<ShotTaggedGroup>,
+}
+
+/// "any" (default) matches an image carrying at least one of `tags`; "all"
+/// requires every one of them. An empty `tags` means "anything tagged".
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TagFilterMode {
+    Any,
+    All,
+}
+
+impl Default for TagFilterMode {
+    fn default() -> Self {
+        Self::Any
+    }
+}
+
+fn matches(image_tags: &[String], wanted: &[String], mode: TagFilterMode) -> bool {
+    if wanted.is_empty() {
+        return !image_tags.is_empty();
+    }
+    let has = |w: &String| image_tags.iter().any(|t| eq_tag(t, w));
+    match mode {
+        TagFilterMode::Any => wanted.iter().any(has),
+        TagFilterMode::All => wanted.iter().all(has),
+    }
+}
+
+/// Every tagged image in the project matching the filter, grouped
+/// sequence -> shot. Ghost rows (indexed files that no longer exist) are
+/// skipped rather than reported.
+#[tauri::command]
+pub async fn project_tag_scan(
+    project_path: String,
+    tags: Vec<String>,
+    mode: Option<TagFilterMode>,
+) -> AppResult<Vec<SeqTaggedGroup>> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let mode = mode.unwrap_or_default();
+    let wanted = normalize_tags(tags);
+    let index = db::tags_all(&root).await?;
+
+    type ShotMap = BTreeMap<String, Vec<GalleryImage>>;
+    let mut by_seq: BTreeMap<String, ShotMap> = BTreeMap::new();
+    let mut rels: Vec<&String> = index.by_rel.keys().collect();
+    rels.sort();
+    for rel in rels {
+        let image_tags = &index.by_rel[rel];
+        if !matches(image_tags, &wanted, mode) {
+            continue;
+        }
+        // Expect at least <seq>/<shot>/<file>; project-level SRC has no shot
+        // to group under and is left out, same as the starred view before it.
+        let parts: Vec<&str> = rel.split('/').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let abs = root.join(rel);
+        if !abs.is_file() {
+            continue;
+        }
+        let Some(img) = try_make_gallery_image(&abs, image_tags.clone()) else {
+            continue;
+        };
+        by_seq
+            .entry(parts[0].to_string())
+            .or_default()
+            .entry(parts[1].to_string())
+            .or_default()
+            .push(img);
+    }
+
+    Ok(by_seq
+        .into_iter()
+        .map(|(seq_name, shots)| SeqTaggedGroup {
+            seq_path: as_str(&root.join(&seq_name)),
+            shots: shots
+                .into_iter()
+                .map(|(shot_name, images)| ShotTaggedGroup {
+                    shot_path: as_str(&root.join(&seq_name).join(&shot_name)),
+                    shot_name,
+                    images,
+                })
+                .collect(),
+            seq_name,
+        })
+        .collect())
+}
+
+/// Copy every image matching the filter out of the project. `mode`
+/// "preserve" mirrors each file's path under the destination; anything else
+/// flattens into one folder with a `seq_shot_` filename prefix. Sidecars
+/// come along so the export stays self-describing.
+#[tauri::command]
+pub async fn export_by_tag(
+    project_path: String,
+    tags: Vec<String>,
+    mode: Option<TagFilterMode>,
+    dest_dir: String,
+    layout: String,
+) -> AppResult<u32> {
+    let root = PathBuf::from(&project_path);
+    if !root.is_dir() {
+        return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    let wanted = normalize_tags(tags);
+    let filter_mode = mode.unwrap_or_default();
+    let index = db::tags_all(&root).await?;
+    let hits: Vec<String> = index
+        .by_rel
+        .iter()
+        .filter(|(_, t)| matches(t, &wanted, filter_mode))
+        .map(|(rel, _)| rel.clone())
+        .collect();
+
+    run_blocking(move || {
+        let dest = PathBuf::from(&dest_dir);
+        ensure_dir(&dest)?;
+        let preserve = layout == "preserve";
+        let mut copied = 0u32;
+        let mut sorted = hits;
+        sorted.sort();
+        for rel in sorted {
+            let src = root.join(&rel);
+            if !src.is_file() {
+                continue;
+            }
+            let parts: Vec<&str> = rel.split('/').collect();
+            let fname = match parts.last() {
+                Some(n) => (*n).to_string(),
+                None => continue,
+            };
+            let dst = if preserve {
+                let mut d = dest.clone();
+                for part in &parts[..parts.len() - 1] {
+                    d = d.join(part);
+                }
+                ensure_dir(&d)?;
+                d.join(&fname)
+            } else {
+                let prefix = parts[..parts.len() - 1].join("_");
+                dest.join(format!("{prefix}_{fname}"))
+            };
+            std::fs::copy(&src, &dst)?;
+            copied += 1;
+            // Sidecar travels with the media so the export keeps its
+            // provenance (and its tags).
+            let src_sidecar = sidecar_path(&src);
+            if src_sidecar.is_file() {
+                if let Err(e) = std::fs::copy(&src_sidecar, sidecar_path(&dst)) {
+                    tracing::warn!("sidecar export failed for {rel}: {e}");
+                }
+            }
+        }
+        Ok(copied)
+    })
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// A throwaway project with one tagged image, mirroring db/mod.rs's
+    /// `test_project` (including cleaning up the index file it creates under
+    /// %APPDATA%/aiSLAP/db/).
+    fn test_project() -> (PathBuf, String) {
+        let project_id = format!("test-tags-{}", uuid::Uuid::new_v4());
+        let root = std::env::temp_dir().join(&project_id);
+        fs::create_dir_all(&root).unwrap();
+        write_json_atomic(
+            &root.join(PROJECT_SIDECAR),
+            &ProjectSidecar {
+                project_id: project_id.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        (root, project_id)
+    }
+
+    fn cleanup(root: &Path, project_id: &str) {
+        let _ = fs::remove_dir_all(root);
+        if let Ok(dir) = crate::paths::appdata_dir() {
+            let _ = fs::remove_file(dir.join("db").join(format!("{project_id}.db")));
+        }
+    }
+
+    fn media(root: &Path, rel: &str, sidecar: Option<Value>) -> PathBuf {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"fake media").unwrap();
+        if let Some(value) = sidecar {
+            write_json_atomic(&sidecar_path(&path), &value).unwrap();
+        }
+        path
+    }
+
+    fn sidecar_tags_of(media: &Path) -> Vec<String> {
+        read_sidecar_value(media)
+            .as_object()
+            .map(tags_from_sidecar)
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn setting_tags_writes_the_sidecar_and_seeds_the_vocabulary() {
+        let (root, project_id) = test_project();
+        // No sidecar at all — an OS-dragged reference image.
+        let img = media(&root, "seq1/shot1/SRC/ref.png", None);
+
+        let applied = image_tags_set(as_str(&img), vec!["  Hero  ".into(), "hero".into()])
+            .await
+            .unwrap();
+        assert_eq!(applied, vec!["Hero".to_string()]);
+        assert_eq!(sidecar_tags_of(&img), vec!["Hero".to_string()]);
+
+        let defs = project_tag_defs_get(as_str(&root)).unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "Hero");
+        assert!(!defs[0].color.is_empty());
+
+        // The index picked it up, which means the file got an identity too.
+        let idx = db::tags_all(&root).await.unwrap();
+        assert_eq!(
+            idx.tags_for("seq1/shot1/SRC/ref.png"),
+            vec!["Hero".to_string()]
+        );
+
+        // Clearing drops the key rather than leaving an empty array behind.
+        image_tags_set(as_str(&img), vec![]).await.unwrap();
+        assert!(read_sidecar_value(&img).get("tags").is_none());
+        assert!(db::tags_all(&root)
+            .await
+            .unwrap()
+            .tags_for("seq1/shot1/SRC/ref.png")
+            .is_empty());
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn rename_and_delete_sweep_every_sidecar() {
+        let (root, project_id) = test_project();
+        let a = media(&root, "seq1/shot1/gen001/a.png", None);
+        let b = media(&root, "seq1/shot2/gen001/b.png", None);
+        image_tags_set(as_str(&a), vec!["fav".into(), "wip".into()])
+            .await
+            .unwrap();
+        image_tags_set(as_str(&b), vec!["wip".into()])
+            .await
+            .unwrap();
+
+        project_tag_rename(as_str(&root), "wip".into(), "In progress".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            sidecar_tags_of(&a),
+            vec!["fav".to_string(), "In progress".to_string()]
+        );
+        assert_eq!(sidecar_tags_of(&b), vec!["In progress".to_string()]);
+        let names: Vec<String> = project_tag_defs_get(as_str(&root))
+            .unwrap()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, vec!["fav".to_string(), "In progress".to_string()]);
+
+        let defs = project_tag_delete(as_str(&root), "In progress".into())
+            .await
+            .unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(sidecar_tags_of(&a), vec!["fav".to_string()]);
+        assert!(sidecar_tags_of(&b).is_empty());
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn migration_converts_stars_and_sel_contents_exactly_once() {
+        let (root, project_id) = test_project();
+        let starred = media(&root, "seq1/shot1/gen001/star.png", None);
+        let selected = media(&root, "seq1/shot1/SEL/keep.png", None);
+        media(&root, "seq1/shot1/gen001/plain.png", None);
+
+        let mut sidecar = load_sidecar(&root).unwrap();
+        sidecar.visible = vec![
+            "seq1/shot1/gen001/star.png".into(),
+            "seq1/shot1/gone.png".into(), // stale entry, no such file
+        ];
+        save_sidecar(&root, &sidecar).unwrap();
+
+        let report = project_tags_migrate(as_str(&root)).await.unwrap();
+        assert!(report.ran);
+        assert_eq!(report.starred, 1);
+        assert_eq!(report.selects, 1);
+        assert_eq!(sidecar_tags_of(&starred), vec![TAG_FAV.to_string()]);
+        assert_eq!(sidecar_tags_of(&selected), vec![TAG_SELECT.to_string()]);
+
+        let after = load_sidecar(&root).unwrap();
+        assert!(after.visible.is_empty());
+        assert!(after.tags_migrated);
+        assert_eq!(after.tag_defs.len(), 2);
+
+        // The SEL file stays exactly where it was — only the marking moved.
+        assert!(selected.is_file());
+
+        // Second run is a no-op.
+        let again = project_tags_migrate(as_str(&root)).await.unwrap();
+        assert!(!again.ran);
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn reindex_rebuilds_the_index_from_sidecars_alone() {
+        let (root, project_id) = test_project();
+        let img = media(&root, "seq1/shot1/gen001/a.png", None);
+        image_tags_set(as_str(&img), vec!["fav".into()])
+            .await
+            .unwrap();
+
+        db::assets_purge(&root, "seq1", true).await.unwrap();
+        assert!(db::tags_all(&root)
+            .await
+            .unwrap()
+            .tags_for("seq1/shot1/gen001/a.png")
+            .is_empty());
+
+        assert_eq!(project_tags_reindex(as_str(&root)).await.unwrap(), 1);
+        assert_eq!(
+            db::tags_all(&root)
+                .await
+                .unwrap()
+                .tags_for("seq1/shot1/gen001/a.png"),
+            vec!["fav".to_string()]
+        );
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn scan_groups_by_sequence_and_shot_and_honours_the_filter() {
+        let (root, project_id) = test_project();
+        let a = media(&root, "seq1/shot1/gen001/a.png", None);
+        let b = media(&root, "seq1/shot2/gen001/b.png", None);
+        let c = media(&root, "seq2/shot1/gen001/c.png", None);
+        image_tags_set(as_str(&a), vec!["fav".into(), "hero".into()])
+            .await
+            .unwrap();
+        image_tags_set(as_str(&b), vec!["hero".into()])
+            .await
+            .unwrap();
+        image_tags_set(as_str(&c), vec!["fav".into()])
+            .await
+            .unwrap();
+
+        let all = project_tag_scan(as_str(&root), vec![], None).await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].seq_name, "seq1");
+        assert_eq!(all[0].shots.len(), 2);
+        assert_eq!(all[0].shots[0].images[0].tags, vec!["fav", "hero"]);
+
+        let both = project_tag_scan(
+            as_str(&root),
+            vec!["fav".into(), "hero".into()],
+            Some(TagFilterMode::All),
+        )
+        .await
+        .unwrap();
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].shots.len(), 1);
+        assert_eq!(both[0].shots[0].images.len(), 1);
+
+        // A file deleted behind the index's back is skipped, not reported.
+        fs::remove_file(&c).unwrap();
+        let favs = project_tag_scan(as_str(&root), vec!["fav".into()], None)
+            .await
+            .unwrap();
+        assert_eq!(favs.len(), 1);
+        assert_eq!(favs[0].seq_name, "seq1");
+
+        cleanup(&root, &project_id);
+    }
+
+    #[test]
+    fn normalize_trims_collapses_and_dedupes_case_insensitively() {
+        assert_eq!(normalize_tag("  hero   shot "), Some("hero shot".into()));
+        assert_eq!(normalize_tag("   "), None);
+        assert_eq!(
+            normalize_tags(["Fav", "fav", " ", "select"]),
+            vec!["Fav".to_string(), "select".to_string()]
+        );
+    }
+
+    #[test]
+    fn tags_read_out_of_a_sidecar_object() {
+        let value: Value = serde_json::json!({ "tags": ["a", "", "A", "b"], "other": 1 });
+        assert_eq!(
+            tags_from_sidecar(value.as_object().unwrap()),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        let empty: Value = serde_json::json!({});
+        assert!(tags_from_sidecar(empty.as_object().unwrap()).is_empty());
+    }
+
+    #[test]
+    fn filter_modes_behave() {
+        let tags = vec!["fav".to_string(), "hero".to_string()];
+        assert!(matches(&tags, &[], TagFilterMode::Any));
+        assert!(!matches(&[], &[], TagFilterMode::Any));
+        assert!(matches(&tags, &["FAV".into()], TagFilterMode::Any));
+        assert!(matches(
+            &tags,
+            &["fav".into(), "nope".into()],
+            TagFilterMode::Any
+        ));
+        assert!(!matches(
+            &tags,
+            &["fav".into(), "nope".into()],
+            TagFilterMode::All
+        ));
+        assert!(matches(
+            &tags,
+            &["fav".into(), "hero".into()],
+            TagFilterMode::All
+        ));
+    }
+}

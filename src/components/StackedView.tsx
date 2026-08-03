@@ -3,7 +3,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useLayoutStore } from "../stores/layoutStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { cmd } from "../lib/tauri";
-import { selectImagePath, toggleStarPath } from "../lib/actions";
+import { editTagsAt, selectImagePath } from "../lib/actions";
 import { showMessage } from "../lib/dialog";
 import { dirname, joinPath } from "../lib/paths";
 import { VersionStack } from "./VersionStack";
@@ -135,7 +135,7 @@ export function StackedView({ onDragStart }: Props) {
                     selected={selectedImagePath === img.path}
                     columnVersion="GLOBAL SRC"
                     onSelect={selectImagePath}
-                    onToggleStar={toggleStarPath}
+                    onEditTags={editTagsAt}
                     onDragStart={onDragStart}
                     maxAspect={1}
                   />

@@ -1,7 +1,9 @@
-//! Gallery scanning: shot version columns, starred/favorites view, and the
-//! stacked sequence view.
+//! Gallery scanning: shot version columns and the stacked sequence view.
+//!
+//! Every scan resolves each file's tags from a `TagIndex` loaded once by the
+//! async command wrapper (see `tag_index_for`), falling back to the file's
+//! own sidecar only for files the index has never seen.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -10,25 +12,37 @@ use crate::commands::fsutil::{
     as_str, is_image_ext, is_model3d_ext, is_video_ext, list_dirs, project_root_for, relativize,
     sidecar_path, thumb_path, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
-use crate::commands::visible::{load_visible_set, save_visible_set};
+use crate::commands::tags::tags_from_sidecar;
+use crate::db::TagIndex;
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::read_json_or_default;
 
-pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
+/// Load the tag index for the project `path` belongs to. Best-effort: a
+/// missing or broken index just means every image scans as untagged (and the
+/// sidecar fallback in `tags_for_file` fills most of it back in).
+pub(crate) async fn tag_index_for(path: &Path) -> TagIndex {
+    let Ok(root) = project_root_for(path) else {
+        return TagIndex::default();
+    };
+    match crate::db::tags_all(&root).await {
+        Ok(idx) => idx,
+        Err(e) => {
+            tracing::warn!("tag index load failed for {}: {e}", as_str(path));
+            TagIndex::default()
+        }
+    }
+}
+
+pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<GalleryColumn>> {
     let mut cols: Vec<GalleryColumn> = Vec::new();
     let project_root = project_root_for(root).ok();
-    let visible = project_root
-        .as_ref()
-        .map(|r| load_visible_set(r))
-        .transpose()?
-        .unwrap_or_default();
 
     // Include the project-level SRC as "GLOBAL SRC" (shot → seq → project).
     if let Some(project) = root.parent().and_then(|s| s.parent()) {
         let global_src = project.join(SRC_DIR);
         if global_src.is_dir() {
-            let images = scan_directory_images(&global_src, project_root.as_deref(), &visible)?;
+            let images = scan_directory_images(&global_src, project_root.as_deref(), tags)?;
             cols.push(GalleryColumn {
                 id: as_str(&global_src),
                 version: "GLOBAL SRC".to_string(),
@@ -45,7 +59,7 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
     // reference images copied in by the ref panel or drag-drop.
     let shot_src = root.join(SRC_DIR);
     if shot_src.is_dir() {
-        let images = scan_directory_images(&shot_src, project_root.as_deref(), &visible)?;
+        let images = scan_directory_images(&shot_src, project_root.as_deref(), tags)?;
         cols.push(GalleryColumn {
             id: as_str(&shot_src),
             version: "SHOT SRC".to_string(),
@@ -71,7 +85,7 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
         if name.starts_with('.') || name.starts_with('$') || name == SRC_DIR || name == SEL_DIR {
             continue;
         }
-        let images = scan_directory_images(&p, project_root.as_deref(), &visible)?;
+        let images = scan_directory_images(&p, project_root.as_deref(), tags)?;
         cols.push(GalleryColumn {
             id: name.clone(),
             version: name,
@@ -86,7 +100,7 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
     // SEL column — sits at the far right, contains user-selected keeps.
     let shot_sel = root.join(SEL_DIR);
     if shot_sel.is_dir() {
-        let images = scan_directory_images(&shot_sel, project_root.as_deref(), &visible)?;
+        let images = scan_directory_images(&shot_sel, project_root.as_deref(), tags)?;
         cols.push(GalleryColumn {
             id: as_str(&shot_sel),
             version: SEL_DIR.to_string(),
@@ -123,11 +137,11 @@ pub(crate) fn scan_shot_columns(root: &Path) -> AppResult<Vec<GalleryColumn>> {
 }
 
 /// Classify a single file as a `GalleryImage`, or `None` if it's not a
-/// recognized media file (or is a `.thumb.png` adjunct). `starred` is passed
-/// in rather than computed here since callers differ on how they know it:
-/// a directory scan checks the visible set per-file, while a scan seeded from
-/// the visible set itself already knows the answer.
-fn try_make_gallery_image(path: &Path, starred: Option<bool>) -> Option<GalleryImage> {
+/// recognized media file (or is a `.thumb.png` adjunct). `tags` are passed in
+/// rather than resolved here since callers differ on how they know them: a
+/// directory scan looks each file up in the index, while a scan driven by the
+/// index itself already has them in hand.
+pub(crate) fn try_make_gallery_image(path: &Path, tags: Vec<String>) -> Option<GalleryImage> {
     let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
     if filename.ends_with(".thumb.png") {
         return None;
@@ -156,14 +170,34 @@ fn try_make_gallery_image(path: &Path, starred: Option<bool>) -> Option<GalleryI
         is_video,
         is_model_3d,
         thumb_path,
-        starred,
+        tags,
     })
+}
+
+/// Tags for one file: the index if it knows the file, otherwise the file's
+/// own sidecar. The fallback only fires for media the index has never seen
+/// (legacy files, anything dropped in from outside the app), so a warm
+/// project costs zero extra reads per scan.
+fn tags_for_file(path: &Path, project_root: Option<&Path>, index: &TagIndex) -> Vec<String> {
+    let rel = project_root.and_then(|r| relativize(path, r));
+    match rel {
+        Some(rel) if index.is_indexed(&rel) => index.tags_for(&rel),
+        _ => match std::fs::read_to_string(sidecar_path(path)) {
+            Ok(text) => serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .map(tags_from_sidecar)
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        },
+    }
 }
 
 fn scan_directory_images(
     dir: &Path,
     project_root: Option<&Path>,
-    visible: &HashSet<String>,
+    index: &TagIndex,
 ) -> AppResult<Vec<GalleryImage>> {
     let mut out: Vec<GalleryImage> = Vec::new();
     for e in std::fs::read_dir(dir)? {
@@ -172,10 +206,8 @@ fn scan_directory_images(
         if !path.is_file() {
             continue;
         }
-        let starred = project_root
-            .and_then(|r| relativize(&path, r))
-            .map(|rel| visible.contains(&rel));
-        if let Some(img) = try_make_gallery_image(&path, starred) {
+        let tags = tags_for_file(&path, project_root, index);
+        if let Some(img) = try_make_gallery_image(&path, tags) {
             out.push(img);
         }
     }
@@ -185,11 +217,11 @@ fn scan_directory_images(
 
 #[tauri::command]
 pub async fn shot_rescan(shot_path: String) -> AppResult<Vec<GalleryColumn>> {
-    run_blocking(move || {
-        let root = PathBuf::from(&shot_path);
-        scan_shot_columns(&root)
-    })
-    .await
+    let root = PathBuf::from(&shot_path);
+    // One index query up front — the scan itself is blocking, and the DB
+    // layer is async (same split as image.rs's `_impl` + async wrapper).
+    let index = tag_index_for(&root).await;
+    run_blocking(move || scan_shot_columns(&root, &index)).await
 }
 
 // ---------- Stacked sequence view ----------
@@ -221,28 +253,24 @@ pub struct SequenceStacks {
 
 #[tauri::command]
 pub async fn sequence_stacks_scan(sequence_path: String) -> AppResult<SequenceStacks> {
-    run_blocking(move || sequence_stacks_scan_impl(sequence_path)).await
+    let index = tag_index_for(&PathBuf::from(&sequence_path)).await;
+    run_blocking(move || sequence_stacks_scan_impl(sequence_path, &index)).await
 }
 
-fn sequence_stacks_scan_impl(sequence_path: String) -> AppResult<SequenceStacks> {
+fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResult<SequenceStacks> {
     let seq_root = PathBuf::from(&sequence_path);
     if !seq_root.is_dir() {
         return Err(AppError::Msg(format!("not a directory: {sequence_path}")));
     }
 
     let project_root = project_root_for(&seq_root).ok();
-    let visible = project_root
-        .as_ref()
-        .map(|r| load_visible_set(r))
-        .transpose()?
-        .unwrap_or_default();
 
     // Project-level GLOBAL SRC.
     let global_src_images = match project_root.as_ref() {
         Some(root) => {
             let global_src = root.join(SRC_DIR);
             if global_src.is_dir() {
-                scan_directory_images(&global_src, project_root.as_deref(), &visible)?
+                scan_directory_images(&global_src, project_root.as_deref(), tags)?
             } else {
                 vec![]
             }
@@ -273,7 +301,7 @@ fn sequence_stacks_scan_impl(sequence_path: String) -> AppResult<SequenceStacks>
             if vname == SRC_DIR || vname == SEL_DIR {
                 continue;
             }
-            let images = scan_directory_images(&v_dir, project_root.as_deref(), &visible)?;
+            let images = scan_directory_images(&v_dir, project_root.as_deref(), tags)?;
             // Resolve the select:
             //   pinned + file still exists → use it
             //   else → last image in the sorted array (the "latest")
@@ -303,101 +331,4 @@ fn sequence_stacks_scan_impl(sequence_path: String) -> AppResult<SequenceStacks>
         global_src_images,
         shots,
     })
-}
-
-// ---------- Starred / favorites ----------
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShotStarredGroup {
-    pub shot_path: String,
-    pub shot_name: String,
-    pub images: Vec<GalleryImage>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeqStarredGroup {
-    pub seq_path: String,
-    pub seq_name: String,
-    pub shots: Vec<ShotStarredGroup>,
-}
-
-#[tauri::command]
-pub async fn project_starred_scan(project_path: String) -> AppResult<Vec<SeqStarredGroup>> {
-    run_blocking(move || project_starred_scan_impl(project_path)).await
-}
-
-fn project_starred_scan_impl(project_path: String) -> AppResult<Vec<SeqStarredGroup>> {
-    let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
-    let visible = load_visible_set(&root)?;
-
-    // Group by (seq, shot) preserving sorted order.
-    use std::collections::BTreeMap;
-    type ShotMap = BTreeMap<String, Vec<GalleryImage>>;
-    let mut by_seq: BTreeMap<String, ShotMap> = BTreeMap::new();
-
-    for rel in &visible {
-        let abs = root.join(rel);
-        if !abs.is_file() {
-            continue;
-        }
-        let img = match try_make_gallery_image(&abs, Some(true)) {
-            Some(i) => i,
-            None => continue,
-        };
-        // Expect path layout: <seq>/<shot>/<version>/<file>
-        let parts: Vec<&str> = rel.split('/').collect();
-        if parts.len() < 4 {
-            continue;
-        }
-        let seq = parts[0].to_string();
-        let shot = parts[1].to_string();
-        by_seq
-            .entry(seq)
-            .or_default()
-            .entry(shot)
-            .or_default()
-            .push(img);
-    }
-
-    let out: Vec<SeqStarredGroup> = by_seq
-        .into_iter()
-        .map(|(seq_name, shots)| {
-            let seq_path = as_str(&root.join(&seq_name));
-            let shots: Vec<ShotStarredGroup> = shots
-                .into_iter()
-                .map(|(shot_name, images)| ShotStarredGroup {
-                    shot_path: as_str(&root.join(&seq_name).join(&shot_name)),
-                    shot_name,
-                    images,
-                })
-                .collect();
-            SeqStarredGroup {
-                seq_path,
-                seq_name,
-                shots,
-            }
-        })
-        .collect();
-
-    Ok(out)
-}
-
-#[tauri::command]
-pub fn image_set_visible(image_path: String, visible: bool) -> AppResult<()> {
-    let p = PathBuf::from(&image_path);
-    let root = project_root_for(&p)?;
-    let rel = relativize(&p, &root)
-        .ok_or_else(|| AppError::Msg("image not under project root".into()))?;
-    let mut set = load_visible_set(&root)?;
-    if visible {
-        set.insert(rel);
-    } else {
-        set.remove(&rel);
-    }
-    save_visible_set(&root, &set)
 }
