@@ -71,6 +71,7 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 - LLM prompt enhancement
 - prompt history
 - full metadata sidecar saved with media
+- user-defined colored tags on any media, stored in its sidecar so they follow the file through copies, moves, and renames — filter the gallery by them, or export by them
 - per-model cost tracking — fal.ai's official pricing API plus manual overrides (any provider, resolution-aware) rolled up per shot/sequence/project, with fal's own live cost estimate stamped onto each successful generation
 - generated assets keep a stable identity (embedded id + content hash) that survives renames, moves, and copies
 - local SQLite asset index, rebuildable from the sidecars at any time, with optional sync to a shared Turso (cloud SQLite) database
@@ -205,11 +206,11 @@ src-tauri/src/              Rust host (Tauri v2)
   db/                       local SQLite (libSQL) asset index + Turso outbox sync
   commands/
     session.rs              project/sequence/shot CRUD, rename cascade, prompt history
-    gallery.rs               column / stacked / starred scanning
+    gallery.rs               column + stacked scanning (resolves each file's tags)
     image.rs                 media triple copy/move/rename, version stack moves
     rename.rs                sequence/shot rename cascade helpers
     timeline.rs              latest-media scan + timeline sidecar
-    visible.rs               starred ("visible") set persistence
+    tags.rs                  image tags — sidecar writes, vocabulary, filtering, export
     cost.rs                  project-wide cost rollup, backfills costUsd into sidecars
     fsutil.rs                shared path/naming helpers (+ unit tests)
     config.rs / models.rs / metadata.rs / download.rs / media.rs / pending.rs / prompt_history.rs

@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-fn map_is_empty<K, V>(m: &HashMap<K, V>) -> bool { m.is_empty() }
+fn map_is_empty<K, V>(m: &HashMap<K, V>) -> bool {
+    m.is_empty()
+}
 
 // All types here must match src/lib/types.ts exactly.
 
@@ -343,6 +345,18 @@ fn default_version_prefix() -> String {
     "gen".into()
 }
 
+/// One entry in a project's tag vocabulary. Images reference a tag by
+/// `name` (the same string that lands in their sidecar's `tags` array), so
+/// this record only carries what a name can't: how to draw it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDef {
+    pub name: String,
+    /// CSS color, assigned round-robin from a palette on first use.
+    #[serde(default)]
+    pub color: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSidecar {
@@ -350,9 +364,18 @@ pub struct ProjectSidecar {
     pub title: String,
     #[serde(default)]
     pub created: String,
-    /// Forward-slash paths relative to project root for images marked visible.
+    /// Legacy starred-image set (forward-slash paths relative to project
+    /// root). Superseded by per-image sidecar tags; kept only so
+    /// `project_tags_migrate` can read it once and convert it to a tag.
     #[serde(default)]
     pub visible: Vec<String>,
+    /// This project's tag vocabulary, in display order.
+    #[serde(default)]
+    pub tag_defs: Vec<TagDef>,
+    /// Set once `project_tags_migrate` has converted `visible` + `SEL/`
+    /// contents into tags, so the conversion never runs twice.
+    #[serde(default)]
+    pub tags_migrated: bool,
     /// Letter (+ `_`/`-`) prefix used when minting new version folders. The
     /// 3-digit suffix is appended at creation time. Defaults to "gen".
     #[serde(default = "default_version_prefix")]
@@ -376,8 +399,10 @@ pub struct GalleryImage {
     pub is_model_3d: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub thumb_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub starred: Option<bool>,
+    /// Tag names on this image, resolved at scan time from the index (with a
+    /// sidecar fallback for files the index hasn't seen yet).
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

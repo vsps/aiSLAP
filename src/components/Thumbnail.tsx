@@ -8,6 +8,7 @@ import { basename, dirname } from "../lib/paths";
 import { assemblePromptFromMetadata } from "../lib/actions";
 import { startThresholdDrag } from "../lib/dragThreshold";
 import { getConfigCached, getImageMetadataCached } from "../lib/metadataCache";
+import { tagColor, useTagsStore } from "../stores/tagsStore";
 
 type Props = {
   image: GalleryImage;
@@ -16,13 +17,14 @@ type Props = {
   columnVersion: string;
   isDragSource?: boolean;
   onSelect: (path: string) => void;
-  onToggleStar: (path: string) => void;
+  /** Opens the tag editor, anchored to the button that was clicked. */
+  onEditTags: (path: string, anchor?: DOMRect) => void;
   onDragStart: (payload: {
     fromPath: string;
     fromColumnVersion: string;
     pointerEvent: React.PointerEvent;
   }) => void;
-  /** Disables drag start. Used in the starred view where drag-to-column has no destination. */
+  /** Disables drag start. Used in the tag view where drag-to-column has no destination. */
   dragDisabled?: boolean;
   /** Whether this image is currently the shot's exclusive "clip media" pick. */
   clipMediaSelected?: boolean;
@@ -44,7 +46,7 @@ export const Thumbnail = memo(function Thumbnail({
   columnVersion,
   isDragSource,
   onSelect,
-  onToggleStar,
+  onEditTags,
   onDragStart,
   dragDisabled,
   clipMediaSelected,
@@ -52,6 +54,8 @@ export const Thumbnail = memo(function Thumbnail({
   maxAspect,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const defs = useTagsStore((s) => s.defs);
+  const tags = image.tags ?? [];
   const [aspect, setAspect] = useState<number>(1);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -287,19 +291,38 @@ export const Thumbnail = memo(function Thumbnail({
           deployed_code
         </span>
       )}
+      {/* Tag dots — always on, top-left (the one free corner), so a tagged
+          image reads as tagged without hovering. */}
+      {tags.length > 0 && (
+        <div
+          className="absolute top-1 left-1 flex gap-[2px] drop-shadow"
+          title={tags.join(", ")}
+        >
+          {tags.map((t) => (
+            <span
+              key={t}
+              className="w-[6px] h-[6px]"
+              style={{ background: tagColor(defs, t) }}
+            />
+          ))}
+        </div>
+      )}
       {/* Corner toggles: hidden by default, visible on hover; white when off,
           accent + filled when ON; hovering the icon itself previews accent. */}
       <IconBtn
-        name="star"
+        name="sell"
         size={18}
-        fill={!!image.starred}
-        title={image.starred ? "Remove from favorites" : "Add to favorites"}
+        fill={tags.length > 0}
+        title={tags.length > 0 ? `Tags: ${tags.join(", ")}` : "Add tags"}
         onClick={(e) => {
           e.stopPropagation();
-          onToggleStar(image.path);
+          onEditTags(
+            image.path,
+            (e.currentTarget as HTMLElement).getBoundingClientRect(),
+          );
         }}
         className={`absolute bottom-1 left-1 drop-shadow transition-opacity transition-colors ${
-          image.starred
+          tags.length > 0
             ? "opacity-100 text-accent"
             : "opacity-0 group-hover:opacity-100 text-white hover:text-accent"
         }`}

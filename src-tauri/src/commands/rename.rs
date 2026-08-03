@@ -1,10 +1,9 @@
 //! Sequence/shot rename: folder rename on disk plus the sidecar path cascade
-//! (JSON path rewrites in the subtree, visible-set prefix remap).
+//! (JSON path rewrites in the subtree, asset-index prefix remap).
 
 use std::path::{Path, PathBuf};
 
 use crate::commands::fsutil::{as_str, project_root_for, sanitize, SEQUENCE_SIDECAR, SHOT_SIDECAR};
-use crate::commands::visible::visible_set_rename_prefix;
 use crate::domain::{SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{
@@ -34,19 +33,14 @@ fn walk_json_files(dir: &Path, cb: &mut dyn FnMut(&Path) -> AppResult<()>) -> Ap
 /// Recursively rewrite any string value in `v` whose contents start with
 /// `old_prefix + "/"` (or equal `old_prefix` exactly) to use `new_prefix`.
 /// Returns true if anything changed.
-fn rewrite_paths_in_value(
-    v: &mut serde_json::Value,
-    old_prefix: &str,
-    new_prefix: &str,
-) -> bool {
+fn rewrite_paths_in_value(v: &mut serde_json::Value, old_prefix: &str, new_prefix: &str) -> bool {
     let mut changed = false;
     match v {
         serde_json::Value::String(s) => {
             if s == old_prefix {
                 *s = new_prefix.to_string();
                 changed = true;
-            } else if s.starts_with(old_prefix)
-                && s.as_bytes().get(old_prefix.len()) == Some(&b'/')
+            } else if s.starts_with(old_prefix) && s.as_bytes().get(old_prefix.len()) == Some(&b'/')
             {
                 *s = format!("{}{}", new_prefix, &s[old_prefix.len()..]);
                 changed = true;
@@ -98,9 +92,10 @@ fn rewrite_path_strings_in_subtree(
 
 #[tauri::command]
 pub async fn sequence_rename(sequence_path: String, new_name: String) -> AppResult<String> {
-    let (out, db_rename) =
-        run_blocking(move || rename_subtree(&sequence_path, &new_name, /* is_sequence */ true))
-            .await?;
+    let (out, db_rename) = run_blocking(move || {
+        rename_subtree(&sequence_path, &new_name, /* is_sequence */ true)
+    })
+    .await?;
     apply_db_rename(db_rename).await;
     Ok(out)
 }
@@ -130,7 +125,8 @@ async fn apply_db_rename(info: Option<DbRenamePrefix>) {
 /// Rename a sequence or shot folder and keep every reference to it valid.
 /// Phases: (1) rename the folder on disk; (2) rewrite the absolute path stored
 /// inside each JSON sidecar in the subtree so they point at the new location;
-/// (3) remap the project's visible-set entries from the old prefix to the new.
+/// (3) remap the asset index's `rel_path` prefix. Tags need no phase of their
+/// own — they live in the sidecars, which moved with the folder.
 fn rename_subtree(
     old_path: &str,
     new_name: &str,
@@ -199,18 +195,14 @@ fn rename_subtree(
     //    shotPaths, image metadata sidecars).
     rewrite_path_strings_in_subtree(&new_path, &old_prefix, &new_prefix)?;
 
-    // 3) Rewrite the project.json visible[] prefix entries, and hand back the
-    //    same old/new rel prefixes for the DB's rel_path rewrite (step 4,
-    //    applied by the async command wrapper — this fn is sync).
+    // 3) Hand back the old/new rel prefixes for the DB's rel_path rewrite,
+    //    applied by the async command wrapper — this fn is sync.
     let mut db_rename = None;
     if let Ok(project_root) = project_root_for(&new_path) {
         if let (Some(old_rel), Some(new_rel)) = (
             old.strip_prefix(&project_root).ok().map(as_str),
             new_path.strip_prefix(&project_root).ok().map(as_str),
         ) {
-            if let Err(e) = visible_set_rename_prefix(&project_root, &old_rel, &new_rel) {
-                tracing::warn!("visible-set prefix rename failed: {e}");
-            }
             db_rename = Some((project_root, old_rel, new_rel));
         }
     }

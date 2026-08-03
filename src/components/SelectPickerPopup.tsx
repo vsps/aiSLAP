@@ -1,9 +1,9 @@
 import { useRef } from "react";
 import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
-import { Icon } from "../lib/icon";
 import { startThresholdDrag } from "../lib/dragThreshold";
 import { usePopupDismiss, useClampedPosition } from "../lib/popup";
+import { tagColor, useTagsStore } from "../stores/tagsStore";
 
 type Props = {
   anchor: { x: number; y: number };
@@ -33,6 +33,7 @@ export function SelectPickerPopup({
   const ref = useRef<HTMLDivElement>(null);
   const pos = useClampedPosition(ref, anchor.x, anchor.y);
   usePopupDismiss(ref, onClose);
+  const defs = useTagsStore((s) => s.defs);
 
   const cols = Math.min(images.length, COLS_MAX);
 
@@ -86,9 +87,18 @@ export function SelectPickerPopup({
                   {img.filename}
                 </div>
               )}
-              {img.starred && (
-                <span className="absolute bottom-0.5 left-0.5 drop-shadow pointer-events-none">
-                  <Icon name="star" size={16} fill />
+              {(img.tags ?? []).length > 0 && (
+                <span
+                  className="absolute bottom-0.5 left-0.5 flex gap-[2px] drop-shadow pointer-events-none"
+                  title={(img.tags ?? []).join(", ")}
+                >
+                  {(img.tags ?? []).map((t) => (
+                    <span
+                      key={t}
+                      className="w-[6px] h-[6px]"
+                      style={{ background: tagColor(defs, t) }}
+                    />
+                  ))}
                 </span>
               )}
             </button>

@@ -11,6 +11,7 @@
 //! codebase), so flushing the outbox is triggered by the frontend instead
 //! (after every asset write, and once on project open) via `sync_outbox`.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use libsql::{params, Builder, Connection, Row};
@@ -23,6 +24,7 @@ use crate::commands::fsutil::{
     SEL_DIR, SRC_DIR,
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
+use crate::commands::tags::tags_from_sidecar;
 use crate::domain::ProjectSidecar;
 use crate::error::{AppError, AppResult};
 use crate::fsjson::{read_json_or_default, write_json_atomic};
@@ -56,15 +58,19 @@ const SCHEMA: &[&str] = &[
         role_json TEXT,
         PRIMARY KEY (asset_id, ordinal)
     )",
+    // Tag index. The per-image sidecar's `tags` array is the source of
+    // truth; these rows exist so a gallery scan is one query instead of one
+    // sidecar read per file, and are rebuilt from disk by `tags_reindex` /
+    // reconcile whenever they go missing or stale.
+    "CREATE TABLE IF NOT EXISTS asset_tags (
+        asset_id TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (asset_id, tag)
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_asset_tags_tag ON asset_tags(tag)",
     // Phase 3 tables — created now so that phase doesn't need a migration
     // touch, unused by anything in this file yet.
-    "CREATE TABLE IF NOT EXISTS stars (
-        project_id TEXT NOT NULL,
-        asset_id TEXT NOT NULL,
-        user TEXT,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (project_id, asset_id)
-    )",
     "CREATE TABLE IF NOT EXISTS shot_state (
         project_id TEXT NOT NULL,
         shot_rel_path TEXT NOT NULL,
@@ -85,11 +91,12 @@ const SCHEMA: &[&str] = &[
         prompts_json TEXT,
         user TEXT
     )",
-    // Outbox is keyed by asset_id alone (not (table, id)) because the only
-    // writers today are asset_upsert/asset_refs_set, which always touch both
-    // `assets` and `asset_refs` for the same id together — one row per asset
-    // covers "resync both tables for this id", and re-queuing collapses via
-    // the PK. Phase 3 tables will need their own outbox key shape.
+    // Outbox is keyed by asset_id alone (not (table, id)) because every
+    // writer today — asset_upsert, asset_refs_set, asset_tags_apply — is
+    // scoped to a single asset id and `push_one_asset` resyncs all three
+    // tables for that id in one go, so one row covers the lot and re-queuing
+    // collapses via the PK. A future table keyed by anything other than an
+    // asset id will need its own outbox key shape.
     "CREATE TABLE IF NOT EXISTS outbox (
         asset_id TEXT PRIMARY KEY,
         queued_at TEXT NOT NULL
@@ -164,6 +171,10 @@ pub struct ReconcileReport {
     /// Existing DB rows whose `rel_path` no longer matched the file's
     /// current location — updated in place.
     pub relinked: u32,
+    /// Assets whose indexed tags disagreed with their sidecar — the sidecar
+    /// wins, so this is how tags edited outside this app (or lost with a
+    /// deleted index file) find their way back in.
+    pub tags_synced: u32,
 }
 
 fn db_err(e: impl std::fmt::Display) -> AppError {
@@ -256,13 +267,20 @@ fn row_to_asset(row: &Row) -> AppResult<AssetRecord> {
     })
 }
 
-async fn select_asset_by(conn: &Connection, column: &str, value: &str) -> AppResult<Option<AssetRecord>> {
+async fn select_asset_by(
+    conn: &Connection,
+    column: &str,
+    value: &str,
+) -> AppResult<Option<AssetRecord>> {
     // `column` is always one of our own fixed literals ("id"/"content_hash")
     // below, never user input — safe to interpolate into the SQL text.
     let sql = format!(
         "SELECT {ASSET_COLUMNS} FROM assets WHERE {column} = ?1 AND deleted_at IS NULL LIMIT 1"
     );
-    let mut rows = conn.query(&sql, params!(value.to_string())).await.map_err(db_err)?;
+    let mut rows = conn
+        .query(&sql, params!(value.to_string()))
+        .await
+        .map_err(db_err)?;
     match rows.next().await.map_err(db_err)? {
         Some(row) => Ok(Some(row_to_asset(&row)?)),
         None => Ok(None),
@@ -323,7 +341,11 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
     Ok(())
 }
 
-async fn replace_ref_rows(conn: &Connection, asset_id: &str, refs: &[AssetRefRecord]) -> AppResult<()> {
+async fn replace_ref_rows(
+    conn: &Connection,
+    asset_id: &str,
+    refs: &[AssetRefRecord],
+) -> AppResult<()> {
     conn.execute(
         "DELETE FROM asset_refs WHERE asset_id = ?1",
         params!(asset_id.to_string()),
@@ -342,6 +364,40 @@ async fn replace_ref_rows(conn: &Connection, asset_id: &str, refs: &[AssetRefRec
                 r.ref_hash.clone(),
                 r.role_json.clone()
             ),
+        )
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn select_tags(conn: &Connection, asset_id: &str) -> AppResult<Vec<String>> {
+    let mut rows = conn
+        .query(
+            "SELECT tag FROM asset_tags WHERE asset_id = ?1 ORDER BY tag",
+            params!(asset_id.to_string()),
+        )
+        .await
+        .map_err(db_err)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(db_err)? {
+        out.push(row.get::<String>(0).map_err(db_err)?);
+    }
+    Ok(out)
+}
+
+async fn replace_tag_rows(conn: &Connection, asset_id: &str, tags: &[String]) -> AppResult<()> {
+    conn.execute(
+        "DELETE FROM asset_tags WHERE asset_id = ?1",
+        params!(asset_id.to_string()),
+    )
+    .await
+    .map_err(db_err)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    for tag in tags {
+        conn.execute(
+            "INSERT INTO asset_tags (asset_id, tag, updated_at) VALUES (?1, ?2, ?3)",
+            params!(asset_id.to_string(), tag.clone(), now.clone()),
         )
         .await
         .map_err(db_err)?;
@@ -406,7 +462,11 @@ pub async fn asset_upsert(project_root: &Path, mut record: AssetRecord) -> AppRe
 /// reconcile. No-op (not an error) if the asset isn't indexed yet — nothing
 /// to update, and reconcile will pick the cost up fresh from the sidecar
 /// whenever it does get indexed.
-pub async fn asset_cost_update(project_root: &Path, asset_id: &str, cost_usd: f64) -> AppResult<()> {
+pub async fn asset_cost_update(
+    project_root: &Path,
+    asset_id: &str,
+    cost_usd: f64,
+) -> AppResult<()> {
     let conn = open_local(project_root).await?;
     let now = chrono::Utc::now().to_rfc3339();
     let changed = conn
@@ -438,7 +498,11 @@ async fn update_rel_path(conn: &Connection, asset_id: &str, new_rel_path: &str) 
 /// for path changes, so a moved file resolves again immediately instead of
 /// waiting for the next `project_reconcile` pass. No-op if the asset isn't
 /// indexed yet or is already at `new_rel_path`.
-pub async fn asset_relink(project_root: &Path, asset_id: &str, new_rel_path: &str) -> AppResult<()> {
+pub async fn asset_relink(
+    project_root: &Path,
+    asset_id: &str,
+    new_rel_path: &str,
+) -> AppResult<()> {
     let conn = open_local(project_root).await?;
     match select_asset_by(&conn, "id", asset_id).await? {
         Some(existing) if existing.rel_path != new_rel_path => {
@@ -535,6 +599,140 @@ pub async fn asset_refs_get(project_root: &Path, asset_id: &str) -> AppResult<Ve
     select_refs(&conn, asset_id).await
 }
 
+// ---------- tags ----------
+
+/// What the index knows about the assets under one rel-path prefix.
+/// `indexed` lists *every* asset under the prefix, tagged or not, so a
+/// caller can tell "this file has no tags" from "this file was never
+/// indexed" and only fall back to reading a sidecar in the second case.
+#[derive(Debug, Default, Clone)]
+pub struct TagIndex {
+    pub by_rel: HashMap<String, Vec<String>>,
+    pub indexed: HashSet<String>,
+}
+
+impl TagIndex {
+    pub fn tags_for(&self, rel: &str) -> Vec<String> {
+        self.by_rel.get(rel).cloned().unwrap_or_default()
+    }
+
+    pub fn is_indexed(&self, rel: &str) -> bool {
+        self.indexed.contains(rel)
+    }
+}
+
+/// One asset's worth of tag work: replace its tag rows, ingesting the
+/// `assets` row they hang off first if there isn't one yet. `record` is a
+/// fallback for that first-sight case only — it never overwrites a live row,
+/// since a sidecar-derived record can be thinner than what reconcile and the
+/// generation path have already put in the index.
+pub struct TagUpdate {
+    pub asset_id: String,
+    pub record: Option<AssetRecord>,
+    pub tags: Vec<String>,
+}
+
+fn under_prefix(rel: &str, prefix: &str) -> bool {
+    prefix.is_empty() || rel == prefix || rel.starts_with(&format!("{prefix}/"))
+}
+
+/// The whole project's tag index in one query. Project-wide rather than
+/// scoped to the directory being scanned because a shot's gallery also shows
+/// the project-level GLOBAL SRC column, and anything outside the scope would
+/// fall through to a per-file sidecar read.
+pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
+    let conn = open_local(project_root).await?;
+    let mut rows = conn
+        .query(
+            "SELECT a.rel_path, t.tag FROM assets a \
+             LEFT JOIN asset_tags t ON t.asset_id = a.id \
+             WHERE a.deleted_at IS NULL",
+            (),
+        )
+        .await
+        .map_err(db_err)?;
+    let mut idx = TagIndex::default();
+    while let Some(row) = rows.next().await.map_err(db_err)? {
+        let rel = row.get::<String>(0).map_err(db_err)?;
+        let tag = opt_string(&row, 1)?;
+        idx.indexed.insert(rel.clone());
+        if let Some(tag) = tag {
+            idx.by_rel.entry(rel).or_default().push(tag);
+        }
+    }
+    for tags in idx.by_rel.values_mut() {
+        tags.sort();
+    }
+    Ok(idx)
+}
+
+/// Apply a batch of tag replacements on one connection. Used for a single
+/// tag edit, and for the bulk paths (migration, reindex) where reopening the
+/// database per asset would dominate the cost.
+pub async fn asset_tags_apply(project_root: &Path, updates: &[TagUpdate]) -> AppResult<u32> {
+    if updates.is_empty() {
+        return Ok(0);
+    }
+    let project_id = read_project_id(project_root)?;
+    let conn = open_local(project_root).await?;
+    let mut applied = 0u32;
+    for update in updates {
+        let known = select_asset_by(&conn, "id", &update.asset_id)
+            .await?
+            .is_some();
+        if let (false, Some(record)) = (known, &update.record) {
+            let mut record = record.clone();
+            record.project_id = Some(project_id.clone());
+            record.updated_at = Some(chrono::Utc::now().to_rfc3339());
+            record.deleted_at = None;
+            upsert_asset_row(&conn, &record).await?;
+        }
+        replace_tag_rows(&conn, &update.asset_id, &update.tags).await?;
+        enqueue_outbox(&conn, &update.asset_id).await?;
+        applied += 1;
+    }
+    Ok(applied)
+}
+
+/// Drop the index rows for a deleted file (or everything under a deleted
+/// directory). A hard delete rather than a `deleted_at` stamp: the index is
+/// rebuildable from disk, and the tag views query it directly, so a
+/// tombstone would just be a ghost with tags. Returns the rows removed.
+pub async fn assets_purge(project_root: &Path, rel: &str, is_prefix: bool) -> AppResult<u32> {
+    let conn = open_local(project_root).await?;
+    let clean = rel.trim_end_matches('/');
+    let mut rows = conn
+        .query("SELECT id, rel_path FROM assets", ())
+        .await
+        .map_err(db_err)?;
+    let mut ids: Vec<String> = Vec::new();
+    while let Some(row) = rows.next().await.map_err(db_err)? {
+        let id = row.get::<String>(0).map_err(db_err)?;
+        let rel_path = row.get::<String>(1).map_err(db_err)?;
+        let hit = if is_prefix {
+            under_prefix(&rel_path, clean)
+        } else {
+            rel_path == clean
+        };
+        if hit {
+            ids.push(id);
+        }
+    }
+    for id in &ids {
+        for sql in [
+            "DELETE FROM asset_tags WHERE asset_id = ?1",
+            "DELETE FROM asset_refs WHERE asset_id = ?1",
+            "DELETE FROM outbox WHERE asset_id = ?1",
+            "DELETE FROM assets WHERE id = ?1",
+        ] {
+            conn.execute(sql, params!(id.clone()))
+                .await
+                .map_err(db_err)?;
+        }
+    }
+    Ok(ids.len() as u32)
+}
+
 /// Push every outbox-queued asset (+ its refs) to Turso, if configured and
 /// reachable. Never returns `Err` for "not configured" or "offline" — those
 /// are reported in the `SyncReport` so a fire-and-forget frontend caller
@@ -569,7 +767,10 @@ pub async fn sync_outbox(project_root: &Path) -> AppResult<SyncReport> {
         match push_one_asset(&local, &remote, id).await {
             Ok(()) => {
                 local
-                    .execute("DELETE FROM outbox WHERE asset_id = ?1", params!(id.clone()))
+                    .execute(
+                        "DELETE FROM outbox WHERE asset_id = ?1",
+                        params!(id.clone()),
+                    )
                     .await
                     .map_err(db_err)?;
                 pushed += 1;
@@ -598,6 +799,8 @@ async fn push_one_asset(local: &Connection, remote: &Connection, id: &str) -> Ap
     upsert_asset_row(remote, &record).await?;
     let refs = select_refs(local, id).await?;
     replace_ref_rows(remote, id, &refs).await?;
+    let tags = select_tags(local, id).await?;
+    replace_tag_rows(remote, id, &tags).await?;
     Ok(())
 }
 
@@ -615,7 +818,10 @@ pub(crate) fn media_kind(path: &Path) -> &'static str {
     }
 }
 
-pub async fn project_reconcile(project_path: &Path, ffmpeg_path: &str) -> AppResult<ReconcileReport> {
+pub async fn project_reconcile(
+    project_path: &Path,
+    ffmpeg_path: &str,
+) -> AppResult<ReconcileReport> {
     let project_id = read_project_id(project_path)?;
     let conn = open_local(project_path).await?;
     let mut report = ReconcileReport::default();
@@ -636,8 +842,15 @@ pub async fn project_reconcile(project_path: &Path, ffmpeg_path: &str) -> AppRes
             if shot_name == SRC_DIR || shot_name == SEL_DIR {
                 continue;
             }
-            reconcile_shot(&conn, project_path, &project_id, &shot_dir, ffmpeg_path, &mut report)
-                .await?;
+            reconcile_shot(
+                &conn,
+                project_path,
+                &project_id,
+                &shot_dir,
+                ffmpeg_path,
+                &mut report,
+            )
+            .await?;
         }
     }
     Ok(report)
@@ -673,12 +886,22 @@ async fn reconcile_shot(
             if !media_path.is_file() {
                 continue;
             }
-            if !is_image_ext(&media_path) && !is_video_ext(&media_path) && !is_model3d_ext(&media_path) {
+            if !is_image_ext(&media_path)
+                && !is_video_ext(&media_path)
+                && !is_model3d_ext(&media_path)
+            {
                 continue;
             }
             report.scanned += 1;
-            reconcile_one_file(conn, project_root, project_id, &media_path, ffmpeg_path, report)
-                .await?;
+            reconcile_one_file(
+                conn,
+                project_root,
+                project_id,
+                &media_path,
+                ffmpeg_path,
+                report,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -701,7 +924,10 @@ async fn reconcile_one_file(
         return Ok(());
     };
 
-    let mut asset_id = obj.get("assetId").and_then(|v| v.as_str()).map(String::from);
+    let mut asset_id = obj
+        .get("assetId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let is_legacy = asset_id.is_none();
 
     if is_legacy {
@@ -733,6 +959,8 @@ async fn reconcile_one_file(
             enqueue_outbox(conn, &id).await?;
             report.relinked += 1;
         }
+        // Already indexed at the right path — location is in sync. Content
+        // still might not be; tags are re-checked against the sidecar below.
         Some(_) => {}
         None => {
             let now = chrono::Utc::now().to_rfc3339();
@@ -742,10 +970,22 @@ async fn reconcile_one_file(
                 rel_path,
                 content_hash: Some(hash),
                 kind: media_kind(media_path).to_string(),
-                provider: obj.get("provider").and_then(|v| v.as_str()).map(String::from),
-                model_id: obj.get("modelId").and_then(|v| v.as_str()).map(String::from),
-                endpoint: obj.get("endpoint").and_then(|v| v.as_str()).map(String::from),
-                combined_prompt: obj.get("combinedPrompt").and_then(|v| v.as_str()).map(String::from),
+                provider: obj
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                model_id: obj
+                    .get("modelId")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                endpoint: obj
+                    .get("endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                combined_prompt: obj
+                    .get("combinedPrompt")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 settings_json: obj.get("settings").map(|v| v.to_string()),
                 cost_usd: obj.get("costUsd").and_then(|v| v.as_f64()),
                 created_at: obj
@@ -760,6 +1000,19 @@ async fn reconcile_one_file(
             enqueue_outbox(conn, &id).await?;
             report.db_ingested += 1;
         }
+    }
+
+    // Sidecar is the source of truth for tags — pull it back over the index
+    // whenever the two have drifted.
+    let sidecar_tags = tags_from_sidecar(&obj);
+    let mut indexed_tags = select_tags(conn, &id).await?;
+    let mut wanted = sidecar_tags.clone();
+    wanted.sort();
+    indexed_tags.sort();
+    if wanted != indexed_tags {
+        replace_tag_rows(conn, &id, &sidecar_tags).await?;
+        enqueue_outbox(conn, &id).await?;
+        report.tags_synced += 1;
     }
     Ok(())
 }
@@ -850,7 +1103,9 @@ mod tests {
         // No row for this id — a no-op, not an error (a move on a file that
         // was never indexed, e.g. pre-Phase-1, self-heals on the next
         // reconcile instead).
-        asset_relink(&root, "no-such-asset", "wherever.png").await.unwrap();
+        asset_relink(&root, "no-such-asset", "wherever.png")
+            .await
+            .unwrap();
         let still_missing = asset_lookup(&root, Some("no-such-asset".to_string()), None)
             .await
             .unwrap();
@@ -879,10 +1134,9 @@ mod tests {
             .await
             .unwrap();
 
-        let updated =
-            asset_rename_prefix(&root, "seq1/shot1", "seq1/shot1-renamed")
-                .await
-                .unwrap();
+        let updated = asset_rename_prefix(&root, "seq1/shot1", "seq1/shot1-renamed")
+            .await
+            .unwrap();
         assert_eq!(updated, 2);
 
         let in1 = asset_lookup(&root, Some("asset-in-1".to_string()), None)
@@ -923,7 +1177,9 @@ mod tests {
             .await
             .unwrap();
 
-        asset_cost_update(&root, "asset-cost-1", 0.0123).await.unwrap();
+        asset_cost_update(&root, "asset-cost-1", 0.0123)
+            .await
+            .unwrap();
         let row = asset_lookup(&root, Some("asset-cost-1".to_string()), None)
             .await
             .unwrap()
@@ -932,7 +1188,9 @@ mod tests {
 
         // No row for this id yet — a no-op, not an error (mirrors cost.rs's
         // backfill running before the asset has ever been indexed).
-        asset_cost_update(&root, "no-such-asset", 1.0).await.unwrap();
+        asset_cost_update(&root, "no-such-asset", 1.0)
+            .await
+            .unwrap();
         let still_missing = asset_lookup(&root, Some("no-such-asset".to_string()), None)
             .await
             .unwrap();
@@ -966,7 +1224,9 @@ mod tests {
     #[tokio::test]
     async fn sync_outbox_reports_not_configured_when_unset() {
         let (root, project_id) = test_project();
-        asset_upsert(&root, asset("asset-3", "x.png")).await.unwrap();
+        asset_upsert(&root, asset("asset-3", "x.png"))
+            .await
+            .unwrap();
         // This dev machine has no TURSO_DATABASE_URL/TURSO_AUTH_TOKEN set —
         // exercises the "local-only, nothing configured" branch.
         let report = sync_outbox(&root).await.unwrap();
@@ -984,7 +1244,11 @@ mod tests {
 
         // Legacy file: sidecar with no assetId (pre-Phase-1 output).
         let legacy_media = v1.join("legacy.png");
-        fs::write(&legacy_media, b"not a real png; embed is allowed to fail here").unwrap();
+        fs::write(
+            &legacy_media,
+            b"not a real png; embed is allowed to fail here",
+        )
+        .unwrap();
         write_json_atomic(
             &legacy_media.with_extension("json"),
             &serde_json::json!({
@@ -1029,8 +1293,11 @@ mod tests {
         fs::create_dir_all(&v2).unwrap();
         let moved_media = v2.join("migrated.png");
         fs::rename(&migrated_media, &moved_media).unwrap();
-        fs::rename(migrated_media.with_extension("json"), moved_media.with_extension("json"))
-            .unwrap();
+        fs::rename(
+            migrated_media.with_extension("json"),
+            moved_media.with_extension("json"),
+        )
+        .unwrap();
 
         let report3 = project_reconcile(&root, "").await.unwrap();
         assert_eq!(report3.scanned, 2);
@@ -1042,6 +1309,146 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(relinked_row.rel_path.contains("gen002"));
+
+        cleanup(&root, &project_id);
+    }
+
+    fn tag_update(id: &str, rel_path: &str, tags: &[&str]) -> TagUpdate {
+        TagUpdate {
+            asset_id: id.to_string(),
+            record: Some(asset(id, rel_path)),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn tags_apply_replaces_and_indexes_unknown_assets() {
+        let (root, project_id) = test_project();
+
+        // The asset isn't in the index yet — the record on the update is the
+        // fallback that gets it there.
+        asset_tags_apply(
+            &root,
+            &[tag_update(
+                "tag-a",
+                "seq1/shot1/gen001/a.png",
+                &["fav", "hero"],
+            )],
+        )
+        .await
+        .unwrap();
+
+        let idx = tags_all(&root).await.unwrap();
+        assert_eq!(
+            idx.tags_for("seq1/shot1/gen001/a.png"),
+            vec!["fav".to_string(), "hero".to_string()]
+        );
+        assert!(idx.is_indexed("seq1/shot1/gen001/a.png"));
+
+        // Replace, not merge.
+        asset_tags_apply(
+            &root,
+            &[tag_update("tag-a", "seq1/shot1/gen001/a.png", &["hero"])],
+        )
+        .await
+        .unwrap();
+        let idx = tags_all(&root).await.unwrap();
+        assert_eq!(
+            idx.tags_for("seq1/shot1/gen001/a.png"),
+            vec!["hero".to_string()]
+        );
+
+        // An untagged-but-indexed asset is "indexed" with no tags — that's
+        // what tells a gallery scan not to fall back to the sidecar.
+        asset_upsert(&root, asset("tag-b", "seq1/shot1/gen001/b.png"))
+            .await
+            .unwrap();
+        let idx = tags_all(&root).await.unwrap();
+        assert!(idx.is_indexed("seq1/shot1/gen001/b.png"));
+        assert!(idx.tags_for("seq1/shot1/gen001/b.png").is_empty());
+        assert!(!idx.is_indexed("seq1/shot1/gen001/never-seen.png"));
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn purge_drops_a_deleted_file_and_a_deleted_directory() {
+        let (root, project_id) = test_project();
+        asset_tags_apply(
+            &root,
+            &[
+                tag_update("purge-1", "seq1/shot1/gen001/a.png", &["fav"]),
+                tag_update("purge-2", "seq1/shot1/gen002/b.png", &["fav"]),
+                tag_update("purge-3", "seq1/shot2/gen001/c.png", &["fav"]),
+            ],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            assets_purge(&root, "seq1/shot1/gen001/a.png", false)
+                .await
+                .unwrap(),
+            1
+        );
+        // A prefix must stop at a path boundary: shot1 must not take shot10
+        // (or, here, shot2) with it.
+        assert_eq!(assets_purge(&root, "seq1/shot1", true).await.unwrap(), 1);
+
+        let idx = tags_all(&root).await.unwrap();
+        assert!(!idx.is_indexed("seq1/shot1/gen001/a.png"));
+        assert!(!idx.is_indexed("seq1/shot1/gen002/b.png"));
+        assert_eq!(
+            idx.tags_for("seq1/shot2/gen001/c.png"),
+            vec!["fav".to_string()]
+        );
+
+        cleanup(&root, &project_id);
+    }
+
+    #[tokio::test]
+    async fn reconcile_pulls_sidecar_tags_back_over_a_wiped_index() {
+        let (root, project_id) = test_project();
+        let v1 = root.join("seq1").join("shot1").join("gen001");
+        fs::create_dir_all(&v1).unwrap();
+        let media = v1.join("tagged.png");
+        fs::write(&media, b"fake").unwrap();
+        write_json_atomic(
+            &media.with_extension("json"),
+            &serde_json::json!({
+                "settings": {}, "refs": [],
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "assetId": "tagged-1", "contentHash": file_hash_impl(&media).unwrap(),
+                "tags": ["fav", "hero"],
+            }),
+        )
+        .unwrap();
+
+        let report = project_reconcile(&root, "").await.unwrap();
+        assert_eq!(report.db_ingested, 1);
+        assert_eq!(report.tags_synced, 1);
+        let idx = tags_all(&root).await.unwrap();
+        assert_eq!(
+            idx.tags_for("seq1/shot1/gen001/tagged.png"),
+            vec!["fav".to_string(), "hero".to_string()]
+        );
+
+        // Second pass has nothing to say — sidecar and index already agree.
+        assert_eq!(project_reconcile(&root, "").await.unwrap().tags_synced, 0);
+
+        // Blow the tag rows away (as a deleted index file would) and confirm
+        // the sidecar is what puts them back.
+        assets_purge(&root, "seq1/shot1/gen001/tagged.png", false)
+            .await
+            .unwrap();
+        let report = project_reconcile(&root, "").await.unwrap();
+        assert_eq!(report.db_ingested, 1);
+        assert_eq!(report.tags_synced, 1);
+        let idx = tags_all(&root).await.unwrap();
+        assert_eq!(
+            idx.tags_for("seq1/shot1/gen001/tagged.png"),
+            vec!["fav".to_string(), "hero".to_string()]
+        );
 
         cleanup(&root, &project_id);
     }

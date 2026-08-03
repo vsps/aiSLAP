@@ -12,7 +12,7 @@ use crate::commands::fsutil::{
     as_str, list_dirs, next_version_name, sanitize, version_prefix_for, PROJECT_SIDECAR, SEL_DIR,
     SEQUENCE_SIDECAR, SHOT_SIDECAR, SRC_DIR,
 };
-use crate::commands::gallery::scan_shot_columns;
+use crate::commands::gallery::{scan_shot_columns, tag_index_for};
 use crate::domain::{GalleryColumn, ProjectSidecar, SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{
@@ -44,9 +44,10 @@ pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
             &ProjectSidecar {
                 title,
                 created: Utc::now().to_rfc3339(),
-                visible: vec![],
                 version_prefix: "gen".into(),
-                project_id: String::new(),
+                // A brand-new project has nothing to convert.
+                tags_migrated: true,
+                ..Default::default()
             },
         )?;
     }
@@ -109,13 +110,14 @@ pub struct ShotOpenResult {
 
 #[tauri::command]
 pub async fn shot_open(shot_path: String) -> AppResult<ShotOpenResult> {
+    let index = tag_index_for(&PathBuf::from(&shot_path)).await;
     run_blocking(move || {
         let root = PathBuf::from(&shot_path);
         if !root.is_dir() {
             return Err(AppError::Msg(format!("not a directory: {shot_path}")));
         }
         let sidecar: ShotSidecar = read_sidecar(&root.join(SHOT_SIDECAR))?;
-        let columns = scan_shot_columns(&root)?;
+        let columns = scan_shot_columns(&root, &index)?;
         Ok(ShotOpenResult { columns, sidecar })
     })
     .await

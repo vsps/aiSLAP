@@ -6,18 +6,19 @@ import type {
   SequenceSidecar,
   SequenceStacks,
   ShotSidecar,
-  SeqStarredGroup,
+  SeqTaggedGroup,
 } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { useTimelineStore } from "./timelineStore";
 import { useScriptStore } from "./scriptStore";
+import { useTagsStore } from "./tagsStore";
 import { swallow } from "../lib/errors";
 import { normalizeDir } from "../lib/paths";
 import { coalesceAsync } from "../lib/coalesce";
 import { pushLog } from "./logStore";
 
 type PromptScope = "sequence" | "shot";
-type ViewMode = "columns" | "starred" | "stacked";
+type ViewMode = "columns" | "tagged" | "stacked";
 
 type State = {
   projectPath: string | null;
@@ -37,6 +38,10 @@ type State = {
   infoImagePath: string | null;
   zoomInitialMode: "draw" | "crop" | null;
   renameImagePath: string | null;
+  /** Image whose tag editor is open, plus where to anchor the popover
+   *  (null anchor = centered, for invocations with no on-screen origin such
+   *  as the context menu). */
+  tagEditor: { path: string; anchor: { x: number; y: number } | null } | null;
   imageDrag: { fromPath: string } | null;
   targetVersion: string | null;
 
@@ -59,8 +64,8 @@ type State = {
   } | null;
 
   viewMode: ViewMode;
-  starredGroups: SeqStarredGroup[];
-  starredLoading: boolean;
+  taggedGroups: SeqTaggedGroup[];
+  taggedLoading: boolean;
   sequenceStacks: SequenceStacks | null;
   sequenceStacksLoading: boolean;
 
@@ -91,6 +96,10 @@ type Actions = {
   setInfoImage: (path: string | null) => void;
   setZoomInitialMode: (mode: "draw" | "crop" | null) => void;
   setRenameImage: (path: string | null) => void;
+  setTagEditor: (
+    path: string | null,
+    anchor?: { x: number; y: number } | null,
+  ) => void;
   setImageDrag: (drag: State["imageDrag"]) => void;
   setTrace: (state: State["traceActive"]) => void;
 
@@ -98,7 +107,7 @@ type Actions = {
   setCompareSlot: (slot: "a" | "b", path: string | null) => void;
 
   setViewMode: (mode: ViewMode) => void;
-  rescanStarred: () => Promise<void>;
+  rescanTagged: () => Promise<void>;
   rescanSequenceStacks: () => Promise<void>;
 
   navigatePromptHistory: (scope: PromptScope, delta: number) => void;
@@ -146,8 +155,8 @@ export const useSessionStore = create<State & Actions>((set, get) => {
           ? s.targetVersion
           : latestVersion(columns),
     }));
-    if (get().viewMode === "starred") {
-      void get().rescanStarred();
+    if (get().viewMode === "tagged") {
+      void get().rescanTagged();
     } else if (get().viewMode === "stacked") {
       void get().rescanSequenceStacks();
     }
@@ -168,6 +177,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
     infoImagePath: null,
     zoomInitialMode: null,
     renameImagePath: null,
+    tagEditor: null,
     imageDrag: null,
     targetVersion: null,
 
@@ -182,8 +192,8 @@ export const useSessionStore = create<State & Actions>((set, get) => {
     traceActive: null,
 
     viewMode: "columns",
-    starredGroups: [],
-    starredLoading: false,
+    taggedGroups: [],
+    taggedLoading: false,
     sequenceStacks: null,
     sequenceStacksLoading: false,
 
@@ -211,6 +221,25 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       });
       useTimelineStore.getState().reset();
       void useScriptStore.getState().loadFor(normalized);
+      // One-shot conversion of the old star list + SEL folders into tags,
+      // then load the vocabulary. Awaited (unlike reconcile below) because
+      // the gallery renders tags immediately and this is cheap — it only
+      // touches files the conversion actually applies to, once per project.
+      void (async () => {
+        try {
+          const report = await cmd.project_tags_migrate(normalized);
+          if (report.ran && (report.starred || report.selects)) {
+            pushLog(
+              "INFO",
+              `Tags: migrated ${report.starred} starred, ${report.selects} selects`,
+            );
+          }
+        } catch (e) {
+          swallow("tag migration")(e);
+        }
+        await useTagsStore.getState().loadDefs(normalized);
+        if (get().projectPath === normalized) void get().rescanShot();
+      })();
       // Best-effort: a project with no id yet gets one minted and persisted.
       // Failure just leaves projectId null — asset embedding degrades to an
       // empty project tag rather than blocking project open.
@@ -232,10 +261,15 @@ export const useSessionStore = create<State & Actions>((set, get) => {
           .project_reconcile(normalized, config?.ffmpegPath ?? "")
           .catch(() => null);
         if (!report) return;
-        if (report.sidecarBackfilled || report.dbIngested || report.relinked) {
+        if (
+          report.sidecarBackfilled ||
+          report.dbIngested ||
+          report.relinked ||
+          report.tagsSynced
+        ) {
           pushLog(
             "INFO",
-            `Asset index: ${report.sidecarBackfilled} backfilled, ${report.dbIngested} ingested, ${report.relinked} relinked`,
+            `Asset index: ${report.sidecarBackfilled} backfilled, ${report.dbIngested} ingested, ${report.relinked} relinked, ${report.tagsSynced} tags synced`,
           );
         }
       })();
@@ -256,10 +290,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         },
         shotHistory: emptyChannel(),
         versionComments: {},
-        starredGroups: [],
+        taggedGroups: [],
       });
-      if (get().viewMode === "starred") {
-        void get().rescanStarred();
+      if (get().viewMode === "tagged") {
+        void get().rescanTagged();
       } else if (get().viewMode === "stacked") {
         void get().rescanSequenceStacks();
       }
@@ -357,6 +391,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       set({ renameImagePath: path });
     },
 
+    setTagEditor(path, anchor = null) {
+      set({ tagEditor: path ? { path, anchor } : null });
+    },
+
     setInfoImage(path) {
       set({ infoImagePath: path });
     },
@@ -379,25 +417,30 @@ export const useSessionStore = create<State & Actions>((set, get) => {
 
     setViewMode(mode) {
       set({ viewMode: mode });
-      if (mode === "starred") {
-        void get().rescanStarred();
+      if (mode === "tagged") {
+        void get().rescanTagged();
       } else if (mode === "stacked") {
         void get().rescanSequenceStacks();
       }
     },
 
-    async rescanStarred() {
+    async rescanTagged() {
       const { projectPath } = get();
       if (!projectPath) {
-        set({ starredGroups: [], starredLoading: false });
+        set({ taggedGroups: [], taggedLoading: false });
         return;
       }
-      set({ starredLoading: true });
+      const { activeFilter, filterMode } = useTagsStore.getState();
+      set({ taggedLoading: true });
       try {
-        const groups = await cmd.project_starred_scan(projectPath);
-        set({ starredGroups: groups, starredLoading: false });
+        const groups = await cmd.project_tag_scan(
+          projectPath,
+          activeFilter,
+          filterMode,
+        );
+        set({ taggedGroups: groups, taggedLoading: false });
       } catch (e) {
-        set({ starredLoading: false });
+        set({ taggedLoading: false });
         throw e;
       }
     },

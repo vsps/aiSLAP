@@ -11,12 +11,15 @@ import { ImageZoomModal } from "./ImageZoomModal";
 import { ModelZoomModal } from "./ModelZoomModal";
 import { RenameImageModal } from "./RenameImageModal";
 import { StackedView } from "./StackedView";
-import { StarredView } from "./StarredView";
+import { TagEditorPopup } from "./TagEditorPopup";
+import { TagFilterBar } from "./TagFilterBar";
+import { TagView } from "./TagView";
 import { TraceView } from "./TraceView";
 import { Icon } from "../lib/icon";
 import { useSessionStore } from "../stores/sessionStore";
 import { useLayoutStore } from "../stores/layoutStore";
 import { useGenerationStore } from "../stores/generationStore";
+import { matchesFilter, useTagsStore } from "../stores/tagsStore";
 import { addImageToRefs, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
@@ -33,12 +36,32 @@ export function Gallery() {
   const columns = useSessionStore((s) => s.columns);
   const shotPath = useSessionStore((s) => s.shotPath);
   const pendingOutputs = useGenerationStore((s) => s.pendingOutputs);
+  const activeFilter = useTagsStore((s) => s.activeFilter);
+  const filterMode = useTagsStore((s) => s.filterMode);
 
-  // Merge pending-output placeholders into columns so the gallery shows
-  // skeleton tiles for in-flight generations without touching the filesystem.
+  // What the gallery actually shows: the loaded columns narrowed to the
+  // active tag filter. Keyboard nav walks this too, so arrows can't land on
+  // a thumbnail the filter has hidden.
+  const filtered = useMemo<GalleryColumnData[]>(
+    () =>
+      activeFilter.length === 0
+        ? columns
+        : columns.map((c) => ({
+            ...c,
+            images: c.images.filter((i) =>
+              matchesFilter(i.tags, activeFilter, filterMode),
+            ),
+          })),
+    [columns, activeFilter, filterMode],
+  );
+
+  // Merge pending-output placeholders in so the gallery shows skeleton tiles
+  // for in-flight generations without touching the filesystem. Added after
+  // filtering — an in-flight tile has no tags yet, and hiding it would read
+  // as the generation having failed.
   const columnsWithPlaceholders = useMemo<GalleryColumnData[]>(() => {
-    if (Object.keys(pendingOutputs).length === 0) return columns;
-    const result = columns.map((c) => ({ ...c, images: [...c.images] }));
+    if (Object.keys(pendingOutputs).length === 0) return filtered;
+    const result = filtered.map((c) => ({ ...c, images: [...c.images] }));
     for (const [key, count] of Object.entries(pendingOutputs)) {
       const [pShot, pVersion] = key.split("|");
       if (pShot !== shotPath) continue;
@@ -69,7 +92,7 @@ export function Gallery() {
       }
     }
     return result;
-  }, [columns, pendingOutputs, shotPath]);
+  }, [filtered, pendingOutputs, shotPath]);
 
   const traceActive = useSessionStore((s) => s.traceActive);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
@@ -493,51 +516,51 @@ export function Gallery() {
       const tag = tgt?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tgt?.isContentEditable)
         return;
-      if (columns.every((c) => c.images.length === 0)) return;
+      if (filtered.every((c) => c.images.length === 0)) return;
 
       e.preventDefault();
       const selected = useSessionStore.getState().selectedImagePath;
       let colIdx = selected
-        ? columns.findIndex((c) => c.images.some((i) => i.path === selected))
+        ? filtered.findIndex((c) => c.images.some((i) => i.path === selected))
         : -1;
       let rowIdx = -1;
       if (colIdx >= 0 && selected) {
-        rowIdx = columns[colIdx].images.findIndex((i) => i.path === selected);
+        rowIdx = filtered[colIdx].images.findIndex((i) => i.path === selected);
       }
 
       // No current selection → first image of first non-empty column.
       if (colIdx < 0 || rowIdx < 0) {
-        const firstCol = columns.findIndex((c) => c.images.length > 0);
+        const firstCol = filtered.findIndex((c) => c.images.length > 0);
         if (firstCol < 0) return;
-        setSelectedImage(columns[firstCol].images[0].path);
+        setSelectedImage(filtered[firstCol].images[0].path);
         return;
       }
 
       if (e.key === "ArrowUp") {
         if (rowIdx > 0) rowIdx -= 1;
       } else if (e.key === "ArrowDown") {
-        if (rowIdx < columns[colIdx].images.length - 1) rowIdx += 1;
+        if (rowIdx < filtered[colIdx].images.length - 1) rowIdx += 1;
       } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         const dir = e.key === "ArrowLeft" ? -1 : 1;
         // Walk to the next non-empty column in the chosen direction.
         let nc = colIdx + dir;
         while (
           nc >= 0 &&
-          nc < columns.length &&
-          columns[nc].images.length === 0
+          nc < filtered.length &&
+          filtered[nc].images.length === 0
         )
           nc += dir;
-        if (nc < 0 || nc >= columns.length) return;
+        if (nc < 0 || nc >= filtered.length) return;
         colIdx = nc;
-        rowIdx = Math.min(rowIdx, columns[colIdx].images.length - 1);
+        rowIdx = Math.min(rowIdx, filtered[colIdx].images.length - 1);
       }
 
-      const next = columns[colIdx].images[rowIdx];
+      const next = filtered[colIdx].images[rowIdx];
       if (next) setSelectedImage(next.path);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [columns, zoomImagePath, setSelectedImage]);
+  }, [filtered, zoomImagePath, setSelectedImage]);
 
   async function onFolderDelete(version: string) {
     const col = columns.find((c) => c.version === version);
@@ -581,14 +604,14 @@ export function Gallery() {
       {sequencePath && (
         <button
           className={`${
-            viewMode === "starred" ? "bg-accent" : "accent-hover"
+            viewMode === "tagged" ? "bg-accent" : "accent-hover"
           } px-3 py-2 flex items-center justify-center`}
-          title={viewMode === "starred" ? "Back to versions" : "Favorites"}
+          title={viewMode === "tagged" ? "Back to versions" : "Tagged media"}
           onClick={() =>
-            setViewMode(viewMode === "starred" ? "columns" : "starred")
+            setViewMode(viewMode === "tagged" ? "columns" : "tagged")
           }
         >
-          <Icon name="star" size={22} fill={viewMode === "starred"} />
+          <Icon name="sell" size={22} fill={viewMode === "tagged"} />
         </button>
       )}
       {sequencePath && (
@@ -663,52 +686,55 @@ export function Gallery() {
   }
 
   return (
-    <div className="flex flex-1 min-h-0 min-w-0 gap-gallery-surface bg-gallery-surface">
-      {traceActive ? (
-        <>
-          {splitButtons}
-          <TraceView onDragStart={onDragStart} />
-        </>
-      ) : viewMode === "starred" ? (
-        <>
-          {splitButtons}
-          <StarredView onDragStart={onDragStart} />
-        </>
-      ) : viewMode === "stacked" ? (
-        <>
-          {splitButtons}
-          <StackedView onDragStart={onDragStart} />
-        </>
-      ) : (
-        <>
-          {splitButtons}
-          <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
-            {columnsWithPlaceholders.length === 0 ? (
-              <div className="text-sm text-dim p-4">
-                Open a shot to see its versions.
-              </div>
-            ) : (
-              <>
-                {columnsWithPlaceholders.map((c) => (
-                  <GalleryColumn
-                    key={c.version}
-                    column={c}
-                    width={thumbColWidth}
-                    destDir={destDirFor(c)}
-                    dragState={dragState}
-                    collapsed={collapsedVersions.has(c.version)}
-                    onToggleCollapsed={() => toggleCollapsed(c.version)}
-                    onFolderDelete={() => onFolderDelete(c.version)}
-                    onImageAction={onImageAction}
-                    onRefresh={c.isSrc ? () => rescanShot() : undefined}
-                    onDragStart={onDragStart}
-                  />
-                ))}
-              </>
-            )}
-          </div>
-        </>
-      )}
+    <div className="flex flex-col flex-1 min-h-0 min-w-0 bg-gallery-surface">
+      {!traceActive && <TagFilterBar />}
+      <div className="flex flex-1 min-h-0 min-w-0 gap-gallery-surface">
+        {traceActive ? (
+          <>
+            {splitButtons}
+            <TraceView onDragStart={onDragStart} />
+          </>
+        ) : viewMode === "tagged" ? (
+          <>
+            {splitButtons}
+            <TagView onDragStart={onDragStart} />
+          </>
+        ) : viewMode === "stacked" ? (
+          <>
+            {splitButtons}
+            <StackedView onDragStart={onDragStart} />
+          </>
+        ) : (
+          <>
+            {splitButtons}
+            <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
+              {columnsWithPlaceholders.length === 0 ? (
+                <div className="text-sm text-dim p-4">
+                  Open a shot to see its versions.
+                </div>
+              ) : (
+                <>
+                  {columnsWithPlaceholders.map((c) => (
+                    <GalleryColumn
+                      key={c.version}
+                      column={c}
+                      width={thumbColWidth}
+                      destDir={destDirFor(c)}
+                      dragState={dragState}
+                      collapsed={collapsedVersions.has(c.version)}
+                      onToggleCollapsed={() => toggleCollapsed(c.version)}
+                      onFolderDelete={() => onFolderDelete(c.version)}
+                      onImageAction={onImageAction}
+                      onRefresh={c.isSrc ? () => rescanShot() : undefined}
+                      onDragStart={onDragStart}
+                    />
+                  ))}
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
       {dragState &&
         (() => {
@@ -784,6 +810,9 @@ export function Gallery() {
           onClose={() => setInfoImage(null)}
         />
       )}
+
+      {/* Last so it paints above the zoom modal, which can also open it. */}
+      <TagEditorPopup />
     </div>
   );
 }

@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
-import { selectImagePath as selectImageAction, toggleStarPath } from "../lib/actions";
+import { editTagsAt, selectImagePath as selectImageAction } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 import type { GalleryImage, RefImage } from "../lib/types";
 import { dirname } from "../lib/paths";
@@ -269,7 +269,7 @@ export function TraceView({ onDragStart }: Props) {
                     selected={selectedImagePath === p}
                     columnVersion={labelFor(p)}
                     onSelect={selectImageAction}
-                    onToggleStar={toggleStarPath}
+                    onEditTags={editTagsAt}
                     onDragStart={onDragStart}
                     clipMediaSelected={clipSelected}
                     onToggleClipMedia={

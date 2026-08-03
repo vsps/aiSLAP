@@ -11,7 +11,7 @@ import { fileSrc } from "../lib/assets";
 import { IconBtn } from "./IconBtn";
 import { ComparePreview } from "./ComparePreview";
 import { PathContextMenu } from "./PathContextMenu";
-import { performImageAction } from "../lib/actions";
+import { editTagsAt, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { showMessage } from "../lib/dialog";
 import { basename, dirname } from "../lib/paths";
@@ -19,7 +19,7 @@ import { syntheticImage } from "../lib/media";
 import type {
   GalleryImage,
   GalleryColumn,
-  SeqStarredGroup,
+  SeqTaggedGroup,
   TimelineClip,
   ShotLatestMedia,
 } from "../lib/types";
@@ -36,7 +36,7 @@ export function LatestImageColumn() {
   const columns = useSessionStore((s) => s.columns);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const targetVersion = useSessionStore((s) => s.targetVersion);
-  const starredGroups = useSessionStore((s) => s.starredGroups);
+  const taggedGroups = useSessionStore((s) => s.taggedGroups);
   const tlClips = useTimelineStore((s) => s.clips);
   const tlTotal = useTimelineStore((s) => s.totalDurationSec);
   const tlPlaying = useTimelineStore((s) => s.playing);
@@ -57,8 +57,8 @@ export function LatestImageColumn() {
   const setCompareMode = useSessionStore((s) => s.setCompareMode);
 
   const image = useMemo(
-    () => pickImage(columns, selectedImagePath, targetVersion, starredGroups),
-    [columns, selectedImagePath, targetVersion, starredGroups],
+    () => pickImage(columns, selectedImagePath, targetVersion, taggedGroups),
+    [columns, selectedImagePath, targetVersion, taggedGroups],
   );
   // Clip media only applies to images living in a shot version dir, not SRC refs.
   const isSrcImage = useMemo(
@@ -247,78 +247,89 @@ export function LatestImageColumn() {
           />
           {image && (
             <>
-          <IconBtn
-            name="zoom_in"
-            size={22}
-            title="Zoom"
-            onClick={() => void performImageAction("zoom", image.path)}
-          />
-          <IconBtn
-            name="copy_all"
-            size={22}
-            title="Reuse prompt"
-            onClick={() => void performImageAction("copy_settings", image.path)}
-          />
-          <IconBtn
-            name="add_photo_alternate"
-            size={22}
-            title="Use as reference (Ctrl: replace all)"
-            onClick={(e) =>
-              void performImageAction(
-                e.ctrlKey || e.metaKey ? "replace_ref" : "add_to_refs",
-                image.path,
-              )
-            }
-          />
-          <IconBtn
-            name="star"
-            size={22}
-            fill={!!image.starred}
-            title={image.starred ? "Demote from gallery" : "Promote to gallery"}
-            onClick={() => void performImageAction("toggle_star", image.path)}
-          />
-          {shotPath && !isSrcImage && (
-            <IconBtn
-              name="movie"
-              size={22}
-              fill={image.path === clipMediaPath}
-              title={
-                image.path === clipMediaPath
-                  ? "Clear clip media"
-                  : "Set as clip media"
-              }
-              onClick={() =>
-                void setShotClipMedia(
-                  shotPath,
-                  image.path === clipMediaPath ? null : image.path,
-                )
-              }
-            />
-          )}
-          {image.isVideo && (
-            <IconBtn
-              name="photo_camera"
-              size={22}
-              title="Save current frame as still"
-              onClick={() => void exportCurrentFrame()}
-            />
-          )}
-          {!image.isVideo && (
-            <IconBtn
-              name="edit"
-              size={22}
-              title="Edit (draw)"
-              onClick={() => void performImageAction("edit", image.path)}
-            />
-          )}
-          {!image.isVideo && (
-            <IconBtn
-              name="crop"
-              size={22}
-              title="Crop"
-              onClick={() => void performImageAction("crop", image.path)}
-            />
-          )}
+              <IconBtn
+                name="zoom_in"
+                size={22}
+                title="Zoom"
+                onClick={() => void performImageAction("zoom", image.path)}
+              />
+              <IconBtn
+                name="copy_all"
+                size={22}
+                title="Reuse prompt"
+                onClick={() =>
+                  void performImageAction("copy_settings", image.path)
+                }
+              />
+              <IconBtn
+                name="add_photo_alternate"
+                size={22}
+                title="Use as reference (Ctrl: replace all)"
+                onClick={(e) =>
+                  void performImageAction(
+                    e.ctrlKey || e.metaKey ? "replace_ref" : "add_to_refs",
+                    image.path,
+                  )
+                }
+              />
+              <IconBtn
+                name="sell"
+                size={22}
+                fill={(image.tags ?? []).length > 0}
+                title={
+                  (image.tags ?? []).length > 0
+                    ? `Tags: ${(image.tags ?? []).join(", ")}`
+                    : "Add tags"
+                }
+                onClick={(e) =>
+                  editTagsAt(
+                    image.path,
+                    (e.currentTarget as HTMLElement).getBoundingClientRect(),
+                  )
+                }
+              />
+              {shotPath && !isSrcImage && (
+                <IconBtn
+                  name="movie"
+                  size={22}
+                  fill={image.path === clipMediaPath}
+                  title={
+                    image.path === clipMediaPath
+                      ? "Clear clip media"
+                      : "Set as clip media"
+                  }
+                  onClick={() =>
+                    void setShotClipMedia(
+                      shotPath,
+                      image.path === clipMediaPath ? null : image.path,
+                    )
+                  }
+                />
+              )}
+              {image.isVideo && (
+                <IconBtn
+                  name="photo_camera"
+                  size={22}
+                  title="Save current frame as still"
+                  onClick={() => void exportCurrentFrame()}
+                />
+              )}
+              {!image.isVideo && (
+                <IconBtn
+                  name="edit"
+                  size={22}
+                  title="Edit (draw)"
+                  onClick={() => void performImageAction("edit", image.path)}
+                />
+              )}
+              {!image.isVideo && (
+                <IconBtn
+                  name="crop"
+                  size={22}
+                  title="Crop"
+                  onClick={() => void performImageAction("crop", image.path)}
+                />
+              )}
             </>
           )}
         </div>
@@ -571,7 +582,7 @@ function pickImage(
   columns: GalleryColumn[],
   selectedImagePath: string | null,
   targetVersion: string | null,
-  starredGroups: SeqStarredGroup[],
+  taggedGroups: SeqTaggedGroup[],
 ): GalleryImage | null {
   if (selectedImagePath) {
     for (const c of columns) {
@@ -583,12 +594,12 @@ function pickImage(
       if (hit) return hit;
     }
     // Selected image belongs to a shot other than the one currently open
-    // (e.g. picked from the starred/favorites view) — its columns aren't
-    // loaded here, but it's still the user's explicit selection, so show it
-    // rather than silently falling back to "no image". Check the starred
-    // data first so the star icon/metadata reflect reality; otherwise fall
-    // back to a bare synthetic image built from the path alone.
-    for (const seq of starredGroups) {
+    // (e.g. picked from the tag view) — its columns aren't loaded here, but
+    // it's still the user's explicit selection, so show it rather than
+    // silently falling back to "no image". Check the tag-view data first so
+    // the tag dots/metadata reflect reality; otherwise fall back to a bare
+    // synthetic image built from the path alone.
+    for (const seq of taggedGroups) {
       for (const shot of seq.shots) {
         const hit = shot.images.find((i) => i.path === selectedImagePath);
         if (hit) return hit;

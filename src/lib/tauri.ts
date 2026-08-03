@@ -9,8 +9,11 @@ import type {
   ShotSidecar,
   ImageMetadata,
   PendingSubmission,
-  SeqStarredGroup,
+  SeqTaggedGroup,
   SequenceStacks,
+  TagDef,
+  TagFilterMode,
+  TagMigrationReport,
   ProjectCostScan,
   SequenceTimeline,
   TimelineInit,
@@ -99,13 +102,46 @@ export const cmd = {
       copy,
     }),
 
-  project_starred_scan: (projectPath: string): Promise<SeqStarredGroup[]> =>
-    rawInvoke("project_starred_scan", { projectPath }),
   project_cost_scan: (projectPath: string): Promise<ProjectCostScan> =>
     rawInvoke("project_cost_scan", { projectPath }),
 
-  image_set_visible: (imagePath: string, visible: boolean): Promise<void> =>
-    rawInvoke("image_set_visible", { imagePath, visible }),
+  // Tags. The sidecar is the source of truth; the SQLite index is a
+  // rebuildable cache of it (project_tags_reindex / project_reconcile).
+  image_tags_set: (imagePath: string, tags: string[]): Promise<string[]> =>
+    rawInvoke("image_tags_set", { imagePath, tags }),
+  project_tag_defs_get: (projectPath: string): Promise<TagDef[]> =>
+    rawInvoke("project_tag_defs_get", { projectPath }),
+  project_tag_defs_set: (
+    projectPath: string,
+    defs: TagDef[],
+  ): Promise<TagDef[]> =>
+    rawInvoke("project_tag_defs_set", { projectPath, defs }),
+  project_tag_rename: (
+    projectPath: string,
+    oldName: string,
+    newName: string,
+  ): Promise<TagDef[]> =>
+    rawInvoke("project_tag_rename", { projectPath, oldName, newName }),
+  project_tag_delete: (projectPath: string, name: string): Promise<TagDef[]> =>
+    rawInvoke("project_tag_delete", { projectPath, name }),
+  project_tag_scan: (
+    projectPath: string,
+    tags: string[],
+    mode: TagFilterMode,
+  ): Promise<SeqTaggedGroup[]> =>
+    rawInvoke("project_tag_scan", { projectPath, tags, mode }),
+  project_tags_reindex: (projectPath: string): Promise<number> =>
+    rawInvoke("project_tags_reindex", { projectPath }),
+  project_tags_migrate: (projectPath: string): Promise<TagMigrationReport> =>
+    rawInvoke("project_tags_migrate", { projectPath }),
+  export_by_tag: (
+    projectPath: string,
+    tags: string[],
+    mode: TagFilterMode,
+    destDir: string,
+    layout: string,
+  ): Promise<number> =>
+    rawInvoke("export_by_tag", { projectPath, tags, mode, destDir, layout }),
 
   sequence_prompt_append: (
     sequencePath: string,
@@ -137,19 +173,6 @@ export const cmd = {
 
   image_move_to_dir: (sourcePath: string, destDir: string): Promise<string> =>
     rawInvoke("image_move_to_dir", { sourcePath, destDir }),
-
-  image_copy_to_sel: (shotPath: string, sourcePath: string): Promise<string> =>
-    rawInvoke("image_copy_to_sel", { shotPath, sourcePath }),
-
-  image_move_to_sel: (shotPath: string, sourcePath: string): Promise<string> =>
-    rawInvoke("image_move_to_sel", { shotPath, sourcePath }),
-
-  export_selects: (
-    projectPath: string,
-    destDir: string,
-    mode: string,
-  ): Promise<number> =>
-    rawInvoke("export_selects", { projectPath, destDir, mode }),
 
   image_rename: (sourcePath: string, newStem: string): Promise<string> =>
     rawInvoke("image_rename", { sourcePath, newStem }),
