@@ -350,10 +350,30 @@ export type ChainLinkPersisted = {
   shotPromptsIncluded?: boolean[];
 };
 
+/** Which PRISM entity tree the session is working in — shots under
+ *  `03_Production/Shots`, assets under `03_Production/Assets`. */
+export type PrismEntityType = "shot" | "asset";
+
+/** PRISM layout for the open project, from `00_Pipeline/pipeline.json`.
+ *  Null/absent means a plain aiSLAP project. */
+export type PrismInfo = {
+  root: string;
+  shotsRoot: string;
+  assetsRoot: string;
+  /** Digits in a version folder name (PRISM `globals.versionPadding`, 4 stock). */
+  versionPadding: number;
+  projectName: string;
+};
+
 export type AppState = {
   projectPath: string;
+  /** Sequence/shot paths relative to their parent. In a native project that's
+   *  just the folder name; in a PRISM project it carries the entity-root and
+   *  `Renders/AI` segments so the restore can rejoin them. */
   lastSequence: string;
   lastShot: string;
+  /** Persisted so a PRISM session reopens in the tree it was left in. */
+  prismEntityType?: PrismEntityType;
   lastModel: string;
   sequencePrompt: string;
   /** Legacy single-string shot prompt — read for back-compat only; new state lives in shotPrompts. */
@@ -651,6 +671,9 @@ export type PendingSubmission = {
 
   // Destination
   shotPath: string;
+  /** Project root at submit time. Absent on records written before PRISM
+   *  support, where the project is two levels above `shotPath`. */
+  projectPath?: string;
   targetVersion: string;
   ffmpegPath: string;
   filenameTemplate: string;

@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useLayoutStore } from "../stores/layoutStore";
-import { useTimelineStore } from "../stores/timelineStore";
 import { cmd } from "../lib/tauri";
 import { editTagsAt, selectImagePath } from "../lib/actions";
 import { showMessage } from "../lib/dialog";
-import { dirname, joinPath } from "../lib/paths";
+import { joinPath } from "../lib/paths";
 import { VersionStack } from "./VersionStack";
 import { SelectPickerPopup } from "./SelectPickerPopup";
 import { Thumbnail } from "./Thumbnail";
@@ -28,6 +27,7 @@ type PickerState = {
 };
 
 export function StackedView({ onDragStart }: Props) {
+  const projectPath = useSessionStore((s) => s.projectPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const shotPath = useSessionStore((s) => s.shotPath);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
@@ -36,7 +36,6 @@ export function StackedView({ onDragStart }: Props) {
   const rescanSequenceStacks = useSessionStore((s) => s.rescanSequenceStacks);
   const setShot = useSessionStore((s) => s.setShot);
   const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
-  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const [picker, setPicker] = useState<PickerState | null>(null);
 
@@ -100,22 +99,16 @@ export function StackedView({ onDragStart }: Props) {
     }
   }
 
-  function toggleClipMediaFor(
-    shot: string,
-    currentClip: string | null | undefined,
-    imagePath: string,
-  ) {
-    void setShotClipMedia(shot, currentClip === imagePath ? null : imagePath);
-    void rescanSequenceStacks();
-  }
-
   return (
     <>
       <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface p-gallery-column">
-        {/* GLOBAL SRC fixed row — Thumbnails so RMB + indicators come for free. */}
+        {/* GLOBAL SRC fixed row — Thumbnails so RMB + indicators come for free.
+            The drop target is the project root's SRC, taken from the session
+            rather than the sequence's parent: a PRISM sequence sits under
+            03_Production/Shots, so depth doesn't get you there. */}
         <div
           className="flex items-stretch gap-gallery-column-gap mb-gallery-column-gap"
-          data-stacked-global-src={joinPath(dirname(sequencePath), "SRC")}
+          data-stacked-global-src={joinPath(projectPath, "SRC")}
         >
           <div className="shrink-0 w-[140px] bg-src-bg border border-border px-2 py-1 text-sm font-semibold">
             GLOBAL SRC
@@ -183,7 +176,6 @@ export function StackedView({ onDragStart }: Props) {
                         <VersionStack
                           key={v.version}
                           shotPath={s.shotPath}
-                          shotClipMediaPath={s.clipMediaPath ?? null}
                           stack={v}
                           size={thumbColWidth}
                           selectedGlobally={isSelectedGlobal}
@@ -195,13 +187,6 @@ export function StackedView({ onDragStart }: Props) {
                               anchor: { x: rect.left, y: rect.bottom + 4 },
                             });
                           }}
-                          onToggleClipMedia={(imgPath) =>
-                            toggleClipMediaFor(
-                              s.shotPath,
-                              s.clipMediaPath,
-                              imgPath,
-                            )
-                          }
                           onDragStart={handleVersionStackDragStart}
                         />
                       );

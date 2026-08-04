@@ -5,12 +5,10 @@ import { editTagsAt, performImageAction } from "../lib/actions";
 
 type Props = {
   shotPath: string;
-  shotClipMediaPath?: string | null;
   stack: VersionStackData;
   size: number;
   selectedGlobally: boolean;
   onOpenPicker: (rect: DOMRect) => void;
-  onToggleClipMedia: (imagePath: string) => void;
   onDragStart: (payload: {
     fromPath: string;
     fromShot: string;
@@ -24,12 +22,10 @@ const STACK_CARD_MAX = 3;
 
 export function VersionStack({
   shotPath,
-  shotClipMediaPath,
   stack,
   size,
   selectedGlobally,
   onOpenPicker,
-  onToggleClipMedia,
   onDragStart,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -46,8 +42,6 @@ export function VersionStack({
   // Reserve room around the top card for the stack-edge cards behind it.
   const padTotal = STACK_CARD_MAX * STACK_CARD_OFFSET + 2;
 
-  const clipMediaSelected = !!selectImg && selectImg.path === shotClipMediaPath;
-
   const selectImgPath = selectImg?.path;
   const handleSelect = useCallback(() => {
     if (!selectImgPath) return;
@@ -62,10 +56,6 @@ export function VersionStack({
     },
     [selectImgPath],
   );
-  const handleToggleClipMedia = useCallback(() => {
-    if (!selectImgPath) return;
-    onToggleClipMedia(selectImgPath);
-  }, [selectImgPath, onToggleClipMedia]);
   const handleThumbDragStart = useCallback(
     (payload: { fromPath: string; pointerEvent: React.PointerEvent }) =>
       onDragStart({
@@ -119,8 +109,6 @@ export function VersionStack({
               columnVersion={stack.version}
               onSelect={handleSelect}
               onEditTags={handleEditTags}
-              clipMediaSelected={clipMediaSelected}
-              onToggleClipMedia={handleToggleClipMedia}
               onDragStart={handleThumbDragStart}
               maxAspect={1}
             />

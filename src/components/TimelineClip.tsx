@@ -7,7 +7,7 @@ import { fileSrc } from "../lib/assets";
 import { resolveClipMedia, useTimelineStore } from "../stores/timelineStore";
 import { Icon } from "../lib/icon";
 import { ClipMediaPicker } from "./ClipMediaPicker";
-import { basename } from "../lib/paths";
+import { seqShotNames } from "../lib/prism";
 
 type Props = {
   clip: TimelineClipT;
@@ -261,7 +261,7 @@ export function TimelineClip({
         }}
       >
         <span className="truncate flex-1">
-          {clip.shotPath ? basename(clip.shotPath) : "—"}
+          {clip.shotPath ? seqShotNames(clip.shotPath).shot : "—"}
         </span>
         {offsetSec > 0.1 && (
           <span className="shrink-0 text-accent">+{offsetSec.toFixed(1)}s</span>

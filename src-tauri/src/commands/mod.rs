@@ -10,6 +10,7 @@ pub mod media_id;
 pub mod metadata;
 pub mod models;
 pub mod pending;
+pub mod prism;
 pub mod prompt_history;
 pub mod rename;
 pub mod session;

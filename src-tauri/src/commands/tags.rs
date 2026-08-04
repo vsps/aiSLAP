@@ -23,6 +23,7 @@ use crate::commands::fsutil::{
 };
 use crate::commands::gallery::try_make_gallery_image;
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
+use crate::commands::prism;
 use crate::db::{self, AssetRecord, TagUpdate};
 use crate::domain::{GalleryImage, ProjectSidecar, TagDef};
 use crate::error::{run_blocking, AppError, AppResult};
@@ -610,6 +611,20 @@ pub async fn project_tag_scan(
     let wanted = normalize_tags(tags);
     let index = db::tags_all(&root).await?;
 
+    // In a PRISM project every media path starts with the entity root
+    // ("03_Production/Shots/…"), so the seq/shot pair is two segments further
+    // in — group on the path with that prefix stripped.
+    let entity_prefixes: Vec<String> = match prism::detect(&root) {
+        Some(layout) => vec![
+            format!("{}/", layout.shots_rel),
+            format!("{}/", layout.assets_rel),
+        ],
+        None => vec![],
+    };
+
+    // Keyed by project-relative dir rather than bare name, so the two PRISM
+    // trees can't collide on a shared sequence name and the output paths can be
+    // rebuilt exactly. In a native project these keys *are* the names.
     type ShotMap = BTreeMap<String, Vec<GalleryImage>>;
     let mut by_seq: BTreeMap<String, ShotMap> = BTreeMap::new();
     let mut rels: Vec<&String> = index.by_rel.keys().collect();
@@ -621,7 +636,11 @@ pub async fn project_tag_scan(
         }
         // Expect at least <seq>/<shot>/<file>; project-level SRC has no shot
         // to group under and is left out, same as the starred view before it.
-        let parts: Vec<&str> = rel.split('/').collect();
+        let (prefix, grouping) = entity_prefixes
+            .iter()
+            .find_map(|p| rel.strip_prefix(p.as_str()).map(|rest| (p.as_str(), rest)))
+            .unwrap_or(("", rel.as_str()));
+        let parts: Vec<&str> = grouping.split('/').collect();
         if parts.len() < 3 {
             continue;
         }
@@ -633,26 +652,36 @@ pub async fn project_tag_scan(
             continue;
         };
         by_seq
-            .entry(parts[0].to_string())
+            .entry(format!("{prefix}{}", parts[0]))
             .or_default()
-            .entry(parts[1].to_string())
+            .entry(format!("{prefix}{}/{}", parts[0], parts[1]))
             .or_default()
             .push(img);
     }
 
+    let prism_mode = !entity_prefixes.is_empty();
+    let leaf = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
     Ok(by_seq
         .into_iter()
-        .map(|(seq_name, shots)| SeqTaggedGroup {
-            seq_path: as_str(&root.join(&seq_name)),
+        .map(|(seq_rel, shots)| SeqTaggedGroup {
+            seq_path: as_str(&root.join(&seq_rel)),
+            seq_name: leaf(&seq_rel),
             shots: shots
                 .into_iter()
-                .map(|(shot_name, images)| ShotTaggedGroup {
-                    shot_path: as_str(&root.join(&seq_name).join(&shot_name)),
-                    shot_name,
-                    images,
+                .map(|(shot_rel, images)| {
+                    let entity = root.join(&shot_rel);
+                    let shot_path = if prism_mode {
+                        prism::media_root_for(&entity)
+                    } else {
+                        entity
+                    };
+                    ShotTaggedGroup {
+                        shot_path: as_str(&shot_path),
+                        shot_name: leaf(&shot_rel),
+                        images,
+                    }
                 })
                 .collect(),
-            seq_name,
         })
         .collect())
 }
@@ -963,6 +992,60 @@ mod tests {
             .unwrap();
         assert_eq!(favs.len(), 1);
         assert_eq!(favs[0].seq_name, "seq1");
+
+        cleanup(&root, &project_id);
+    }
+
+    /// In a PRISM project every media path carries the entity root and the
+    /// `Renders/AI` hop, so grouping on the first two segments would file
+    /// everything under "03_Production / Shots".
+    #[tokio::test]
+    async fn scan_groups_prism_paths_by_entity() {
+        let (root, project_id) = test_project();
+        fs::create_dir_all(root.join("00_Pipeline")).unwrap();
+        fs::write(
+            root.join("00_Pipeline/pipeline.json"),
+            r#"{"globals":{"versionPadding":4}}"#,
+        )
+        .unwrap();
+
+        let shot = media(
+            &root,
+            "03_Production/Shots/MOD/s0010/Renders/AI/v0001/a.png",
+            None,
+        );
+        let asset = media(
+            &root,
+            "03_Production/Assets/PROPS/cube/Renders/AI/v0001/b.png",
+            None,
+        );
+        image_tags_set(as_str(&shot), vec!["fav".into()])
+            .await
+            .unwrap();
+        image_tags_set(as_str(&asset), vec!["fav".into()])
+            .await
+            .unwrap();
+
+        let groups = project_tag_scan(as_str(&root), vec![], None).await.unwrap();
+        let names: Vec<&str> = groups.iter().map(|g| g.seq_name.as_str()).collect();
+        assert_eq!(names, vec!["PROPS", "MOD"]);
+
+        let mod_group = groups.iter().find(|g| g.seq_name == "MOD").unwrap();
+        assert_eq!(mod_group.shots.len(), 1);
+        assert_eq!(mod_group.shots[0].shot_name, "s0010");
+        // shot_path must be the media root — that's what the session opens, and
+        // what the timeline keys its clips by.
+        assert!(
+            mod_group.shots[0]
+                .shot_path
+                .ends_with("Shots/MOD/s0010/Renders/AI"),
+            "got {}",
+            mod_group.shots[0].shot_path
+        );
+        assert!(mod_group.seq_path.ends_with("03_Production/Shots/MOD"));
+
+        let props = groups.iter().find(|g| g.seq_name == "PROPS").unwrap();
+        assert_eq!(props.shots[0].shot_name, "cube");
 
         cleanup(&root, &project_id);
     }

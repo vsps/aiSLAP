@@ -155,10 +155,33 @@ On first launch the app creates `%APPDATA%\aiSLAP\` (Windows) or the equivalent 
 2. Create or pick a **sequence**, then a **shot**.
 3. Choose a **model** from the left column. Its parameters appear below.
 4. Type a **SEQUENCE** and/or **SHOT** prompt. The sequence prompt is prepended to every shot in that sequence.
-5. (Optional) Add **reference images** — click the add button or drag files from your OS onto the panel. Click a thumbnail's top bar to assign a role:
+5. (Optional) Add **reference images** — click the add button or drag files from your OS onto the panel. Each thumbnail is numbered by its position in its row (`1: shot_a.jpg`); that number is the index the model sees, so it's what a prompt token like Seedance's `@image1` refers to. Drag the bottom bar to reorder. Click a thumbnail's top bar to assign a role instead:
    - `start` / `end` — exclusive slots for img2vid / first-last-frame models.
    - `@ElementN` — Kling-style named references. First image in a group is the frontal by default (★); toggle the checkbox to promote another.
+   - `@ImageN` — pins a reference to a specific slot in the model's image array (Seedance ref2vid, Happy Horse vid2vid) so `@image1` stays put regardless of drag order. Untagged references follow the pinned ones.
 6. Click **Generate**. The result lands in a new `vNNN/` column in the gallery and is saved with a sidecar containing the prompt, settings, and reference URLs used.
+
+---
+
+## PRISM projects
+
+Point the project picker at a [PRISM](https://prism-pipeline.com/) project — the folder
+holding `00_Pipeline/pipeline.json` — and aiSLAP reads the pipeline's own layout instead of
+its native one:
+
+- A **SHOT / ASSET** toggle appears next to the project path, choosing which tree the
+  SEQUENCE dropdown lists: `03_Production/Shots/<SEQ>/<SHOT>` or
+  `03_Production/Assets/<CATEGORY>/<ASSET>`.
+- Generations and references go to **`<SHOT>/Renders/AI/`** — version folders (`v0001`,
+  `v0002`, … padded to the pipeline's `versionPadding`) and a `SRC/` for that shot's refs.
+  The folder is created the first time you open a shot.
+- Sequences and shots are **created in PRISM**, not here; those buttons are greyed out.
+  aiSLAP only ever writes inside `Renders/AI`.
+- aiSLAP's own `project.json` (tag vocabulary), `script.md` and GLOBAL `SRC/` live at the
+  project root, alongside the pipeline folders.
+
+Everything else — the gallery, tags, timeline, chains, cost rollups — behaves exactly as in a
+native project.
 
 ---
 

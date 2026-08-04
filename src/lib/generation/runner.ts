@@ -40,6 +40,11 @@ export type JobSpec = {
   refs: RefImage[];
   iterations: number;
   shotPath: string;
+  /** Project root, captured at enqueue. Carried rather than derived from
+   *  `shotPath` because the shot isn't a fixed depth below it (a PRISM shot's
+   *  media root is `<entity>/Renders/AI`), and because the user may navigate
+   *  elsewhere while the job runs. */
+  projectPath: string;
   targetVersion: string;
   ffmpegPath: string;
   filenameTemplate: string;
@@ -107,6 +112,7 @@ function buildPendingRecord(
     endpoint: spec.node.endpoint,
     requestId,
     shotPath: spec.shotPath,
+    projectPath: spec.projectPath,
     targetVersion: spec.targetVersion,
     ffmpegPath: spec.ffmpegPath,
     filenameTemplate: spec.filenameTemplate,
@@ -268,6 +274,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           refs: uploaded,
           refSnapshots: undefined,
           shotPath: spec.shotPath,
+          projectPath: spec.projectPath,
           versionDir,
           targetVersion: spec.targetVersion,
           iterationBase: k,

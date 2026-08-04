@@ -1,6 +1,6 @@
 //! Image file operations: copy/move/rename of the media "triple" (primary +
 //! `.json` sidecar + `.thumb.png`), version-stack moves, base64 PNG saves,
-//! and Explorer reveal.
+//! and revealing a path in the OS file manager.
 
 use std::path::{Path, PathBuf};
 
@@ -260,11 +260,9 @@ fn ref_copy_to_global_src_impl(
     source_path: String,
 ) -> AppResult<(String, Option<NewAssetInfo>)> {
     let src = PathBuf::from(&source_path);
-    let project_dir = PathBuf::from(&shot_path)
-        .parent()
-        .and_then(|s| s.parent())
-        .ok_or_else(|| AppError::Msg("no project parent".into()))?
-        .join(SRC_DIR);
+    // Walk up to project.json rather than assuming shot → seq → project: a
+    // PRISM shot's media root is `<entity>/Renders/AI`, two levels deeper.
+    let project_dir = project_root_for(&PathBuf::from(&shot_path))?.join(SRC_DIR);
     ensure_dir(&project_dir)?;
     let dest = transfer_triple_to_dir(
         &src,
@@ -502,33 +500,85 @@ pub fn save_png_base64(path: String, data_base64: String) -> AppResult<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum RevealOs {
+    Windows,
+    MacOs,
+    Other,
+}
+
+const HOST_OS: RevealOs = if cfg!(target_os = "windows") {
+    RevealOs::Windows
+} else if cfg!(target_os = "macos") {
+    RevealOs::MacOs
+} else {
+    RevealOs::Other
+};
+
+/// File-manager invocations to try in order (the first that spawns wins).
+///
+/// Every platform's shape is built here rather than behind `#[cfg]` so all of
+/// them compile and are unit-tested on any host — a Mac-only code path that the
+/// Windows build never sees is how the bundled-models bug reached a release.
+/// `is_dir` is passed in rather than probed so the shapes stay testable.
+fn reveal_argv(p: &Path, is_dir: bool, os: RevealOs) -> Vec<(&'static str, Vec<String>)> {
+    let parent = p.parent().unwrap_or(p);
+    match os {
+        RevealOs::Windows => {
+            // Explorer wants backslashes; the rest of the app stores forward slashes.
+            let native = p.to_string_lossy().replace('/', "\\");
+            if is_dir {
+                vec![("explorer", vec![native])]
+            } else {
+                // /select opens the containing folder with the file highlighted;
+                // virtual/cloud filesystems that don't support it fall back to
+                // opening the folder alone.
+                vec![
+                    ("explorer", vec!["/select,".into(), native]),
+                    (
+                        "explorer",
+                        vec![parent.to_string_lossy().replace('/', "\\")],
+                    ),
+                ]
+            }
+        }
+        // `open -R` reveals a file in Finder with it selected. A directory is
+        // opened as-is, since -R would select it in its parent instead.
+        RevealOs::MacOs => {
+            let path = p.to_string_lossy().to_string();
+            if is_dir {
+                vec![("open", vec![path])]
+            } else {
+                vec![("open", vec!["-R".into(), path])]
+            }
+        }
+        // No portable reveal-and-select on Linux desktops, so open the
+        // containing folder and let the user spot the file.
+        RevealOs::Other => vec![(
+            "xdg-open",
+            vec![if is_dir { p } else { parent }
+                .to_string_lossy()
+                .to_string()],
+        )],
+    }
+}
+
+/// Show a path in the OS file manager — Explorer, Finder, or whatever the
+/// desktop provides — with the file selected where that's supported. A
+/// directory opens directly rather than being selected in its parent.
 #[tauri::command]
 pub fn reveal_in_explorer(path: String) -> AppResult<()> {
-    let p = std::path::PathBuf::from(&path);
-    let native = p.to_string_lossy().replace('/', "\\");
-    if p.is_dir() {
-        std::process::Command::new("explorer")
-            .arg(&native)
-            .spawn()
-            .map_err(|e| AppError::Msg(e.to_string()))?;
-    } else {
-        // /select opens the containing folder with the file highlighted.
-        // Falls back to just the parent folder for virtual/cloud filesystems
-        // where /select is not supported.
-        let result = std::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(&native)
-            .spawn();
-        if result.is_err() {
-            let parent = p.parent().map(|d| d.to_path_buf()).unwrap_or(p);
-            let parent_native = parent.to_string_lossy().replace('/', "\\");
-            std::process::Command::new("explorer")
-                .arg(&parent_native)
-                .spawn()
-                .map_err(|e| AppError::Msg(e.to_string()))?;
+    let p = PathBuf::from(&path);
+    let mut last_err: Option<String> = None;
+    for (program, args) in reveal_argv(&p, p.is_dir(), HOST_OS) {
+        match std::process::Command::new(program).args(&args).spawn() {
+            Ok(_) => return Ok(()),
+            Err(e) => last_err = Some(format!("{program}: {e}")),
         }
     }
-    Ok(())
+    Err(AppError::Msg(
+        last_err.unwrap_or_else(|| "no file manager to open".into()),
+    ))
 }
 
 #[cfg(test)]
@@ -538,6 +588,76 @@ mod tests {
     use crate::db::{self, AssetRecord};
     use crate::domain::ProjectSidecar;
     use std::fs;
+
+    /// Runs on every host, so the macOS and Linux shapes are checked from the
+    /// Windows dev box (and vice versa on the release runners).
+    #[test]
+    fn reveal_argv_per_platform() {
+        let file = Path::new("Z:/prj/seq/shot/v001/a.png");
+        let dir = Path::new("Z:/prj/seq/shot/v001");
+
+        // Windows: /select, with backslashes, then the folder alone as fallback.
+        assert_eq!(
+            reveal_argv(file, false, RevealOs::Windows),
+            vec![
+                (
+                    "explorer",
+                    vec![
+                        "/select,".to_string(),
+                        r"Z:\prj\seq\shot\v001\a.png".to_string()
+                    ]
+                ),
+                ("explorer", vec![r"Z:\prj\seq\shot\v001".to_string()]),
+            ]
+        );
+        assert_eq!(
+            reveal_argv(dir, true, RevealOs::Windows),
+            vec![("explorer", vec![r"Z:\prj\seq\shot\v001".to_string()])]
+        );
+
+        // macOS: `open -R` selects the file in Finder; a directory opens as-is.
+        // Forward slashes are native here — no separator rewriting.
+        assert_eq!(
+            reveal_argv(file, false, RevealOs::MacOs),
+            vec![(
+                "open",
+                vec![
+                    "-R".to_string(),
+                    "Z:/prj/seq/shot/v001/a.png".to_string()
+                ]
+            )]
+        );
+        assert_eq!(
+            reveal_argv(dir, true, RevealOs::MacOs),
+            vec![("open", vec!["Z:/prj/seq/shot/v001".to_string()])]
+        );
+
+        // Linux: no reveal-and-select, so the containing folder.
+        assert_eq!(
+            reveal_argv(file, false, RevealOs::Other),
+            vec![("xdg-open", vec!["Z:/prj/seq/shot/v001".to_string()])]
+        );
+        assert_eq!(
+            reveal_argv(dir, true, RevealOs::Other),
+            vec![("xdg-open", vec!["Z:/prj/seq/shot/v001".to_string()])]
+        );
+
+        // A path with no parent must not panic or produce an empty argument.
+        assert_eq!(
+            reveal_argv(Path::new("/"), true, RevealOs::MacOs),
+            vec![("open", vec!["/".to_string()])]
+        );
+    }
+
+    #[test]
+    fn host_os_matches_the_build_target() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(HOST_OS, RevealOs::Windows);
+        #[cfg(target_os = "macos")]
+        assert_eq!(HOST_OS, RevealOs::MacOs);
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert_eq!(HOST_OS, RevealOs::Other);
+    }
 
     /// A throwaway project under the OS temp dir, with a real project.json —
     /// same fixture shape as db::tests::test_project, duplicated here since

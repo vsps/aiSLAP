@@ -163,6 +163,9 @@ export function buildArgs(
       unassigned.push(...keep);
     }
 
+    // Unassigned refs a role has already claimed — anything left over after the
+    // loop still needs routing (see routeRefsByMediaType call below).
+    const claimed = new Set<UploadedRef>();
     let sourceConsumed = false;
     for (const role of node.ref_roles) {
       if (role.role === "element") {
@@ -171,25 +174,37 @@ export function buildArgs(
         continue;
       }
       if (role.role === "image") {
-        const urls = buildImageArray(bucket, role.max);
-        if (urls.length > 0) args[role.api_field] = urls;
+        // Untagged refs of the role's media kind follow the numbered groups, so
+        // "tag nothing" behaves exactly like the media-type fallback and partial
+        // tagging pins @Image1..k without dropping the rest.
+        const kind = roleKind(node, role);
+        const extra = kind
+          ? unassigned.filter((u) => classifyMedia(u.ref.path) === kind)
+          : [];
+        const picked = collectImageRefs(bucket, extra, role.max);
+        picked.forEach((u) => claimed.add(u));
+        if (picked.length > 0) args[role.api_field] = picked.map((u) => u.url);
         continue;
       }
-      // When the role's api_field matches a declared input, only fall back to
-      // unassigned refs of that same media kind — otherwise a leftover
-      // unassigned IMAGE ref (e.g. from an earlier node in the same shot) can
-      // get silently sent as a VIDEO-only role's source (and vice versa).
-      // No match (e.g. a role with no corresponding `inputs` entry) leaves
-      // expectedKind undefined, preserving the old unfiltered behavior.
-      const roleInput = node.inputs.find((i) => i.api_field === role.api_field);
-      const expectedKind = roleInput ? DATA_TYPE_TO_KIND[roleInput.data_type] : undefined;
-      const slice = selectForRole(role, bucket, unassigned, sourceConsumed, expectedKind);
+      // Only fall back to unassigned refs of the role's own media kind —
+      // otherwise a leftover unassigned IMAGE ref (e.g. from an earlier node in
+      // the same shot) can get silently sent as a VIDEO-only role's source (and
+      // vice versa). An undefined kind preserves the old unfiltered behavior.
+      const slice = selectForRole(role, bucket, unassigned, sourceConsumed, roleKind(node, role));
       if (slice.length === 0) continue;
       if (role.role === "source") sourceConsumed = true;
+      slice.forEach((s) => claimed.add(s));
       const urls = slice.map((s) => s.url);
       const isScalar = urls.length === 1 && (role.max === 1 || role.exclusive);
       args[role.api_field] = isScalar ? urls[0] : urls;
     }
+
+    // Refs no role wanted still belong somewhere: a model can declare roles for
+    // only some of its ref inputs (e.g. Seedance ref2vid names the image array
+    // so @ImageN works, but has no role for its video/audio arrays). Without
+    // this, declaring any role would silently drop those refs.
+    const leftovers = unassigned.filter((u) => !claimed.has(u));
+    if (leftovers.length > 0) routeRefsByMediaType(node, leftovers, args);
   } else if (uploaded.length > 0) {
     routeRefsByMediaType(node, uploaded, args);
   }
@@ -210,6 +225,13 @@ const DATA_TYPE_TO_KIND: Record<string, MediaKind> = {
   AUDIO: "audio",
 };
 
+/** The media kind a role expects, taken from the input its api_field targets.
+ *  Undefined when the role has no corresponding `inputs` entry. */
+function roleKind(node: ModelNode, role: RefRoleSpec): MediaKind | undefined {
+  const input = node.inputs.find((i) => i.api_field === role.api_field);
+  return input ? DATA_TYPE_TO_KIND[input.data_type] : undefined;
+}
+
 // Route uploaded refs to the model's media-typed array inputs by classifying
 // each ref's file extension. Backwards-compatible: if the only matching input
 // is IMAGE (e.g. Happy Horse), every ref lands in image_urls as before.
@@ -221,6 +243,8 @@ function routeRefsByMediaType(
   const slots = new Map<MediaKind, { api_field: string; max?: number }>();
   for (const input of node.inputs) {
     if (input.api_format !== "array") continue;
+    // A role already filled this field — don't overwrite it with leftovers.
+    if (input.api_field in args) continue;
     const kind = DATA_TYPE_TO_KIND[input.data_type];
     if (!kind) continue;
     if (!slots.has(kind)) slots.set(kind, { api_field: input.api_field, max: input.max });
@@ -306,10 +330,15 @@ function buildElements(
   return max ? out.slice(0, max) : out;
 }
 
-function buildImageArray(
+// Flatten the image:<groupName> buckets in numeric group order, then append
+// `extra` (untagged refs of the same media kind). Positional, like elements:
+// group numbers only decide the order, so gaps collapse and @Image1..N always
+// count from 1 in the submitted array.
+function collectImageRefs(
   bucket: Record<string, UploadedRef[]>,
+  extra: UploadedRef[],
   max?: number,
-): string[] {
+): UploadedRef[] {
   const keys = Object.keys(bucket)
     .filter((k) => k.startsWith("image:"))
     .sort((a, b) => {
@@ -318,10 +347,11 @@ function buildImageArray(
       if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
       return a.localeCompare(b);
     });
-  const urls: string[] = [];
+  const out: UploadedRef[] = [];
   for (const key of keys) {
-    for (const r of bucket[key]) urls.push(r.url);
+    for (const r of bucket[key]) out.push(r);
   }
-  return max ? urls.slice(0, max) : urls;
+  out.push(...extra);
+  return max ? out.slice(0, max) : out;
 }
 

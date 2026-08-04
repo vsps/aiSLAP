@@ -55,6 +55,9 @@
       "outputs": [
         { "name": "video", "data_type": "VIDEO", "api_field": "video" }
       ],
+      "ref_roles": [
+        { "role": "image", "api_field": "image_urls", "max": 9 }
+      ],
       "parameters": [
         { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p"] },
         { "name": "aspect_ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "aspect_ratio", "default": "16:9", "options": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
@@ -74,6 +77,9 @@
       ],
       "outputs": [
         { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "image", "api_field": "image_urls", "max": 9 }
       ],
       "parameters": [
         { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "1080p", "options": ["480p", "720p", "1080p", "4k"] },

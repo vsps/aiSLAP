@@ -14,6 +14,7 @@ use crate::commands::fsutil::{
     as_str, is_image_ext, is_model3d_ext, is_video_ext, list_dirs, SEL_DIR, SEQUENCE_SIDECAR,
     SRC_DIR,
 };
+use crate::commands::prism;
 use crate::commands::session::with_shot_sidecar;
 use crate::db;
 use crate::domain::{Config, SequenceSidecar, ShotSidecar};
@@ -83,7 +84,28 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
     let mut sequences: Vec<SequenceCost> = Vec::new();
     let mut db_updates: Vec<(String, f64)> = Vec::new();
 
-    for seq_dir in list_dirs(&root)? {
+    // A PRISM project's sequences live under the entity roots, not the project
+    // folder — walking the project folder directly would treat 00_Pipeline,
+    // 01_Management and friends as sequences (and write cost fields into
+    // sequence.json inside them). Both trees are scanned so the project total
+    // covers shots and assets.
+    let prism = prism::detect(&root);
+    let seq_parents: Vec<PathBuf> = match &prism {
+        Some(layout) => vec![
+            layout.entity_root(Some("shot")),
+            layout.entity_root(Some("asset")),
+        ],
+        None => vec![root.clone()],
+    };
+
+    let mut seq_dirs: Vec<PathBuf> = Vec::new();
+    for parent in &seq_parents {
+        if parent.is_dir() {
+            seq_dirs.extend(list_dirs(parent)?);
+        }
+    }
+
+    for seq_dir in seq_dirs {
         let seq_name = match seq_dir.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -99,12 +121,24 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
         let mut seq_unknown = 0u32;
         let mut shots: Vec<ShotCost> = Vec::new();
 
-        for shot_dir in list_dirs(&seq_dir)? {
-            let shot_name = match shot_dir.file_name().and_then(|n| n.to_str()) {
+        let entity_dirs = match &prism {
+            Some(layout) => prism::entities_in(layout, &seq_dir)?,
+            None => list_dirs(&seq_dir)?,
+        };
+        for entity_dir in entity_dirs {
+            let shot_name = match entity_dir.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,
             };
             if shot_name == SRC_DIR || shot_name == SEL_DIR {
+                continue;
+            }
+            // aiSLAP's media (and its shot.json) live in `<entity>/Renders/AI`.
+            let shot_dir = match &prism {
+                Some(_) => prism::media_root_for(&entity_dir),
+                None => entity_dir,
+            };
+            if !shot_dir.is_dir() {
                 continue;
             }
 

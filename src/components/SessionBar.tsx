@@ -21,6 +21,10 @@ export function SessionBar({
   const projectPath = useSessionStore((s) => s.projectPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const shotPath = useSessionStore((s) => s.shotPath);
+  const shotEntityPath = useSessionStore((s) => s.shotEntityPath);
+  const prism = useSessionStore((s) => s.prism);
+  const entityType = useSessionStore((s) => s.entityType);
+  const setEntityType = useSessionStore((s) => s.setEntityType);
   const sequencesInProject = useSessionStore((s) => s.sequencesInProject);
   const shotsInSequence = useSessionStore((s) => s.shotsInSequence);
   const setProject = useSessionStore((s) => s.setProject);
@@ -29,16 +33,23 @@ export function SessionBar({
   const createSequence = useSessionStore((s) => s.createSequence);
   const createShot = useSessionStore((s) => s.createShot);
 
+  // PRISM owns entity creation — aiSLAP only writes inside Renders/AI.
+  const entityLocked = !!prism;
+  const lockedTitle = "Managed by PRISM — create it in PRISM first";
+  const shotLabel = prism && entityType === "asset" ? "ASSET:" : "SHOT:";
+
   const [creating, setCreating] = useState<
     null | "sequence" | "shot" | "rename-sequence" | "rename-shot"
   >(null);
   const [prefillName, setPrefillName] = useState("");
   const parsed = useScriptStore((s) => s.parsed);
-  const seqTemplates = parsed.sequences.map((s) => s.title);
+  const seqTemplates = entityLocked ? [] : parsed.sequences.map((s) => s.title);
   const currentSeqName = sequencePath ? basename(sequencePath) : "";
-  const shotTemplates = (
-    parsed.shotsByParent.get(normalizeTitle(currentSeqName)) ?? []
-  ).map((s) => s.title);
+  const shotTemplates = entityLocked
+    ? []
+    : (parsed.shotsByParent.get(normalizeTitle(currentSeqName)) ?? []).map(
+        (s) => s.title,
+      );
 
   async function pickProject() {
     const p = await pickDirectory("Choose project directory", projectPath ?? undefined);
@@ -118,6 +129,30 @@ export function SessionBar({
           disabled={!projectPath}
         />
 
+        {/* PRISM entity tree — shots vs assets. Only meaningful for a PRISM
+            project, so it isn't rendered for a plain aiSLAP one. */}
+        {prism && (
+          <div
+            className="flex gap-[2px] text-xs font-mono"
+            title={`PRISM project${prism.projectName ? `: ${prism.projectName}` : ""}`}
+          >
+            {(["shot", "asset"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => void setEntityType(t)}
+                className={
+                  entityType === t
+                    ? "px-2 py-[2px] bg-accent text-bg"
+                    : "px-2 py-[2px] bg-src-bg text-text hover:opacity-80"
+                }
+              >
+                {t.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* SEQUENCE */}
         <span className="pl-2">SEQUENCE</span>
         {creating === "sequence" || creating === "rename-sequence" ? (
@@ -151,7 +186,7 @@ export function SessionBar({
         <IconBtn
           name="add"
           size={20}
-          title="Create sequence"
+          title={entityLocked ? lockedTitle : "Create sequence"}
           onClick={() => {
             if (!projectPath) {
               void showMessage("Pick a project first", { kind: "warning" });
@@ -160,22 +195,22 @@ export function SessionBar({
             setPrefillName("");
             setCreating("sequence");
           }}
-          disabled={!projectPath}
+          disabled={!projectPath || entityLocked}
         />
         <IconBtn
           name="edit"
           size={18}
-          title="Rename sequence"
+          title={entityLocked ? lockedTitle : "Rename sequence"}
           onClick={() => {
             if (!sequencePath) return;
             setPrefillName(basename(sequencePath));
             setCreating("rename-sequence");
           }}
-          disabled={!sequencePath}
+          disabled={!sequencePath || entityLocked}
         />
 
-        {/* SHOT */}
-        <span className="pl-2">SHOT:</span>
+        {/* SHOT (or ASSET, in a PRISM asset tree) */}
+        <span className="pl-2">{shotLabel}</span>
         {creating === "shot" || creating === "rename-shot" ? (
           <InlinePrompt
             placeholder={
@@ -190,7 +225,9 @@ export function SessionBar({
           />
         ) : (
           <PathSelect
-            value={shotPath}
+            // The options are entity folders, so in PRISM the select has to
+            // match on the entity — shotPath is the media root inside it.
+            value={shotEntityPath ?? shotPath}
             options={shotsInSequence}
             templates={shotTemplates}
             onChange={(p) => void setShot(p)}
@@ -205,7 +242,7 @@ export function SessionBar({
         <IconBtn
           name="add"
           size={20}
-          title="Create shot"
+          title={entityLocked ? lockedTitle : "Create shot"}
           onClick={() => {
             if (!sequencePath) {
               void showMessage("Pick a sequence first", { kind: "warning" });
@@ -214,18 +251,18 @@ export function SessionBar({
             setPrefillName("");
             setCreating("shot");
           }}
-          disabled={!sequencePath}
+          disabled={!sequencePath || entityLocked}
         />
         <IconBtn
           name="edit"
           size={18}
-          title="Rename shot"
+          title={entityLocked ? lockedTitle : "Rename shot"}
           onClick={() => {
             if (!shotPath) return;
             setPrefillName(basename(shotPath));
             setCreating("rename-shot");
           }}
-          disabled={!shotPath}
+          disabled={!shotPath || entityLocked}
         />
       </div>
 

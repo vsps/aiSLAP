@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import {
@@ -65,10 +65,21 @@ export function ModelPicker() {
   );
   const refImages = useGenerationStore(selectRefImages);
 
-  const [provider, setProvider] = useState<Provider>(
-    () => (currentModel?.provider ?? "fal") as Provider,
+  // Provider tab and family mirror the active model rather than living in
+  // local state: every interaction here ends in selectModel, so there's
+  // nothing extra to remember — and it means a store-driven model change
+  // (RESTORE PROMPT, restore chain, chain presets) moves the tabs with it
+  // instead of leaving the picker pointing at the previous provider.
+  const currentEntry = useMemo(
+    () =>
+      currentModel
+        ? (entries.find((e) => e.node.id === currentModel.id) ?? null)
+        : null,
+    [entries, currentModel],
   );
-  const [manualFamily, setManualFamily] = useState<string | null>(null);
+  const provider = (currentEntry?.node.provider ??
+    currentModel?.provider ??
+    "fal") as Provider;
 
   const providerEntries = useMemo(
     () => entries.filter((e) => (e.node.provider ?? "fal") === provider),
@@ -95,14 +106,7 @@ export function ModelPicker() {
     [imageFamilies, videoFamilies, utilityFamilies, model3dFamilies],
   );
 
-  const currentFamily = useMemo(() => {
-    if (!currentModel) return null;
-    const entry = entries.find((e) => e.node.id === currentModel.id);
-    if (!entry || (entry.node.provider ?? "fal") !== provider) return null;
-    return entry.family;
-  }, [currentModel, entries, provider]);
-
-  const selectedFamily = manualFamily ?? currentFamily ?? families[0] ?? null;
+  const selectedFamily = currentEntry?.family ?? families[0] ?? null;
 
   const familyModels = useMemo(
     () => providerEntries.filter((e) => e.family === selectedFamily),
@@ -118,7 +122,6 @@ export function ModelPicker() {
     list: ModelEntry[],
     family: string | null,
   ) {
-    setManualFamily(family);
     const familyList = list.filter((e) => e.family === family);
     if (familyList.length === 0) return;
     let first = familyList[0];
@@ -139,7 +142,6 @@ export function ModelPicker() {
             key={p}
             type="button"
             onClick={() => {
-              setProvider(p);
               const newProviderEntries = entries.filter(
                 (e) => (e.node.provider ?? "fal") === p,
               );

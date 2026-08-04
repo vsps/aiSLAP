@@ -118,10 +118,11 @@ async function pullDown(
     provider: rec.modelProvider,
   };
 
-  // rec.shotPath is project/sequence/shot — two levels up is the project
-  // root. Read (never mint) the id here: recovery runs standalone and
-  // shouldn't race the normal setProject mint path over the same file.
-  const projectPath = dirname(dirname(rec.shotPath));
+  // The record carries its project root; records written before PRISM support
+  // don't, and for those the shot is always project/sequence/shot. Read (never
+  // mint) the id here: recovery runs standalone and shouldn't race the normal
+  // setProject mint path over the same file.
+  const projectPath = rec.projectPath ?? dirname(dirname(rec.shotPath));
   const projectId = await cmd.project_id_get(projectPath).catch(() => null);
 
   const ctx: DownloadCtx = {
@@ -138,6 +139,7 @@ async function pullDown(
     refs: [], // no upload URLs on recovery
     refSnapshots: rec.refs,
     shotPath: rec.shotPath,
+    projectPath,
     versionDir: joinPath(rec.shotPath, rec.targetVersion),
     targetVersion: rec.targetVersion,
     iterationBase: rec.iterationIndex,

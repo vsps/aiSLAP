@@ -2,6 +2,7 @@
 // prompts into the final text sent to the API, honoring inclusion flags.
 
 import { basename } from "../paths";
+import { seqShotNames } from "../prism";
 import { combinePromptParts } from "../args";
 import { findSequenceBody, findShotBody } from "../script";
 import { useScriptStore } from "../../stores/scriptStore";
@@ -17,17 +18,57 @@ export function previewShotPrompt(s: string): string {
   return s.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
-function scriptSegmentsFor(
+export function scriptSegmentsFor(
   sequencePath: string | null,
   shotPath: string | null,
 ): { sequenceScript: string; shotScript: string } {
   const parsed = useScriptStore.getState().parsed;
+  // Entity names — a PRISM shot path ends in `Renders/AI`, whose last segments
+  // would never match a script heading.
   const seqName = sequencePath ? basename(sequencePath) : "";
-  const shotName = shotPath ? basename(shotPath) : "";
+  const { shot: shotName } = seqShotNames(shotPath);
   return {
     sequenceScript: seqName ? findSequenceBody(parsed, seqName) : "",
     shotScript:
       seqName && shotName ? findShotBody(parsed, seqName, shotName) : "",
+  };
+}
+
+/** Inverse of combinePromptParts: which pieces made it into an already-built
+ *  combined prompt. RESTORE PROMPT needs this because the flat sidecar records
+ *  the pieces and the exact combined string but not the include ticks — and
+ *  combinePromptParts joins the trimmed pieces verbatim, so a substring test
+ *  is exact. An empty piece (or no combined string, i.e. an older sidecar)
+ *  reads as included, matching the "undefined means included" default.
+ *
+ *  Two accepted imprecisions: a script edited since the generation no longer
+ *  matches and so comes back unticked (which does reproduce the recorded
+ *  prompt), and a piece that happens to be a substring of another stays
+ *  ticked — the same result as not inferring at all. */
+export function inferIncludes(
+  combined: string,
+  parts: {
+    sequenceScript: string;
+    sequencePrompt: string;
+    shotScript: string;
+    shotPrompts: string[];
+  },
+): {
+  sequenceScript: boolean;
+  sequencePrompt: boolean;
+  shotScript: boolean;
+  shotPrompts: boolean[];
+} {
+  const present = (piece: string): boolean => {
+    const t = piece.trim();
+    if (!combined || !t) return true;
+    return combined.includes(t);
+  };
+  return {
+    sequenceScript: present(parts.sequenceScript),
+    sequencePrompt: present(parts.sequencePrompt),
+    shotScript: present(parts.shotScript),
+    shotPrompts: parts.shotPrompts.map(present),
   };
 }
 

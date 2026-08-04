@@ -330,10 +330,11 @@ export function RefImagesColumn() {
                 {kind === "image" && showEndSlot && (
                   <RoleSlotPlaceholder kind="end" />
                 )}
-                {buckets[kind].map(({ ref: r, idx }) => (
+                {buckets[kind].map(({ ref: r, idx }, i) => (
                   <RefThumb
                     key={r.path}
                     index={idx}
+                    num={i + 1}
                     ref_={r}
                     color={roleColor(r.roleAssignment)}
                     isDragging={dragState?.fromIdx === idx}
@@ -382,6 +383,7 @@ function isAudioPath(path: string): boolean {
 // are unchanged when a sibling drag updates the parent.
 const RefThumb = memo(function RefThumb({
   index,
+  num,
   ref_,
   color,
   isDragging,
@@ -392,6 +394,7 @@ const RefThumb = memo(function RefThumb({
   onHandlePointerDown,
 }: {
   index: number;
+  num: number;
   ref_: RefImage;
   color: string | null;
   isDragging: boolean;
@@ -401,7 +404,7 @@ const RefThumb = memo(function RefThumb({
   onSelect: () => void;
   onHandlePointerDown: (pointerId: number, handleEl: HTMLElement) => void;
 }) {
-  const label = roleLabel(ref_);
+  const label = roleLabel(ref_, num);
   const isVideo = isVideoPath(ref_.path);
   const isAudio = isAudioPath(ref_.path);
   const src = fileSrc(ref_.path);
@@ -565,9 +568,11 @@ function RefAddTile({ onAdd }: { onAdd: () => void }) {
   );
 }
 
-function roleLabel(r: RefImage): string {
+// `num` is the ref's 1-based position within its media row, which is also its
+// index in the API array that kind of ref lands in (e.g. Seedance's @image1..N).
+function roleLabel(r: RefImage, num: number): string {
   const a = r.roleAssignment;
-  if (!a) return basename(r.path);
+  if (!a) return `${num}: ${basename(r.path)}`;
   switch (a.kind) {
     case "source":
       return "source";

@@ -225,8 +225,6 @@ export function ImageZoomModal({
             "trace",
             "---",
             "edit_tags",
-            "toggle_fav",
-            "toggle_select",
             "set_clip_media",
             "---",
             "copy_prompt",

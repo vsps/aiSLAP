@@ -217,6 +217,7 @@ export async function enqueueGeneration(): Promise<void> {
       refs: baseRefs.slice(),
       iterations,
       shotPath: session.shotPath,
+      projectPath: session.projectPath ?? "",
       targetVersion,
       ffmpegPath,
       filenameTemplate,
@@ -389,6 +390,7 @@ export async function enqueueChain(): Promise<void> {
         // Only the final link honors the iterations field; intermediates run once.
         iterations: isLast ? iterations : 1,
         shotPath,
+        projectPath: session.projectPath ?? "",
         targetVersion,
         ffmpegPath,
         filenameTemplate,

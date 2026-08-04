@@ -15,7 +15,7 @@ import { preflightChain } from "../lib/chainValidation";
 import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
-import { basename } from "../lib/paths";
+import { seqShotNames } from "../lib/prism";
 import { formatCost, perItemPrice, parseDurationSeconds } from "../lib/falPrices";
 import { usePricesStore } from "../stores/pricesStore";
 import type { ChainLink } from "../lib/types";
@@ -193,7 +193,7 @@ export function RunColumn() {
       : activeJobs
           .map(
             (j) =>
-              `${j.modelName} · ${basename(j.shotPath)}/${j.targetVersion} · ${j.progressMessage}`,
+              `${j.modelName} · ${seqShotNames(j.shotPath).shot}/${j.targetVersion} · ${j.progressMessage}`,
           )
           .join("\n");
 

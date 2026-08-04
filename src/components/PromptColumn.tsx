@@ -9,6 +9,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
 import { findSequenceBody, findShotBody } from "../lib/script";
 import { basename } from "../lib/paths";
+import { seqShotNames } from "../lib/prism";
 import { confirmAction } from "../lib/dialog";
 import { negativePromptParam } from "../lib/args";
 import { useLayoutStore } from "../stores/layoutStore";
@@ -96,7 +97,20 @@ function SequencePromptColumn({ title }: { title: string }) {
 
   if (collapsed) {
     return (
-      <CollapsedColumnBar title={title} onClick={() => toggleCollapsed("seqPrompt")} />
+      <CollapsedColumnBar
+        title={title}
+        onClick={() => toggleCollapsed("seqPrompt")}
+        accessory={
+          <input
+            type="checkbox"
+            checked={sequencePromptIncluded}
+            onChange={(e) => setSequencePromptIncluded(e.currentTarget.checked)}
+            disabled={readOnly}
+            className="accent-accent"
+            title="Include sequence prompt in submitted prompt"
+          />
+        }
+      />
     );
   }
 
@@ -240,7 +254,9 @@ function ShotPromptColumn({ title }: { title: string }) {
   const canGoFwd = safeCursor < entries.length;
 
   const seqName = sequencePath ? basename(sequencePath) : "";
-  const shotName = shotPath ? basename(shotPath) : "";
+  // Entity name, so script headings still match in a PRISM project (where the
+  // shot path ends in `Renders/AI`).
+  const { shot: shotName } = seqShotNames(shotPath);
   const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
 
   const shotScriptIncluded = activeLink?.shotScriptIncluded !== false;
