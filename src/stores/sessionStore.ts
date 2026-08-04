@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import type {
   GalleryColumn,
+  PrismEntityType,
+  PrismInfo,
   PromptHistoryChannel,
   RefImage,
   SequenceSidecar,
@@ -14,6 +16,7 @@ import { useScriptStore } from "./scriptStore";
 import { useTagsStore } from "./tagsStore";
 import { swallow } from "../lib/errors";
 import { normalizeDir } from "../lib/paths";
+import { entityFor } from "../lib/prism";
 import { coalesceAsync } from "../lib/coalesce";
 import { pushLog } from "./logStore";
 
@@ -27,10 +30,21 @@ type State = {
    *  index; also stamped into every output's sidecar + embedded media tag. */
   projectId: string | null;
   sequencePath: string | null;
+  /** Where this shot's media lives. In a PRISM project that's the
+   *  `<entity>/Renders/AI` media root, not the entity folder — everything
+   *  downstream (version columns, SRC, sidecars, tags) keys off it. */
   shotPath: string | null;
+  /** PRISM only: the entity folder `shotPath` belongs to, for the dropdown and
+   *  for labels. Null in a native project, where the entity *is* the shot. */
+  shotEntityPath: string | null;
+
+  /** PRISM layout for the open project, or null for a plain aiSLAP project. */
+  prism: PrismInfo | null;
+  /** Which PRISM entity tree is being browsed. Ignored when `prism` is null. */
+  entityType: PrismEntityType;
 
   sequencesInProject: string[]; // absolute paths
-  shotsInSequence: string[]; // absolute paths
+  shotsInSequence: string[]; // absolute paths (entity folders under PRISM)
 
   columns: GalleryColumn[];
   selectedImagePath: string | null;
@@ -82,7 +96,12 @@ type State = {
 type Actions = {
   setProject: (projectPath: string) => Promise<void>;
   setSequence: (sequencePath: string) => Promise<void>;
+  /** Accepts a PRISM entity folder or an AI media root — either resolves to
+   *  the media root, creating it on first visit. */
   setShot: (shotPath: string) => Promise<void>;
+  /** PRISM only: switch between the shot and asset trees. Re-lists sequences
+   *  and clears the current selection. */
+  setEntityType: (entityType: PrismEntityType) => Promise<void>;
   rescanShot: () => Promise<void>;
   setTargetVersion: (version: string | null) => void;
   createSequence: (name: string) => Promise<void>;
@@ -140,6 +159,23 @@ function latestVersion(columns: GalleryColumn[]): string | null {
   return vs.length ? vs[vs.length - 1] : null;
 }
 
+/** Everything that has to be dropped when the sequence list changes under us —
+ *  picking a project, or flipping the PRISM entity tree. */
+function clearedSelection() {
+  return {
+    sequencePath: null,
+    shotPath: null,
+    shotEntityPath: null,
+    shotsInSequence: [],
+    columns: [],
+    targetVersion: null,
+    selectedImagePath: null,
+    sequenceHistory: emptyChannel(),
+    shotHistory: emptyChannel(),
+    versionComments: {},
+  };
+}
+
 export const useSessionStore = create<State & Actions>((set, get) => {
   const coalescedRescanShot = coalesceAsync(async () => {
     const { shotPath } = get();
@@ -167,6 +203,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
     projectId: null,
     sequencePath: null,
     shotPath: null,
+    shotEntityPath: null,
+
+    prism: null,
+    entityType: "shot",
 
     sequencesInProject: [],
     shotsInSequence: [],
@@ -204,20 +244,28 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       // Rust's list_dirs returns forward-slash paths. Normalize the incoming path
       // the same way so the PROJECT/SEQUENCE/SHOT dropdowns string-match their options.
       const normalized = normalizeDir(projectPath);
-      const sequences = await cmd.project_open(normalized);
+      // A PRISM project keeps its entities under 03_Production/Shots|Assets, so
+      // the layout has to be known before sequences can be listed.
+      const prism = await cmd.prism_detect(normalized).catch(() => null);
+      // Log it: which layout is in play decides where every output lands, and
+      // the only other signal is whether the SHOT/ASSET toggle appeared.
+      pushLog(
+        "INFO",
+        prism
+          ? `PRISM project${prism.projectName ? ` ${prism.projectName}` : ""} — entities under ${prism.shotsRoot.slice(normalized.length + 1)}, versions v${"0".repeat(Math.max(0, prism.versionPadding - 1))}1`
+          : `aiSLAP project (no 00_Pipeline/pipeline.json) — ${normalized}`,
+      );
+      const entityType = get().entityType;
+      const sequences = await cmd.project_open(
+        normalized,
+        prism ? entityType : undefined,
+      );
       set({
         projectPath: normalized,
         projectId: null,
+        prism,
         sequencesInProject: sequences,
-        sequencePath: null,
-        shotPath: null,
-        shotsInSequence: [],
-        columns: [],
-        targetVersion: null,
-        selectedImagePath: null,
-        sequenceHistory: emptyChannel(),
-        shotHistory: emptyChannel(),
-        versionComments: {},
+        ...clearedSelection(),
       });
       useTimelineStore.getState().reset();
       void useScriptStore.getState().loadFor(normalized);
@@ -308,10 +356,34 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       await timelineLoad;
     },
 
+    async setEntityType(entityType) {
+      if (get().entityType === entityType) return;
+      set({ entityType });
+      const { projectPath, prism } = get();
+      // No project open yet (bootstrap sets the persisted type first), or a
+      // native project where the switch has no meaning — nothing to re-list.
+      if (!projectPath || !prism) return;
+      const sequences = await cmd.project_open(projectPath, entityType);
+      set({ sequencesInProject: sequences, ...clearedSelection() });
+      useTimelineStore.getState().reset();
+    },
+
     async setShot(shotPath) {
-      const { columns, sidecar } = await cmd.shot_open(shotPath);
+      // PRISM: media lives in `<entity>/Renders/AI`. Accept either the entity
+      // folder (from the dropdown) or a media root (from session restore), and
+      // create the folder on first visit — it's an output dir inside an entity
+      // PRISM already made, not a pipeline entity.
+      const { prism } = get();
+      let resolved = shotPath;
+      let entityPath: string | null = null;
+      if (prism) {
+        entityPath = entityFor(shotPath) ?? normalizeDir(shotPath);
+        resolved = await cmd.prism_media_root_ensure(entityPath);
+      }
+      const { columns, sidecar } = await cmd.shot_open(resolved);
       set({
-        shotPath,
+        shotPath: resolved,
+        shotEntityPath: entityPath,
         columns,
         targetVersion: latestVersion(columns),
         selectedImagePath: null,
@@ -339,7 +411,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       const { projectPath } = get();
       if (!projectPath) throw new Error("no project");
       const seqPath = await cmd.sequence_create(projectPath, name);
-      const sequences = await cmd.project_open(projectPath);
+      const sequences = await cmd.project_open(projectPath, get().entityType);
       set({ sequencesInProject: sequences });
       await get().setSequence(seqPath);
     },

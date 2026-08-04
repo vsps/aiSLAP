@@ -7,12 +7,13 @@ import { classifyMedia, guessContentType } from "./media";
 import { swallow } from "./errors";
 import { inFlightJobs } from "./jobs";
 import { rewriteScriptHeading } from "./script";
-import { makeChainLink, useGenerationStore } from "../stores/generationStore";
+import { linkFromPersisted } from "./bootstrap";
+import { inferIncludes, scriptSegmentsFor } from "./generation/prompts";
+import { useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { useScriptStore } from "../stores/scriptStore";
-import { useTagsStore } from "../stores/tagsStore";
 import type {
   ChainLink,
   ImageMetadata,
@@ -89,22 +90,54 @@ async function resolveRefPath(
 export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
   restoredRefs: number;
   skippedRefs: number;
+  missingModel: string | null;
 }> {
   const models = useModelsStore.getState();
   const gen = useGenerationStore.getState();
+  const session = useSessionStore.getState();
 
-  const node = models.findById(meta.modelId);
+  // A sidecar whose modelId is no longer in the registry leaves the current
+  // model in place — report it rather than silently restoring prompts and
+  // settings onto whatever model happened to be selected.
+  const node = meta.modelId ? models.findById(meta.modelId) : null;
   if (node) gen.selectModel(node);
+  const missingModel =
+    meta.modelId && !node ? (meta.model ?? meta.modelId) : null;
 
   // Restore prompts (back-compat: old sidecars only had `prompt`).
   // Metadata stores the combined shot prompt as one string; recall lands it
   // in a single box (the multi-box split is not preserved in metadata).
-  gen.setSequencePrompt(meta.sequencePrompt ?? "");
-  if (meta.shotPrompts && meta.shotPrompts.length > 0) {
-    gen.setShotPrompts(meta.shotPrompts);
-  } else {
-    gen.setShotPrompts([meta.shotPrompt ?? meta.prompt ?? ""]);
-  }
+  const sequencePrompt = meta.sequencePrompt ?? "";
+  const shotPrompts =
+    meta.shotPrompts && meta.shotPrompts.length > 0
+      ? meta.shotPrompts
+      : [meta.shotPrompt ?? meta.prompt ?? ""];
+  gen.setSequencePrompt(sequencePrompt);
+  gen.setShotPrompts(shotPrompts);
+
+  // Inclusion ticks aren't recorded in the flat sidecar — recover them from
+  // the combined prompt that was actually submitted, so a section the user had
+  // unticked doesn't come back on and silently re-enter the next generation.
+  // Script bodies come from the loaded script (same source the generation path
+  // reads), since they aren't in the sidecar either.
+  const { sequenceScript, shotScript } = scriptSegmentsFor(
+    session.sequencePath,
+    session.shotPath,
+  );
+  const includes = inferIncludes(meta.combinedPrompt ?? "", {
+    sequenceScript,
+    sequencePrompt,
+    shotScript,
+    shotPrompts,
+  });
+  gen.setSequenceScriptIncluded(includes.sequenceScript);
+  gen.setSequencePromptIncluded(includes.sequencePrompt);
+  gen.setShotScriptIncluded(includes.shotScript);
+  // setShotPrompts reset every box to included, so only the excluded ones need
+  // an explicit write.
+  includes.shotPrompts.forEach((inc, i) => {
+    if (!inc) gen.setShotPromptIncludedAt(i, false);
+  });
 
   // Settings
   const settings = meta.settings || {};
@@ -113,7 +146,7 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
   // Refs — resolve each (path hint -> assetId -> hash); drop any that
   // still can't be found.
   const refs = normalizeRefs(meta.refs);
-  const projectPath = useSessionStore.getState().projectPath;
+  const projectPath = session.projectPath;
   const valid: RefImage[] = [];
   let skipped = 0;
   for (const r of refs) {
@@ -133,7 +166,7 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
     gen.setIterations(meta.iterationTotal);
   }
 
-  return { restoredRefs: valid.length, skippedRefs: skipped };
+  return { restoredRefs: valid.length, skippedRefs: skipped, missingModel };
 }
 
 /** Restore a full prompt chain into the work surface from a sidecar's
@@ -149,8 +182,6 @@ export async function restoreChainFromMetadata(
   let skippedRefs = 0;
   const restored: ChainLink[] = [];
   for (const p of meta.chain.links) {
-    const model = p.modelId ? (models.findById(p.modelId) ?? null) : null;
-    if (p.modelId && !model) missingModels++;
     const refs: RefImage[] = [];
     for (const r of p.refImages ?? []) {
       const resolved = await resolveRefPath(projectPath, r);
@@ -158,21 +189,11 @@ export async function restoreChainFromMetadata(
         refs.push(resolved === r.path ? r : { ...r, path: resolved });
       else skippedRefs++;
     }
-    restored.push(
-      makeChainLink({
-        id: p.id,
-        active: !!p.active,
-        model,
-        settings: p.settings ?? {},
-        sequencePrompt: p.sequencePrompt ?? "",
-        shotPrompts:
-          Array.isArray(p.shotPrompts) && p.shotPrompts.length > 0
-            ? p.shotPrompts
-            : [""],
-        refImages: refs,
-        consumesPrev: !!p.consumesPrev,
-      }),
-    );
+    // Same hydrator the app-restart path uses (so the prompt-section
+    // inclusion flags come across), with our resolved refs overlaid.
+    const link = linkFromPersisted(p, models.entries);
+    if (p.modelId && !link.model) missingModels++;
+    restored.push({ ...link, refImages: refs });
   }
   useGenerationStore.getState().setChain(restored, null);
   return { missingModels, skippedRefs };
@@ -416,8 +437,6 @@ export type ImageAction =
   | "edit"
   | "crop"
   | "edit_tags"
-  | "toggle_fav"
-  | "toggle_select"
   | "restore_chain"
   | "show_info";
 
@@ -530,17 +549,6 @@ export async function performImageAction(
     case "edit_tags":
       session.setTagEditor(path);
       return;
-    case "toggle_fav":
-    case "toggle_select": {
-      try {
-        await useTagsStore
-          .getState()
-          .toggleImageTag(path, action === "toggle_fav" ? "fav" : "select");
-      } catch (e) {
-        await showMessage(String(e), { kind: "error" });
-      }
-      return;
-    }
     case "set_clip_media": {
       const { shotPath } = session;
       if (!shotPath) {
@@ -568,9 +576,14 @@ export async function performImageAction(
         { title: "Reuse prompt", kind: "warning" },
       );
       if (!ok) return;
-      const { restoredRefs, skippedRefs } =
+      const { restoredRefs, skippedRefs, missingModel } =
         await copySettingsFromMetadata(meta);
-      if (restoredRefs > 0 || skippedRefs > 0) {
+      if (missingModel) {
+        await showMessage(
+          `Prompt and settings reused, but "${missingModel}" is no longer in the model registry — pick a model before generating.`,
+          { kind: "warning" },
+        );
+      } else if (restoredRefs > 0 || skippedRefs > 0) {
         const skip = skippedRefs
           ? `, ${skippedRefs} skipped (files missing)`
           : "";

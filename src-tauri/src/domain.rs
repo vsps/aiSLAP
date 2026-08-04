@@ -183,10 +183,17 @@ pub struct RefImage {
 pub struct AppState {
     #[serde(default)]
     pub project_path: String,
+    /// Sequence/shot paths relative to their parent — the folder name in a
+    /// native project, but carrying the entity-root and `Renders/AI` segments
+    /// in a PRISM one.
     #[serde(default)]
     pub last_sequence: String,
     #[serde(default)]
     pub last_shot: String,
+    /// PRISM entity tree the session was last in ("shot" | "asset"). Absent for
+    /// plain aiSLAP projects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prism_entity_type: Option<String>,
     #[serde(default)]
     pub last_model: String,
     #[serde(default)]
@@ -230,6 +237,7 @@ impl Default for AppState {
             project_path: String::new(),
             last_sequence: String::new(),
             last_shot: String::new(),
+            prism_entity_type: None,
             last_model: String::new(),
             sequence_prompt: String::new(),
             shot_prompt: String::new(),

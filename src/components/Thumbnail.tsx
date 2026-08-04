@@ -4,7 +4,7 @@ import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
 import { PathContextMenu } from "./PathContextMenu";
 import { cmd } from "../lib/tauri";
-import { basename, dirname } from "../lib/paths";
+import { seqShotNamesForMedia } from "../lib/prism";
 import { assemblePromptFromMetadata } from "../lib/actions";
 import { startThresholdDrag } from "../lib/dragThreshold";
 import { getConfigCached, getImageMetadataCached } from "../lib/metadataCache";
@@ -26,10 +26,6 @@ type Props = {
   }) => void;
   /** Disables drag start. Used in the tag view where drag-to-column has no destination. */
   dragDisabled?: boolean;
-  /** Whether this image is currently the shot's exclusive "clip media" pick. */
-  clipMediaSelected?: boolean;
-  /** When defined, renders the clip-media toggle button. */
-  onToggleClipMedia?: (path: string) => void;
   /** Caps the computed aspect ratio. In grid views portrait images are forced square. */
   maxAspect?: number;
 };
@@ -49,8 +45,6 @@ export const Thumbnail = memo(function Thumbnail({
   onEditTags,
   onDragStart,
   dragDisabled,
-  clipMediaSelected,
-  onToggleClipMedia,
   maxAspect,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
@@ -178,17 +172,14 @@ export const Thumbnail = memo(function Thumbnail({
     ? assemblePromptFromMetadata(tooltipMeta)
     : null;
 
-  // Path layout is <project>/<sequence>/<shot>/<version>/<filename>. GLOBAL SRC
-  // sits directly under <project>, so it has no sequence/shot to show.
-  const sequenceShotLabel =
-    columnVersion === "GLOBAL SRC"
-      ? "GLOBAL SRC"
-      : [
-          basename(dirname(dirname(dirname(image.path)))),
-          basename(dirname(dirname(image.path))),
-        ]
-          .filter(Boolean)
-          .join(" / ");
+  // GLOBAL SRC sits directly under the project, so it has no sequence/shot to
+  // show. Everything else is <shot>/<version>/<filename>, where <shot> may be a
+  // PRISM media root — seqShotNamesForMedia resolves the entity either way.
+  const sequenceShotLabel = (() => {
+    if (columnVersion === "GLOBAL SRC") return "GLOBAL SRC";
+    const { seq, shot } = seqShotNamesForMedia(image.path);
+    return [seq, shot].filter(Boolean).join(" / ");
+  })();
 
   if (hidden) return null;
 
@@ -327,24 +318,6 @@ export const Thumbnail = memo(function Thumbnail({
             : "opacity-0 group-hover:opacity-100 text-white hover:text-accent"
         }`}
       />
-      {onToggleClipMedia && (
-        <IconBtn
-          name="movie"
-          size={18}
-          fill={!!clipMediaSelected}
-          title={clipMediaSelected ? "Clear clip media" : "Set as clip media"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleClipMedia(image.path);
-          }}
-          className={`absolute bottom-1 right-1 drop-shadow transition-opacity transition-colors ${
-            clipMediaSelected
-              ? "opacity-100 text-accent"
-              : "opacity-0 group-hover:opacity-100 text-white hover:text-accent"
-          }`}
-        />
-      )}
-
       {tooltipPos && tooltipMeta !== null && (
         <div
           className="fixed z-50 pointer-events-none max-w-xs bg-panel/95 border border-dim shadow-xl px-2 py-1.5 text-xs space-y-0.5"

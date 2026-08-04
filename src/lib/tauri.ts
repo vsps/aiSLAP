@@ -9,6 +9,8 @@ import type {
   ShotSidecar,
   ImageMetadata,
   PendingSubmission,
+  PrismEntityType,
+  PrismInfo,
   SeqTaggedGroup,
   SequenceStacks,
   TagDef,
@@ -53,8 +55,20 @@ export const cmd = {
   models_load: (): Promise<ModelEntry[]> => rawInvoke("models_load"),
 
   // Session
-  project_open: (projectPath: string): Promise<string[]> =>
-    rawInvoke("project_open", { projectPath }),
+  project_open: (
+    projectPath: string,
+    entityType?: PrismEntityType,
+  ): Promise<string[]> =>
+    rawInvoke("project_open", { projectPath, entityType }),
+
+  // PRISM
+  /** Null for a plain aiSLAP project (no 00_Pipeline/pipeline.json). */
+  prism_detect: (projectPath: string): Promise<PrismInfo | null> =>
+    rawInvoke("prism_detect", { projectPath }),
+  /** Ensures `<entity>/Renders/AI` (+ SRC, + a first version dir) and returns
+   *  it. Idempotent when handed a media root already. */
+  prism_media_root_ensure: (entityPath: string): Promise<string> =>
+    rawInvoke("prism_media_root_ensure", { entityPath }),
   sequence_open: (
     sequencePath: string,
   ): Promise<{ shots: string[]; sidecar: SequenceSidecar }> =>

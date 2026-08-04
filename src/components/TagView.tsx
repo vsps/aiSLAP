@@ -1,6 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useSessionStore } from "../stores/sessionStore";
-import { useTimelineStore } from "../stores/timelineStore";
 import { useTagsStore } from "../stores/tagsStore";
 import { editTagsAt, selectImagePath } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
@@ -21,27 +20,6 @@ export function TagView({ onDragStart }: Props) {
   const activeFilter = useTagsStore((s) => s.activeFilter);
   const filterMode = useTagsStore((s) => s.filterMode);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
-  const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
-  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
-
-  // One stable per-shot toggle callback (cached by shotPath), reading the
-  // current clip-media pick from the store at call time rather than closing
-  // over it — otherwise a fresh closure per image per render would defeat
-  // memo(Thumbnail).
-  const clipToggleHandlers = useRef(new Map<string, (path: string) => void>());
-  function getClipToggleHandler(shotPath: string): (path: string) => void {
-    let fn = clipToggleHandlers.current.get(shotPath);
-    if (!fn) {
-      fn = (path: string) => {
-        const current =
-          useTimelineStore.getState().shotsLatestMedia.get(shotPath)
-            ?.clipMediaPath ?? null;
-        void setShotClipMedia(shotPath, path === current ? null : path);
-      };
-      clipToggleHandlers.current.set(shotPath, fn);
-    }
-    return fn;
-  }
 
   useEffect(() => {
     if (projectPath) void rescanTagged();
@@ -88,8 +66,6 @@ export function TagView({ onDragStart }: Props) {
               {seq.seqName}
             </div>
             {seq.shots.map((g) => {
-              const slm = shotsLatestMedia.get(g.shotPath);
-              const knownShot = !!slm;
               return (
                 <div
                   key={g.shotPath}
@@ -103,28 +79,18 @@ export function TagView({ onDragStart }: Props) {
                     {g.shotName}
                   </div>
                   <div className="flex-1 min-w-0 flex flex-wrap gap-gallery-column-gap">
-                    {g.images.map((img) => {
-                      const clipSelected =
-                        knownShot && slm?.clipMediaPath === img.path;
-                      return (
-                        <div key={img.path} className="w-[120px] shrink-0">
-                          <Thumbnail
-                            image={img}
-                            selected={selectedImagePath === img.path}
-                            columnVersion={g.shotName}
-                            onSelect={selectImagePath}
-                            onEditTags={editTagsAt}
-                            onDragStart={onDragStart}
-                            clipMediaSelected={clipSelected}
-                            onToggleClipMedia={
-                              knownShot
-                                ? getClipToggleHandler(g.shotPath)
-                                : undefined
-                            }
-                          />
-                        </div>
-                      );
-                    })}
+                    {g.images.map((img) => (
+                      <div key={img.path} className="w-[120px] shrink-0">
+                        <Thumbnail
+                          image={img}
+                          selected={selectedImagePath === img.path}
+                          columnVersion={g.shotName}
+                          onSelect={selectImagePath}
+                          onEditTags={editTagsAt}
+                          onDragStart={onDragStart}
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
               );

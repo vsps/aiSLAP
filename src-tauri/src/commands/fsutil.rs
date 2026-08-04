@@ -70,38 +70,66 @@ pub(crate) fn thumb_path(media: &Path) -> PathBuf {
     media.with_file_name(format!("{stem}.thumb.png"))
 }
 
-/// A version-folder name is `<letter-prefix><3 ASCII digits>`, where the
-/// prefix is at least one letter and may also contain `_` or `-`. Old `v###`
-/// folders still match; the project's configured prefix decides what newly
-/// minted folders are named (see `version_prefix_for`).
-pub(crate) fn is_version_name(name: &str) -> bool {
-    if name.len() < 4 {
-        return false;
-    }
-    let (prefix, digits) = name.split_at(name.len() - 3);
-    if prefix.is_empty() {
-        return false;
-    }
-    let mut chars = prefix.chars();
-    let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
-    first_ok
-        && prefix
-            .chars()
-            .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-')
-        && digits.chars().all(|c| c.is_ascii_digit())
-}
+/// Digits allowed in a version-folder name. aiSLAP mints 3 (`gen001`); PRISM
+/// projects mint their configured padding, which is 4 out of the box
+/// (`v0001`), so both have to read back as versions.
+const VERSION_DIGITS: std::ops::RangeInclusive<usize> = 3..=6;
 
-/// Extract the 3-digit numeric suffix of a version-folder name.
-pub(crate) fn version_number(name: &str) -> Option<u32> {
-    if !is_version_name(name) {
+/// Split a version-folder name into its prefix and trailing digit run, or None
+/// if it isn't shaped like one: `<letter-prefix><3..6 ASCII digits>`, where the
+/// prefix starts with a letter and may also contain `_` or `-`.
+fn split_version_name(name: &str) -> Option<(&str, &str)> {
+    let digits_len = name
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+    if !VERSION_DIGITS.contains(&digits_len) {
         return None;
     }
-    name[name.len() - 3..].parse::<u32>().ok()
+    let (prefix, digits) = name.split_at(name.len() - digits_len);
+    if prefix.is_empty() || !prefix.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    if !prefix
+        .chars()
+        .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-')
+    {
+        return None;
+    }
+    Some((prefix, digits))
 }
 
-/// Read the project's configured version-folder prefix, falling back to "gen"
-/// for projects that don't have the field set yet.
+pub(crate) fn is_version_name(name: &str) -> bool {
+    split_version_name(name).is_some()
+}
+
+/// Extract the numeric suffix of a version-folder name.
+pub(crate) fn version_number(name: &str) -> Option<u32> {
+    split_version_name(name)?.1.parse::<u32>().ok()
+}
+
+/// Whether `root` already holds at least one version folder.
+pub(crate) fn has_version_dir(root: &Path) -> bool {
+    std::fs::read_dir(root).is_ok_and(|it| {
+        it.flatten().any(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| is_version_name(n) && e.path().is_dir())
+        })
+    })
+}
+
+/// Version-folder prefix for newly minted folders under `path`.
+///
+/// A PRISM project follows the pipeline's own `versionFormat` ("v#" -> "v") and
+/// ignores the project sidecar's prefix entirely — its renders have to sit
+/// alongside the rest of the pipeline's versions. Otherwise it's the project's
+/// configured prefix, falling back to "gen".
 pub(crate) fn version_prefix_for(path: &Path) -> String {
+    if let Some(layout) = crate::commands::prism::layout_for(path) {
+        return layout.version_prefix;
+    }
     let root = match project_root_for(path) {
         Ok(r) => r,
         Err(_) => return "gen".into(),
@@ -128,7 +156,15 @@ pub(crate) fn version_prefix_for(path: &Path) -> String {
 /// later, and every path-derived lookup silently resolves to `<parent>` —
 /// wrong tag vocabulary, wrong index DB, wrong version prefix. Nearest-wins
 /// matches what the user actually opened.
+/// One exception to nearest-wins: a PRISM root anywhere above beats a nearer
+/// `project.json`. Opening `03_Production/Assets` (or a category inside it) as a
+/// standalone project leaves a marker there, and resolving to it would key the
+/// tag index and version naming to a folder the pipeline knows nothing about —
+/// which is how a PRISM shot ended up minting `gen001` instead of `v0001`.
 pub(crate) fn project_root_for(path: &Path) -> AppResult<PathBuf> {
+    if let Some(prism_root) = crate::commands::prism::prism_root_for(path) {
+        return Ok(prism_root);
+    }
     let mut cur: Option<&Path> = Some(path);
     while let Some(p) = cur {
         if p.join(PROJECT_SIDECAR).is_file() {
@@ -165,8 +201,9 @@ pub(crate) fn rel_of(path: &Path, root: &Path) -> Option<String> {
         .or_else(|| relativize(path, root))
 }
 
-/// Next unused version-folder name under `root` (e.g. "gen004"), per the
-/// project's configured prefix. Does not create the directory — callers
+/// Next unused version-folder name under `root` (e.g. "gen004", or "v0004" in
+/// a PRISM project). Prefix comes from the project sidecar, digit count from
+/// PRISM's padding where there is one. Does not create the directory — callers
 /// `ensure_dir` the result themselves.
 pub(crate) fn next_version_name(root: &Path) -> String {
     let mut max_n = 0u32;
@@ -181,7 +218,13 @@ pub(crate) fn next_version_name(root: &Path) -> String {
             }
         }
     }
-    format!("{}{:03}", version_prefix_for(root), max_n + 1)
+    let padding = crate::commands::prism::version_padding_for(root);
+    format!(
+        "{}{:0width$}",
+        version_prefix_for(root),
+        max_n + 1,
+        width = padding
+    )
 }
 
 pub(crate) fn list_dirs(root: &Path) -> AppResult<Vec<PathBuf>> {
@@ -247,10 +290,21 @@ mod tests {
     }
 
     #[test]
+    fn version_names_accept_prism_padding() {
+        // PRISM's default versionPadding is 4 — these have to read back as
+        // versions or a PRISM shot's folders don't show up as columns.
+        assert!(is_version_name("v0001"));
+        assert!(is_version_name("v0002"));
+        assert!(is_version_name("gen0001"));
+        assert!(is_version_name("v000001")); // padding 6, the widest accepted
+        assert!(!is_version_name("v0000001")); // 7 digits — out of range
+    }
+
+    #[test]
     fn version_names_reject_bad_shapes() {
         assert!(!is_version_name("001")); // no prefix
         assert!(!is_version_name("1bc001")); // prefix must start with a letter
-        assert!(!is_version_name("v01")); // len < 4
+        assert!(!is_version_name("v01")); // fewer than 3 digits
         assert!(!is_version_name("v0011x")); // non-digit suffix
         assert!(!is_version_name("gen01a")); // digits required at the end
         assert!(!is_version_name(""));
@@ -261,8 +315,22 @@ mod tests {
         assert_eq!(version_number("gen001"), Some(1));
         assert_eq!(version_number("v123"), Some(123));
         assert_eq!(version_number("take999"), Some(999));
+        assert_eq!(version_number("v0002"), Some(2));
+        assert_eq!(version_number("v0123"), Some(123));
         assert_eq!(version_number("SRC"), None);
         assert_eq!(version_number("gen01"), None);
+    }
+
+    #[test]
+    fn has_version_dir_sees_either_padding() {
+        let base = std::env::temp_dir().join(format!("aislap-vdir-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        assert!(!has_version_dir(&base));
+        std::fs::create_dir_all(base.join("SRC")).unwrap();
+        assert!(!has_version_dir(&base), "SRC is not a version");
+        std::fs::create_dir_all(base.join("v0002")).unwrap();
+        assert!(has_version_dir(&base));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

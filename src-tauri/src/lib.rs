@@ -29,6 +29,8 @@ pub fn run() {
             commands::config::presets_save,
             commands::models::models_load,
             commands::session::project_open,
+            commands::prism::prism_detect,
+            commands::prism::prism_media_root_ensure,
             commands::session::sequence_open,
             commands::session::sequence_create,
             commands::rename::sequence_rename,

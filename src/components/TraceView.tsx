@@ -7,11 +7,9 @@ import {
   useState,
 } from "react";
 import { useSessionStore } from "../stores/sessionStore";
-import { useTimelineStore } from "../stores/timelineStore";
 import { editTagsAt, selectImagePath as selectImageAction } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 import type { GalleryImage, RefImage } from "../lib/types";
-import { dirname } from "../lib/paths";
 import { syntheticImage } from "../lib/media";
 
 type Props = {
@@ -141,8 +139,6 @@ export function TraceView({ onDragStart }: Props) {
   const traceActive = useSessionStore((s) => s.traceActive);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const galleryColumns = useSessionStore((s) => s.columns);
-  const shotsLatestMedia = useTimelineStore((s) => s.shotsLatestMedia);
-  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   const layout = useMemo(
     () =>
@@ -247,11 +243,6 @@ export function TraceView({ onDragStart }: Props) {
           >
             {col.map((p) => {
               const img = imageFor(p);
-              const traceShotPath = dirname(dirname(p));
-              const knownShot = shotsLatestMedia.has(traceShotPath);
-              const clipSelected =
-                knownShot &&
-                shotsLatestMedia.get(traceShotPath)?.clipMediaPath === p;
               const isSeed = p === seed;
               return (
                 <div
@@ -271,16 +262,6 @@ export function TraceView({ onDragStart }: Props) {
                     onSelect={selectImageAction}
                     onEditTags={editTagsAt}
                     onDragStart={onDragStart}
-                    clipMediaSelected={clipSelected}
-                    onToggleClipMedia={
-                      knownShot
-                        ? () =>
-                            void setShotClipMedia(
-                              traceShotPath,
-                              clipSelected ? null : p,
-                            )
-                        : undefined
-                    }
                   />
                 </div>
               );

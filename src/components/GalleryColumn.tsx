@@ -4,7 +4,6 @@ import { editTagsAt, type ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
 import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
-import { useTimelineStore } from "../stores/timelineStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { perItemPrice, parseDurationSeconds, formatCost } from "../lib/falPrices";
 import { getImageMetadataCached } from "../lib/metadataCache";
@@ -58,11 +57,6 @@ export function GalleryColumn({
   const targetVersion = useSessionStore((s) => s.targetVersion);
   const setTargetVersion = useSessionStore((s) => s.setTargetVersion);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
-  const shotPath = useSessionStore((s) => s.shotPath);
-  const clipMediaPath = useTimelineStore((s) =>
-    shotPath ? (s.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null) : null,
-  );
-  const setShotClipMedia = useTimelineStore((s) => s.setShotClipMedia);
 
   // Approximate total cost of this column's generations, from cached fal
   // prices (Settings → fetch prices) matched against each image's sidecar
@@ -118,16 +112,6 @@ export function GalleryColumn({
   const handleEditTags = useCallback(
     (path: string, anchor?: DOMRect) => editTagsAt(path, anchor),
     [],
-  );
-  const handleToggleClipMedia = useCallback(
-    (path: string) => {
-      if (!shotPath) return;
-      const current =
-        useTimelineStore.getState().shotsLatestMedia.get(shotPath)
-          ?.clipMediaPath ?? null;
-      void setShotClipMedia(shotPath, path === current ? null : path);
-    },
-    [shotPath, setShotClipMedia],
   );
   const osDragHit = useSyncExternalStore(
     subscribeOsDragTarget,
@@ -284,10 +268,6 @@ export function GalleryColumn({
                 onSelect={handleSelect}
                 onEditTags={handleEditTags}
                 onDragStart={onDragStart}
-                clipMediaSelected={img.path === clipMediaPath}
-                onToggleClipMedia={
-                  shotPath && !column.isSrc ? handleToggleClipMedia : undefined
-                }
                 maxAspect={maxAspect}
               />
             ))}

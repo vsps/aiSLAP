@@ -3,7 +3,8 @@
 // used by the orphan-recovery driver.
 
 import { cmd } from "../tauri";
-import { basename, dirname, joinPath, relativeTo } from "../paths";
+import { joinPath, relativeTo } from "../paths";
+import { seqShotNames } from "../prism";
 import { estimateGenerationCost, perItemPrice, parseDurationSeconds } from "../falPrices";
 import { classifyMedia } from "../media";
 import { negativePromptParam, splitNegativePrompt } from "../args";
@@ -47,6 +48,10 @@ export type DownloadCtx = {
    *  Used by the orphan-recovery driver, which doesn't have upload URLs. */
   refSnapshots?: RefSnapshot[];
   shotPath: string;
+  /** Project root. Carried rather than derived: the shot sits at a fixed depth
+   *  below it only in a native project (a PRISM shot's media root is two levels
+   *  deeper), and the asset index's relPath depends on getting this right. */
+  projectPath: string;
   versionDir: string;
   targetVersion: string;
   iterationBase: number;
@@ -250,7 +255,7 @@ async function recordAsset(
   meta: ImageMetadata,
   identity: OutputIdentity,
 ): Promise<void> {
-  const projectPath = dirname(dirname(ctx.shotPath));
+  const projectPath = ctx.projectPath;
   const record: AssetRecord = {
     id: identity.assetId,
     relPath: relativeTo(projectPath, target),
@@ -379,8 +384,9 @@ function resolveFilename(
   const p2 = (n: number) => String(n).padStart(2, "0");
   const ms = String(now.getMilliseconds()).padStart(3, "0");
 
-  const shotName = basename(ctx.shotPath);
-  const seqName = basename(dirname(ctx.shotPath));
+  // Entity names, so a PRISM shot reads "MOD"/"s0010" rather than the last two
+  // segments of its media root ("Renders"/"AI").
+  const { seq: seqName, shot: shotName } = seqShotNames(ctx.shotPath);
   const seed = ctx.settings["seed"];
   const seedToken = seed !== undefined && seed !== -1 ? String(seed) : "rnd";
 

@@ -12,6 +12,7 @@ use crate::commands::fsutil::{
     as_str, is_image_ext, is_model3d_ext, is_video_ext, list_dirs, project_root_for, relativize,
     sidecar_path, thumb_path, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
+use crate::commands::prism;
 use crate::commands::tags::tags_from_sidecar;
 use crate::db::TagIndex;
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
@@ -38,8 +39,11 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
     let mut cols: Vec<GalleryColumn> = Vec::new();
     let project_root = project_root_for(root).ok();
 
-    // Include the project-level SRC as "GLOBAL SRC" (shot → seq → project).
-    if let Some(project) = root.parent().and_then(|s| s.parent()) {
+    // Include the project-level SRC as "GLOBAL SRC". Resolved by walking up to
+    // project.json rather than by depth: a PRISM shot's media root sits two
+    // levels deeper (`<entity>/Renders/AI`), so shot → seq → project doesn't
+    // hold there.
+    if let Some(project) = project_root.as_deref() {
         let global_src = project.join(SRC_DIR);
         if global_src.is_dir() {
             let images = scan_directory_images(&global_src, project_root.as_deref(), tags)?;
@@ -278,15 +282,29 @@ fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResul
         None => vec![],
     };
 
-    // Walk shots in this sequence.
+    // Walk shots in this sequence. In a PRISM project the entity folder holds
+    // pipeline dirs (Scenefiles/Export/...) and aiSLAP's versions live one hop
+    // down in `Renders/AI` — so scan that, while the row keeps the entity name.
+    let layout = prism::layout_for(&seq_root);
     let mut shots: Vec<ShotStack> = Vec::new();
-    let shot_dirs = list_dirs(&seq_root)?;
-    for shot_dir in shot_dirs {
-        let shot_name = match shot_dir.file_name().and_then(|n| n.to_str()) {
+    let shot_dirs = match &layout {
+        Some(l) => prism::entities_in(l, &seq_root)?,
+        None => list_dirs(&seq_root)?,
+    };
+    for entity_dir in shot_dirs {
+        let shot_name = match entity_dir.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
         if shot_name == SRC_DIR || shot_name == SEL_DIR {
+            continue;
+        }
+        let shot_dir = if layout.is_some() {
+            prism::media_root_for(&entity_dir)
+        } else {
+            entity_dir
+        };
+        if !shot_dir.is_dir() {
             continue;
         }
 

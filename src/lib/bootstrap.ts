@@ -1,5 +1,5 @@
 import { cmd } from "./tauri";
-import { basename, joinPath, normalizeDir } from "./paths";
+import { joinPath, normalizeDir, relativeTo } from "./paths";
 import { applyColors } from "./colors";
 import type {
   AppState,
@@ -52,7 +52,14 @@ function toPersisted(l: ChainLink): ChainLinkPersisted {
   };
 }
 
-function fromPersisted(p: ChainLinkPersisted, entries: ModelEntry[]): ChainLink {
+/** Persisted link -> live link, resolving the model id against the registry.
+ *  Shared with RESTORE CHAIN (actions.ts), which overlays its own resolved
+ *  refs — one hydrator so the two paths can't drift over which fields they
+ *  carry across (the inclusion flags did exactly that). */
+export function linkFromPersisted(
+  p: ChainLinkPersisted,
+  entries: ModelEntry[],
+): ChainLink {
   const model = p.modelId
     ? (entries.find((e) => e.node.id === p.modelId)?.node ?? null)
     : null;
@@ -81,8 +88,12 @@ function currentAppState(): AppState {
   const active = selectActiveLink(g);
   return {
     projectPath: s.projectPath ?? "",
-    lastSequence: basename(s.sequencePath),
-    lastShot: basename(s.shotPath),
+    // Parent-relative rather than bare names: in a native project these *are*
+    // the folder names, but a PRISM project needs the entity-root and
+    // `Renders/AI` segments to survive so restoreSessionPaths can rejoin them.
+    lastSequence: relativeTo(s.projectPath ?? "", s.sequencePath ?? ""),
+    lastShot: relativeTo(s.sequencePath ?? "", s.shotPath ?? ""),
+    prismEntityType: s.prism ? s.entityType : undefined,
     lastModel: active.model?.id ?? "",
     sequencePrompt: active.sequencePrompt,
     // Keep legacy `shotPrompt` empty — the canonical store is `shotPrompts`.
@@ -133,7 +144,7 @@ export async function bootstrap(): Promise<() => void> {
 
   if (Array.isArray(appState.chainLinks) && appState.chainLinks.length > 0) {
     // New-format chain: restore the full link array.
-    const links = appState.chainLinks.map((p) => fromPersisted(p, entries));
+    const links = appState.chainLinks.map((p) => linkFromPersisted(p, entries));
     gen.setChain(links, appState.chainExpandedIdx ?? 0);
   } else {
     // Legacy single-link state: rebuild a one-link chain from flat fields.
@@ -198,6 +209,11 @@ async function restoreSessionPaths(appState: AppState): Promise<void> {
   const session = useSessionStore.getState();
   session.setRestoringLastSession(true);
   try {
+    // Record the PRISM tree before opening: setProject lists sequences from
+    // whichever tree is active. Harmless when the project turns out native.
+    if (appState.prismEntityType) {
+      await session.setEntityType(appState.prismEntityType);
+    }
     await session.setProject(appState.projectPath);
     // Bail if the user has since picked a different project themselves —
     // don't clobber their choice with a stale background restore.

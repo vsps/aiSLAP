@@ -24,6 +24,7 @@ use crate::commands::fsutil::{
     SEL_DIR, SRC_DIR,
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
+use crate::commands::prism;
 use crate::commands::tags::tags_from_sidecar;
 use crate::domain::ProjectSidecar;
 use crate::error::{AppError, AppResult};
@@ -826,7 +827,25 @@ pub async fn project_reconcile(
     let conn = open_local(project_path).await?;
     let mut report = ReconcileReport::default();
 
-    for seq_dir in list_dirs(project_path)? {
+    // Sequences sit under the entity roots in a PRISM project (both trees are
+    // walked), and each shot's media is one hop further down in `Renders/AI` —
+    // walking the project folder directly would only find pipeline dirs.
+    let prism = prism::detect(project_path);
+    let seq_parents: Vec<PathBuf> = match &prism {
+        Some(layout) => vec![
+            layout.entity_root(Some("shot")),
+            layout.entity_root(Some("asset")),
+        ],
+        None => vec![project_path.to_path_buf()],
+    };
+    let mut seq_dirs: Vec<PathBuf> = Vec::new();
+    for parent in &seq_parents {
+        if parent.is_dir() {
+            seq_dirs.extend(list_dirs(parent)?);
+        }
+    }
+
+    for seq_dir in seq_dirs {
         let seq_name = match seq_dir.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -834,12 +853,23 @@ pub async fn project_reconcile(
         if seq_name == SRC_DIR {
             continue;
         }
-        for shot_dir in list_dirs(&seq_dir)? {
-            let shot_name = match shot_dir.file_name().and_then(|n| n.to_str()) {
+        let entity_dirs = match &prism {
+            Some(layout) => prism::entities_in(layout, &seq_dir)?,
+            None => list_dirs(&seq_dir)?,
+        };
+        for entity_dir in entity_dirs {
+            let shot_name = match entity_dir.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,
             };
             if shot_name == SRC_DIR || shot_name == SEL_DIR {
+                continue;
+            }
+            let shot_dir = match &prism {
+                Some(_) => prism::media_root_for(&entity_dir),
+                None => entity_dir,
+            };
+            if !shot_dir.is_dir() {
                 continue;
             }
             reconcile_shot(

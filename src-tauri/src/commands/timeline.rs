@@ -8,6 +8,7 @@ use serde::Serialize;
 use crate::commands::fsutil::{
     as_str, is_media_ext, is_video_ext, SHOT_SIDECAR, SRC_DIR, TIMELINE_SIDECAR,
 };
+use crate::commands::prism;
 use crate::domain::{SequenceTimeline, ShotLatestMedia, ShotSidecar};
 use crate::error::{AppError, AppResult};
 use crate::fsjson::{read_json_or_default, write_json_atomic};
@@ -60,18 +61,31 @@ fn shots_latest_media_scan(seq_path: &Path) -> AppResult<Vec<ShotLatestMedia>> {
             as_str(seq_path)
         )));
     }
+    // PRISM: entity resolution is shared with the dropdowns (so categories in
+    // the asset tree aren't mistaken for assets), and aiSLAP's versions live in
+    // `<entity>/Renders/AI`. The emitted shot_path must be that media root —
+    // it's what the session carries as its shot path and what the timeline
+    // store keys clips by.
+    let layout = prism::layout_for(seq_path);
     let mut out: Vec<ShotLatestMedia> = Vec::new();
-    let mut shot_dirs: Vec<PathBuf> = std::fs::read_dir(seq_path)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| !n.starts_with('.') && !n.starts_with('$') && n != SRC_DIR)
-                .unwrap_or(false)
-        })
-        .collect();
+    let mut shot_dirs: Vec<PathBuf> = match &layout {
+        Some(l) => prism::entities_in(l, seq_path)?
+            .into_iter()
+            .map(|p| prism::media_root_for(&p))
+            .filter(|p| p.is_dir())
+            .collect(),
+        None => std::fs::read_dir(seq_path)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| !n.starts_with('.') && !n.starts_with('$') && n != SRC_DIR)
+                    .unwrap_or(false)
+            })
+            .collect(),
+    };
     shot_dirs.sort();
 
     for shot in shot_dirs {

@@ -9,10 +9,11 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, list_dirs, next_version_name, sanitize, version_prefix_for, PROJECT_SIDECAR, SEL_DIR,
-    SEQUENCE_SIDECAR, SHOT_SIDECAR, SRC_DIR,
+    as_str, list_dirs, next_version_name, sanitize, PROJECT_SIDECAR, SEL_DIR, SEQUENCE_SIDECAR,
+    SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::gallery::{scan_shot_columns, tag_index_for};
+use crate::commands::prism;
 use crate::domain::{GalleryColumn, ProjectSidecar, SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{
@@ -21,8 +22,13 @@ use crate::fsjson::{
 
 // ---------- Project / sequence / shot open + create ----------
 
+/// Open a project and list its sequences.
+///
+/// `entity_type` ("shot" | "asset") only matters for PRISM projects, where
+/// sequences live under `03_Production/Shots` or `03_Production/Assets` rather
+/// than directly in the project folder.
 #[tauri::command]
-pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
+pub fn project_open(project_path: String, entity_type: Option<String>) -> AppResult<Vec<String>> {
     let root = PathBuf::from(&project_path);
     if !root.is_dir() {
         return Err(AppError::Msg(format!("not a directory: {project_path}")));
@@ -31,6 +37,7 @@ pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
     if root.join(SEQUENCE_SIDECAR).exists() || root.join(SHOT_SIDECAR).exists() {
         return Err(AppError::Msg("NOT A PROJECT FOLDER".into()));
     }
+    let prism = prism::detect(&root);
     // Auto-create project.json on first open (new project or migration).
     let sidecar_path = root.join(PROJECT_SIDECAR);
     if !sidecar_path.exists() {
@@ -44,14 +51,31 @@ pub fn project_open(project_path: String) -> AppResult<Vec<String>> {
             &ProjectSidecar {
                 title,
                 created: Utc::now().to_rfc3339(),
-                version_prefix: "gen".into(),
+                // PRISM's versionFormat is "v#" — match it so aiSLAP's version
+                // folders read like the rest of the pipeline's.
+                version_prefix: if prism.is_some() { "v" } else { "gen" }.into(),
                 // A brand-new project has nothing to convert.
                 tags_migrated: true,
                 ..Default::default()
             },
         )?;
     }
-    let dirs = list_dirs(&root)?;
+    let dirs = match &prism {
+        // The asset tree has no fixed depth — categories and assets sit at the
+        // same level — so its "sequences" are resolved rather than listed.
+        Some(layout) if entity_type.as_deref() == Some("asset") => {
+            prism::asset_sequences(&layout.entity_root(Some("asset")))?
+        }
+        Some(layout) => list_dirs(&layout.entity_root(entity_type.as_deref()))?
+            .into_iter()
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n != SRC_DIR && n != SEL_DIR && !n.starts_with('_'))
+            })
+            .collect(),
+        None => list_dirs(&root)?,
+    };
     Ok(dirs.iter().map(|p| as_str(p)).collect())
 }
 
@@ -69,22 +93,52 @@ pub fn sequence_open(sequence_path: String) -> AppResult<SequenceOpenResult> {
         return Err(AppError::Msg(format!("not a directory: {sequence_path}")));
     }
     let sidecar: SequenceSidecar = read_sidecar(&root.join(SEQUENCE_SIDECAR))?;
-    let dirs = list_dirs(&root)?;
-    let shots = dirs
-        .into_iter()
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n != SRC_DIR && n != SEL_DIR)
-                .unwrap_or(false)
-        })
-        .map(|p| as_str(&p))
-        .collect();
+    let layout = prism::layout_for(&root);
+    let shots: Vec<String> = match &layout {
+        // Asset tree: only real asset entities, so a category sitting beside
+        // them (or an old output folder inside one) isn't offered as an asset.
+        Some(l) if prism::is_in_asset_tree(l, &root) => prism::asset_entities_in(&root)?
+            .iter()
+            .map(|p| as_str(p))
+            .collect(),
+        // Shot tree: every dir except SRC/SEL and PRISM's `_sequence`
+        // pseudo-entity. Not gated on entity markers — a shot PRISM just
+        // created is legitimately empty.
+        _ => {
+            let skip_underscore = layout.is_some();
+            list_dirs(&root)?
+                .into_iter()
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| {
+                            n != SRC_DIR && n != SEL_DIR && !(skip_underscore && n.starts_with('_'))
+                        })
+                        .unwrap_or(false)
+                })
+                .map(|p| as_str(&p))
+                .collect()
+        }
+    };
     Ok(SequenceOpenResult { shots, sidecar })
+}
+
+/// PRISM owns entity creation (it writes pipeline metadata aiSLAP knows
+/// nothing about), so aiSLAP only ever creates the `Renders/AI` media root
+/// inside an entity that already exists. The UI greys these out; this is the
+/// backstop.
+fn reject_if_prism(path: &PathBuf) -> AppResult<()> {
+    if prism::detect(path).is_some() || prism::layout_for(path).is_some() {
+        return Err(AppError::Msg(
+            "sequences and shots are managed by PRISM — create it in PRISM first".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn sequence_create(project_path: String, name: String) -> AppResult<String> {
+    reject_if_prism(&PathBuf::from(&project_path))?;
     let target = PathBuf::from(&project_path).join(sanitize(&name));
     ensure_dir(&target)?;
     let sidecar_path = target.join(SEQUENCE_SIDECAR);
@@ -125,10 +179,12 @@ pub async fn shot_open(shot_path: String) -> AppResult<ShotOpenResult> {
 
 #[tauri::command]
 pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
+    reject_if_prism(&PathBuf::from(&sequence_path))?;
     let target = PathBuf::from(&sequence_path).join(sanitize(&name));
     ensure_dir(&target)?;
-    let prefix = version_prefix_for(&target);
-    ensure_dir(&target.join(format!("{}001", prefix)))?;
+    // next_version_name, not a hardcoded "001" — it carries the project's
+    // prefix *and* its digit padding.
+    ensure_dir(&target.join(next_version_name(&target)))?;
     ensure_dir(&target.join(SRC_DIR))?;
     let sidecar_path = target.join(SHOT_SIDECAR);
     if !sidecar_path.exists() {
@@ -234,13 +290,16 @@ pub fn dirs_exist(paths: Vec<String>) -> Vec<bool> {
 
 // ---------- Project / shot sidecar fields ----------
 
-/// Read the project's configured version-folder prefix (defaults to "gen"
-/// for projects without the field set).
+/// The version-folder prefix actually in use: the pipeline's `versionFormat`
+/// for a PRISM project, else the project's configured prefix (default "gen").
 #[tauri::command]
 pub fn project_version_prefix_get(project_path: String) -> AppResult<String> {
     let root = PathBuf::from(&project_path);
     if !root.is_dir() {
         return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    if let Some(layout) = prism::detect(&root) {
+        return Ok(layout.version_prefix);
     }
     let sidecar: ProjectSidecar = read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
     Ok(if sidecar.version_prefix.is_empty() {
@@ -258,6 +317,13 @@ pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppRe
     let root = PathBuf::from(&project_path);
     if !root.is_dir() {
         return Err(AppError::Msg(format!("not a directory: {project_path}")));
+    }
+    // A PRISM project's version naming comes from pipeline.json, so accepting a
+    // prefix here would store a value nothing reads.
+    if prism::detect(&root).is_some() {
+        return Err(AppError::Msg(
+            "PRISM projects follow the pipeline's versionFormat — set it in PRISM".into(),
+        ));
     }
     let trimmed = prefix.trim().to_string();
     let valid = !trimmed.is_empty()
