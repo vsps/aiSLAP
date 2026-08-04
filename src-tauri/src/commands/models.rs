@@ -124,8 +124,9 @@ fn collect_model_files(dir: &std::path::Path) -> AppResult<Vec<std::path::PathBu
 }
 
 #[tauri::command]
-pub fn models_load() -> AppResult<Vec<ModelEntry>> {
-    let dir = paths::models_dir()?;
+pub fn models_load(app: tauri::AppHandle) -> AppResult<Vec<ModelEntry>> {
+    let dir = paths::models_dir(&app)?;
+    tracing::info!("loading models from {}", dir.display());
     let mut entries = Vec::new();
 
     let files = collect_model_files(&dir)?;
