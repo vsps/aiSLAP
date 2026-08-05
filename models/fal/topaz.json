@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "fal",
   "family": "Topaz Upscale",
   "category": "fal.ai/Upscaling",

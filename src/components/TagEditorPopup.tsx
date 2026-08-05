@@ -1,6 +1,15 @@
 import { useMemo, useRef, useState } from "react";
-import { useSessionStore } from "../stores/sessionStore";
-import { useEffectiveTagDefs, useTagsStore, tagColor } from "../stores/tagsStore";
+import {
+  selectImageByPath,
+  selectTaggedImageByPath,
+  useSessionStore,
+} from "../stores/sessionStore";
+import {
+  tagColor,
+  tagsEqual as eq,
+  useEffectiveTagDefs,
+  useTagsStore,
+} from "../stores/tagsStore";
 import { usePopupDismiss, useClampedPosition } from "../lib/popup";
 import { basename } from "../lib/paths";
 import { Icon } from "../lib/icon";
@@ -9,20 +18,17 @@ import { Icon } from "../lib/icon";
  *  from the store rather than a prop keeps the popover in sync with the
  *  optimistic patch tagsStore.setImageTags applies. */
 function useImageTags(path: string): string[] {
-  const columns = useSessionStore((s) => s.columns);
-  const taggedGroups = useSessionStore((s) => s.taggedGroups);
-  return useMemo(() => {
-    const inColumns = columns
-      .flatMap((c) => c.images)
-      .find((i) => i.path === path);
-    if (inColumns) return inColumns.tags ?? [];
-    const inTagged = taggedGroups
-      .flatMap((s) => s.shots)
-      .flatMap((s) => s.images)
-      .find((i) => i.path === path);
-    return inTagged?.tags ?? [];
-  }, [columns, taggedGroups, path]);
+  const byPath = useSessionStore(selectImageByPath);
+  const taggedByPath = useSessionStore(selectTaggedImageByPath);
+  return useMemo(
+    () => (byPath.get(path) ?? taggedByPath.get(path))?.tags ?? EMPTY_TAGS,
+    [byPath, taggedByPath, path],
+  );
 }
+
+/** Stable empty array — a fresh `[]` here would change identity every render
+ *  and defeat the memo for every untagged image. */
+const EMPTY_TAGS: string[] = [];
 
 export function TagEditorPopup() {
   const target = useSessionStore((s) => s.tagEditor);
@@ -50,7 +56,6 @@ function Editor({ target }: { target: Target }) {
   const pos = useClampedPosition(ref, anchor.x, anchor.y);
   usePopupDismiss(ref, () => close(null));
 
-  const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
   const trimmed = query.trim();
   const suggestions = defs
     .filter((d) => !tags.some((t) => eq(t, d.name)))

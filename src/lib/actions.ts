@@ -11,18 +11,10 @@ import { linkFromPersisted } from "./bootstrap";
 import { inferIncludes, scriptSegmentsFor } from "./generation/prompts";
 import { useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
-import { useSessionStore } from "../stores/sessionStore";
+import { findLoadedImage, useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import { useScriptStore } from "../stores/scriptStore";
-import type {
-  ChainLink,
-  ImageMetadata,
-  RefImage,
-  RefSnapshot,
-  RoleAssignment,
-} from "./types";
-
-type FsExistsLike = (path: string) => Promise<boolean>;
+import type { ChainLink, ImageMetadata, RefImage, RefSnapshot } from "./types";
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -214,16 +206,6 @@ export function assemblePromptFromMetadata(meta: ImageMetadata): string {
   );
 }
 
-/** Apply only the prompt fields from a sidecar (shot prompt gets the value). */
-export function copyPromptFromMetadata(meta: ImageMetadata): void {
-  const gen = useGenerationStore.getState();
-  if (meta.shotPrompts && meta.shotPrompts.length > 0) {
-    gen.setShotPrompts(meta.shotPrompts);
-  } else {
-    gen.setShotPrompts([meta.shotPrompt ?? meta.prompt ?? ""]);
-  }
-}
-
 /** Result of a trace traversal: the set of visited paths plus the parent
  *  refs for each node, captured during the same BFS so the consumer can draw
  *  the dependency graph without re-reading metadata. */
@@ -408,12 +390,6 @@ export async function renameShot(newName: string): Promise<void> {
       .save(projectPath, nextRaw)
       .catch(swallow("script heading rewrite"));
   }
-}
-
-export function roleAssignmentLabel(a: RoleAssignment | null): string {
-  if (!a) return "";
-  if (a.kind === "element") return `@${a.groupName}${a.frontal ? " ★" : ""}`;
-  return a.kind;
 }
 
 // ---------- Unified image action dispatcher ----------
@@ -673,9 +649,7 @@ export async function performImageAction(
       return;
     }
     case "delete": {
-      const img = session.columns
-        .flatMap((c) => c.images)
-        .find((i) => i.path === path);
+      const img = findLoadedImage(path);
       const ok = await confirmAction(
         `Delete ${img?.filename ?? basename(path)}?`,
         {
@@ -701,4 +675,4 @@ export async function performImageAction(
   }
 }
 
-export { basename, enrichRefIdentity, type FsExistsLike };
+export { enrichRefIdentity };

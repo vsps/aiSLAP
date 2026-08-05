@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "fal",
   "family": "Depth Anything",
   "category": "fal.ai/Utility",

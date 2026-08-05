@@ -34,6 +34,10 @@ ENTIRELY VIBE CODED SO GOOD LUCK EVERYBODY!
 
 Pre-built installers are available on the [Releases page](https://github.com/vsps/aiSLAP/releases). Builds track the `main` branch. Only Windows is actively tested — macOS/Linux feedback welcome.
 
+<!-- Everything between the two markers below is machine-written by
+     .github/workflows/release.yaml on `main`. Do not hand-edit it, and do not move,
+     rename or reformat the markers — anything written in there is overwritten at the
+     next release. The table lags behind on `dev`; the `main` copy is the accurate one. -->
 <!-- release-links:start -->
 > **Windows SmartScreen warning:** the installer is self-signed. Click **More info -> Run anyway** to proceed.
 > **macOS:** the app is signed and notarized by Apple, so it should open normally. If you still hit a Gatekeeper prompt, right-click the .dmg and choose **Open**, or allow it in **System Settings -> Privacy & Security -> Open Anyway**.
@@ -61,21 +65,40 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 
 ## Key Features:
 
+**Generating**
+
 - choice of API providers — fal.ai, replicate, and ByteDance (BytePlus Ark)
-- maany models to choose from, new ones can be added via JSON — image, video, 3D, and utility (segmentation, depth)
-- chain multiple prompts into a sequenced workflow
-- parse a srcipt file to automatically create sequence and shot folders
-- split prompts into multiple sub-prompts for generating variantions
-- a simple NLE to edit bash sequences together
-- image annotation / cropping
-- LLM prompt enhancement
-- prompt history
-- full metadata sidecar saved with media
+- many models to choose from, new ones can be added via JSON — image, video, 3D, and utility (segmentation, depth)
+- chain multiple prompts into a sequenced workflow, and save a whole chain as a reusable preset
+- a job queue with a live per-iteration checklist
+- batch a submit into several iterations at once
+- split prompts into multiple sub-prompts for generating variations
+- put `---` in a prompt to split off a negative prompt, on models that accept one
+- parse a script file to automatically create sequence and shot folders
+- LLM prompt enhancement, and prompt history per sequence and shot
+- audio references for models that accept them
+- BytePlus VOD AI MediaKit video enhancement (uses its own separate key)
+
+**Reviewing and organising**
+
 - user-defined colored tags on any media, stored in its sidecar so they follow the file through copies, moves, and renames — filter the gallery by them, or export by them
+- a project-wide tag view, grouped by sequence and shot
+- version stacks and a stacked view for comparing versions across a whole sequence
+- compare mode in the preview column
+- trace view — walk any image's reference lineage backwards through the project
+- image annotation / cropping, and a point/box editor for segmentation models
+- a 3D viewer for `.glb` output
+- a simple NLE to edit batch sequences together, with export
+- resizable, collapsible, persistent column layout, plus an in-app log window
+
+**Under the hood**
+
+- full metadata sidecar saved with media
 - per-model cost tracking — fal.ai's official pricing API plus manual overrides (any provider, resolution-aware) rolled up per shot/sequence/project, with fal's own live cost estimate stamped onto each successful generation
 - generated assets keep a stable identity (embedded id + content hash) that survives renames, moves, and copies
 - local SQLite asset index, rebuildable from the sidecars at any time, with optional sync to a shared Turso (cloud SQLite) database
 - orphan recovery — reconnect to in-flight generations after a crash or restart
+- separate per-project settings, alongside the app-wide ones
  
 ![aiSLAP](https://github.com/user-attachments/assets/dd66d818-f5a0-4ad3-b5e3-4c6ad7b881c9)
 
@@ -88,12 +111,12 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 - Nano Banana Pro
 - Flux
 - GPT Image 2
-- Seedream 4.5 and 5.0 Lite
+- Seedream 4.5, 5.0 Lite, and 5.0 Pro
 - Kling 3 Image
 
 **Video**
 
-- Veo 3
+- Veo 3 / 3.1 (txt2vid, img2vid, first + last frame)
 - Seedance 2 (fal.ai, replicate, and direct via ByteDance/BytePlus Ark)
 - Kling 3
 - Happy Horse
@@ -125,12 +148,17 @@ Most models are available on both fal.ai and replicate where the underlying API 
 ```bash
 git clone -b dev https://github.com/vsps/aiSLAP.git
 cd aiSLAP
-npm install
-npm run tauri dev       # dev mode
-npm run tauri build     # installer → src-tauri/target/release/bundle
+pnpm install
+pnpm tauri dev          # dev mode
+pnpm tauri build        # installer → src-tauri/target/release/bundle
 ```
 
-> Prefer pnpm? `npm install -g pnpm` then use `pnpm` in place of `npm run`.
+> **pnpm is the supported package manager** — `pnpm-lock.yaml` is the tracked
+> lockfile and what CI installs from. Get it with `npm install -g pnpm`, or
+> `corepack enable` for a zero-install path.
+>
+> npm works, but `npm install` generates a `package-lock.json` that nothing reads
+> and may resolve different versions than CI.
 
 ---
 
@@ -185,10 +213,22 @@ native project.
 
 ---
 
-## An updated Library view
+## Tags and the tag view
 
-While all new reference images added from disk get saved to the GLOBAL SRC folder any generation can be promoted to be visible (eye icon).
-Clicking the big eye button to the right of the thumbnails brings up all the promoted images in the entire project. This allows for quick cross referencing of images across sequences and shots.
+Any media can carry user-defined coloured tags. They're stored **in the file's own
+metadata sidecar**, so they travel with it through copies, moves and renames — there's
+no separate list to get out of sync, and no file ever gets moved just to mark it.
+
+- The chip row above the gallery filters the current shot by tag, in ANY or ALL mode.
+- The **tag view** shows every tagged item across the whole project, grouped by
+  sequence and shot — quick cross-referencing of images between sequences and shots.
+- Tags also drive **export**: pull every "hero" shot out of a project in one go,
+  either flattened or with the folder structure preserved.
+- The tag vocabulary and its colours are managed per project, in Project Settings.
+
+Upgrading a project made before tags existed converts it once, automatically: anything
+starred becomes `fav`, anything sitting in a `SEL/` folder becomes `select`. The files
+themselves stay exactly where they are.
 
 ---
 
@@ -210,37 +250,32 @@ Setting `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` in Settings (optional) additio
 
 ---
 
+## Documentation
+
+- **[docs/guides/](docs/guides/)** — walkthroughs: your first generation, img2img,
+  img2video.
+- **[docs/](docs/README.md)** — how it all works, for contributors.
+
+---
+
 ## Architecture (for contributors)
 
-```
-src/                        React + Tailwind frontend
-  components/               UI (Gallery, PromptColumn, Timeline, SettingsDialog, modals, …)
-  stores/                   zustand stores (session, generation, models, prices, timeline, script, …)
-  lib/
-    providers/              provider abstraction — fal.ts, replicate.ts, bytedance.ts,
-                            tos.ts (BytePlus object storage for ByteDance refs)
-    generation/             job pipeline: prompts → enqueue → runner → output
-    falPrices.ts            fal.ai price scraping + per-resolution extraction, cost math
-    recovery.ts             orphan recovery for crashed/interrupted submissions
-    tauri.ts                typed IPC wrappers for every Rust command
-src-tauri/src/              Rust host (Tauri v2)
-  fsjson.rs                 lenient JSON read / atomic write helpers
-  pricing.rs                fal price-string parsing, mirrors falPrices.ts
-  db/                       local SQLite (libSQL) asset index + Turso outbox sync
-  commands/
-    session.rs              project/sequence/shot CRUD, rename cascade, prompt history
-    gallery.rs               column + stacked scanning (resolves each file's tags)
-    image.rs                 media triple copy/move/rename, version stack moves
-    rename.rs                sequence/shot rename cascade helpers
-    timeline.rs              latest-media scan + timeline sidecar
-    tags.rs                  image tags — sidecar writes, vocabulary, filtering, export
-    cost.rs                  project-wide cost rollup, backfills costUsd into sidecars
-    fsutil.rs                shared path/naming helpers (+ unit tests)
-    config.rs / models.rs / metadata.rs / download.rs / media.rs / pending.rs / prompt_history.rs
-models/<provider>/*.json    model definitions, one family per file — add new models here
-```
+React 19 + Tailwind 4 frontend on a Rust + Tauri v2 host, with typed IPC through a
+single module (`src/lib/tauri.ts`). Models are declared as JSON in `models/` — no code
+needed to add one. The `.json` sidecar next to each file on disk is the source of
+truth; the SQLite index alongside it is derived and rebuildable.
 
-Checks: `npm run build` (tsc + vite), `cargo check` / `cargo test` in `src-tauri/`.
+Full documentation: **[docs/](docs/README.md)** —
+[architecture](docs/architecture.md) ·
+[generation pipeline](docs/generation-pipeline.md) ·
+[model registry](docs/model-registry.md) ·
+[providers](docs/providers.md) ·
+[storage](docs/storage.md) ·
+[PRISM](docs/prism.md) ·
+[tags](docs/tags.md)
+
+Checks: `pnpm build` (tsc + vite), and `cargo fmt --check` / `cargo clippy` /
+`cargo test` in `src-tauri/`. CI runs all of them on every PR.
 
 API keys live in `%APPDATA%\aiSLAP\.env` (not the repo root) — see `.env.example`.
 
@@ -249,4 +284,3 @@ API keys live in `%APPDATA%\aiSLAP\.env` (not the repo root) — see `.env.examp
 ## License
 
 AGPL v3.0
-I

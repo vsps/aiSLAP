@@ -9,14 +9,14 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, is_image_ext, is_model3d_ext, is_video_ext, list_dirs, project_root_for, relativize,
-    sidecar_path, thumb_path, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
+    as_str, is_image_ext, is_model3d_ext, is_thumb, is_video_ext, project_root_for, require_dir,
+    sidecar_path, thumb_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
-use crate::commands::prism;
 use crate::commands::tags::tags_from_sidecar;
+use crate::commands::walk;
 use crate::db::TagIndex;
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
-use crate::error::{run_blocking, AppError, AppResult};
+use crate::error::{run_blocking, AppResult};
 use crate::fsjson::read_json_or_default;
 
 /// Load the tag index for the project `path` belongs to. Best-effort: a
@@ -37,16 +37,18 @@ pub(crate) async fn tag_index_for(path: &Path) -> TagIndex {
 
 pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<GalleryColumn>> {
     let mut cols: Vec<GalleryColumn> = Vec::new();
-    let project_root = project_root_for(root).ok();
+    // Resolved once per scan: `relativize` canonicalizes both sides, and it is
+    // called for every file in every column.
+    let project_root = ProjectRoot::resolve(root).ok();
 
     // Include the project-level SRC as "GLOBAL SRC". Resolved by walking up to
     // project.json rather than by depth: a PRISM shot's media root sits two
     // levels deeper (`<entity>/Renders/AI`), so shot → seq → project doesn't
     // hold there.
-    if let Some(project) = project_root.as_deref() {
-        let global_src = project.join(SRC_DIR);
+    if let Some(project) = project_root.as_ref() {
+        let global_src = project.path.join(SRC_DIR);
         if global_src.is_dir() {
-            let images = scan_directory_images(&global_src, project_root.as_deref(), tags)?;
+            let images = scan_directory_images(&global_src, project_root.as_ref(), tags)?;
             cols.push(GalleryColumn {
                 id: as_str(&global_src),
                 version: "GLOBAL SRC".to_string(),
@@ -63,7 +65,7 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
     // reference images copied in by the ref panel or drag-drop.
     let shot_src = root.join(SRC_DIR);
     if shot_src.is_dir() {
-        let images = scan_directory_images(&shot_src, project_root.as_deref(), tags)?;
+        let images = scan_directory_images(&shot_src, project_root.as_ref(), tags)?;
         cols.push(GalleryColumn {
             id: as_str(&shot_src),
             version: "SHOT SRC".to_string(),
@@ -75,21 +77,13 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
         });
     }
 
-    // Scan all subdirectories as version columns (skip SRC — it's handled above).
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        let p = entry.path();
-        if !p.is_dir() {
-            continue;
-        }
+    // Version columns. SRC and SEL are handled separately above and below.
+    for p in walk::shot_versions(root)? {
         let name = match p.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
-        if name.starts_with('.') || name.starts_with('$') || name == SRC_DIR || name == SEL_DIR {
-            continue;
-        }
-        let images = scan_directory_images(&p, project_root.as_deref(), tags)?;
+        let images = scan_directory_images(&p, project_root.as_ref(), tags)?;
         cols.push(GalleryColumn {
             id: name.clone(),
             version: name,
@@ -104,7 +98,7 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
     // SEL column — sits at the far right, contains user-selected keeps.
     let shot_sel = root.join(SEL_DIR);
     if shot_sel.is_dir() {
-        let images = scan_directory_images(&shot_sel, project_root.as_deref(), tags)?;
+        let images = scan_directory_images(&shot_sel, project_root.as_ref(), tags)?;
         cols.push(GalleryColumn {
             id: as_str(&shot_sel),
             version: SEL_DIR.to_string(),
@@ -147,7 +141,7 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
 /// index itself already has them in hand.
 pub(crate) fn try_make_gallery_image(path: &Path, tags: Vec<String>) -> Option<GalleryImage> {
     let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
-    if filename.ends_with(".thumb.png") {
+    if is_thumb(path) {
         return None;
     }
     let is_image = is_image_ext(path);
@@ -182,8 +176,8 @@ pub(crate) fn try_make_gallery_image(path: &Path, tags: Vec<String>) -> Option<G
 /// own sidecar. The fallback only fires for media the index has never seen
 /// (legacy files, anything dropped in from outside the app), so a warm
 /// project costs zero extra reads per scan.
-fn tags_for_file(path: &Path, project_root: Option<&Path>, index: &TagIndex) -> Vec<String> {
-    let rel = project_root.and_then(|r| relativize(path, r));
+fn tags_for_file(path: &Path, project_root: Option<&ProjectRoot>, index: &TagIndex) -> Vec<String> {
+    let rel = project_root.and_then(|r| r.rel(path));
     match rel {
         Some(rel) if index.is_indexed(&rel) => index.tags_for(&rel),
         _ => match std::fs::read_to_string(sidecar_path(path)) {
@@ -200,16 +194,11 @@ fn tags_for_file(path: &Path, project_root: Option<&Path>, index: &TagIndex) -> 
 
 fn scan_directory_images(
     dir: &Path,
-    project_root: Option<&Path>,
+    project_root: Option<&ProjectRoot>,
     index: &TagIndex,
 ) -> AppResult<Vec<GalleryImage>> {
     let mut out: Vec<GalleryImage> = Vec::new();
-    for e in std::fs::read_dir(dir)? {
-        let entry = e?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for path in walk::dir_media(dir)? {
         let tags = tags_for_file(&path, project_root, index);
         if let Some(img) = try_make_gallery_image(&path, tags) {
             out.push(img);
@@ -263,18 +252,16 @@ pub async fn sequence_stacks_scan(sequence_path: String) -> AppResult<SequenceSt
 
 fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResult<SequenceStacks> {
     let seq_root = PathBuf::from(&sequence_path);
-    if !seq_root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {sequence_path}")));
-    }
+    require_dir(&seq_root)?;
 
-    let project_root = project_root_for(&seq_root).ok();
+    let project_root = ProjectRoot::resolve(&seq_root).ok();
 
     // Project-level GLOBAL SRC.
     let global_src_images = match project_root.as_ref() {
         Some(root) => {
-            let global_src = root.join(SRC_DIR);
+            let global_src = root.path.join(SRC_DIR);
             if global_src.is_dir() {
-                scan_directory_images(&global_src, project_root.as_deref(), tags)?
+                scan_directory_images(&global_src, project_root.as_ref(), tags)?
             } else {
                 vec![]
             }
@@ -284,42 +271,22 @@ fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResul
 
     // Walk shots in this sequence. In a PRISM project the entity folder holds
     // pipeline dirs (Scenefiles/Export/...) and aiSLAP's versions live one hop
-    // down in `Renders/AI` — so scan that, while the row keeps the entity name.
-    let layout = prism::layout_for(&seq_root);
+    // down in `Renders/AI` — the row keeps the entity name, the scan uses the
+    // media root.
     let mut shots: Vec<ShotStack> = Vec::new();
-    let shot_dirs = match &layout {
-        Some(l) => prism::entities_in(l, &seq_root)?,
-        None => list_dirs(&seq_root)?,
-    };
-    for entity_dir in shot_dirs {
-        let shot_name = match entity_dir.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if shot_name == SRC_DIR || shot_name == SEL_DIR {
-            continue;
-        }
-        let shot_dir = if layout.is_some() {
-            prism::media_root_for(&entity_dir)
-        } else {
-            entity_dir
-        };
-        if !shot_dir.is_dir() {
-            continue;
-        }
+    for shot in walk::sequence_shots(&seq_root)? {
+        let shot_name = shot.shot_name;
+        let shot_dir = shot.media_root;
 
         let sidecar: ShotSidecar = read_json_or_default(&shot_dir.join(SHOT_SIDECAR))?;
 
         let mut versions: Vec<VersionStack> = Vec::new();
-        for v_dir in list_dirs(&shot_dir)? {
+        for v_dir in walk::shot_versions(&shot_dir)? {
             let vname = match v_dir.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,
             };
-            if vname == SRC_DIR || vname == SEL_DIR {
-                continue;
-            }
-            let images = scan_directory_images(&v_dir, project_root.as_deref(), tags)?;
+            let images = scan_directory_images(&v_dir, project_root.as_ref(), tags)?;
             // Resolve the select:
             //   pinned + file still exists → use it
             //   else → last image in the sorted array (the "latest")

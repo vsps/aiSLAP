@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, useGLTF, Center, Environment } from "@react-three/drei";
+import { OrbitControls, useGLTF, Center } from "@react-three/drei";
 import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { performImageAction } from "../lib/actions";
@@ -59,12 +59,20 @@ export function ModelZoomModal({ image, onClose, onDelete }: Props) {
 
       {/* 3D canvas */}
       <div className="flex-1 min-h-0">
+        {/* Lit entirely from local lights. This used to add drei's
+            <Environment preset="city" />, which fetches an HDR from a public
+            CDN at runtime — in a desktop app that is usually offline that
+            request just fails, and the model silently rendered with only the
+            ambient and key lights anyway. The rig below is that same fallback,
+            made deliberate: a hemisphere light for ambient bounce plus a key
+            and a fill, so shading reads correctly with no network at all. */}
         <Canvas camera={{ position: [0, 0.5, 2.5], fov: 45 }} shadows>
           <ambientLight intensity={0.6} />
+          <hemisphereLight args={["#ffffff", "#404040", 0.8]} />
           <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
+          <directionalLight position={[-5, 3, -5]} intensity={0.4} />
           <Suspense fallback={null}>
             <Model url={modelUrl} />
-            <Environment preset="city" />
           </Suspense>
           <OrbitControls makeDefault autoRotate autoRotateSpeed={0.6} />
         </Canvas>

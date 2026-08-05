@@ -10,12 +10,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::commands::fsutil::{
-    as_str, is_image_ext, is_model3d_ext, is_video_ext, list_dirs, SEL_DIR, SEQUENCE_SIDECAR,
-    SRC_DIR,
-};
-use crate::commands::prism;
+use crate::commands::fsutil::{as_str, is_video_ext, sidecar_path, SEQUENCE_SIDECAR};
 use crate::commands::session::with_shot_sidecar;
+use crate::commands::walk;
 use crate::db;
 use crate::domain::{Config, SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppResult};
@@ -62,11 +59,10 @@ pub async fn project_cost_scan(project_path: String) -> AppResult<ProjectCostSca
     // Push every freshly-backfilled cost into the local asset index — best
     // effort, same spirit as `recordAsset` on the TS side: this scan already
     // succeeded and the sidecars are already written, a DB push failure
-    // here shouldn't fail the command the user is waiting on.
-    for (asset_id, cost_usd) in db_updates {
-        if let Err(e) = db::asset_cost_update(&root, &asset_id, cost_usd).await {
-            tracing::warn!("cost scan: DB update for asset {asset_id} failed: {e}");
-        }
+    // here shouldn't fail the command the user is waiting on. One batched call:
+    // this used to open, bootstrap and close the database once per asset.
+    if let Err(e) = db::assets_cost_update(&root, &db_updates).await {
+        tracing::warn!("cost scan: DB cost backfill failed: {e}");
     }
     Ok(scan)
 }
@@ -84,64 +80,21 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
     let mut sequences: Vec<SequenceCost> = Vec::new();
     let mut db_updates: Vec<(String, f64)> = Vec::new();
 
-    // A PRISM project's sequences live under the entity roots, not the project
-    // folder — walking the project folder directly would treat 00_Pipeline,
-    // 01_Management and friends as sequences (and write cost fields into
-    // sequence.json inside them). Both trees are scanned so the project total
-    // covers shots and assets.
-    let prism = prism::detect(&root);
-    let seq_parents: Vec<PathBuf> = match &prism {
-        Some(layout) => vec![
-            layout.entity_root(Some("shot")),
-            layout.entity_root(Some("asset")),
-        ],
-        None => vec![root.clone()],
-    };
+    let walk = walk::project_walk(&root)?;
 
-    let mut seq_dirs: Vec<PathBuf> = Vec::new();
-    for parent in &seq_parents {
-        if parent.is_dir() {
-            seq_dirs.extend(list_dirs(parent)?);
-        }
-    }
-
-    for seq_dir in seq_dirs {
+    for seq_dir in &walk.sequences {
         let seq_name = match seq_dir.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
-        // Project-level SRC ("GLOBAL SRC" reference images) is not a
-        // sequence -- skip it explicitly.
-        if seq_name == SRC_DIR {
-            continue;
-        }
 
         let mut seq_total = 0.0f64;
         let mut seq_known = 0u32;
         let mut seq_unknown = 0u32;
         let mut shots: Vec<ShotCost> = Vec::new();
 
-        let entity_dirs = match &prism {
-            Some(layout) => prism::entities_in(layout, &seq_dir)?,
-            None => list_dirs(&seq_dir)?,
-        };
-        for entity_dir in entity_dirs {
-            let shot_name = match entity_dir.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-            if shot_name == SRC_DIR || shot_name == SEL_DIR {
-                continue;
-            }
-            // aiSLAP's media (and its shot.json) live in `<entity>/Renders/AI`.
-            let shot_dir = match &prism {
-                Some(_) => prism::media_root_for(&entity_dir),
-                None => entity_dir,
-            };
-            if !shot_dir.is_dir() {
-                continue;
-            }
-
+        for shot in walk.shots(seq_dir)? {
+            let shot_dir = shot.media_root;
             let (shot_total, shot_known, shot_unknown, shot_backfilled, shot_db_updates) =
                 scan_shot_cost(&shot_dir, &prices, &overrides)?;
             db_updates.extend(shot_db_updates);
@@ -153,7 +106,7 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
             })?;
 
             shots.push(ShotCost {
-                name: shot_name,
+                name: shot.shot_name,
                 path: as_str(&shot_dir),
                 total_cost_usd: shot_total,
                 known_image_count: shot_known,
@@ -174,7 +127,7 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
 
         sequences.push(SequenceCost {
             name: seq_name,
-            path: as_str(&seq_dir),
+            path: as_str(seq_dir),
             total_cost_usd: seq_total,
             known_image_count: seq_known,
             unknown_image_count: seq_unknown,
@@ -201,11 +154,12 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
 /// pending push into the local asset index.
 type CostDbUpdates = Vec<(String, f64)>;
 
-/// Walk every version-folder image under one shot (skipping SRC/SEL, mirroring
-/// scan_shot_columns's traversal in gallery.rs -- no is_version_name gate is
-/// applied there either, so this matches it), read/backfill each sidecar's
-/// costUsd, and return (total, known_count, unknown_count, backfilled_count,
+/// Price every version-folder image under one shot, backfilling `costUsd` into
+/// sidecars that lack it. Returns (total, known, unknown, backfilled,
 /// db_updates).
+///
+/// A media file with no sidecar counts as `unknown` rather than being skipped —
+/// the count is what tells the user the total is incomplete.
 fn scan_shot_cost(
     shot_dir: &Path,
     prices: &HashMap<String, String>,
@@ -217,53 +171,28 @@ fn scan_shot_cost(
     let mut backfilled = 0u32;
     let mut db_updates: Vec<(String, f64)> = Vec::new();
 
-    for entry in std::fs::read_dir(shot_dir)? {
-        let entry = entry?;
-        let p = entry.path();
-        if !p.is_dir() {
+    for (_version, media_path) in walk::shot_media(shot_dir)? {
+        let sidecar_path = sidecar_path(&media_path);
+        if !sidecar_path.is_file() {
+            unknown += 1;
             continue;
         }
-        let name = match p.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if name == SRC_DIR || name == SEL_DIR {
-            continue;
-        }
-        for file_entry in std::fs::read_dir(&p)? {
-            let file_entry = file_entry?;
-            let media_path = file_entry.path();
-            if !media_path.is_file() {
-                continue;
-            }
-            if !is_image_ext(&media_path)
-                && !is_video_ext(&media_path)
-                && !is_model3d_ext(&media_path)
-            {
-                continue;
-            }
-            let sidecar_path = media_path.with_extension("json");
-            if !sidecar_path.is_file() {
-                unknown += 1;
-                continue;
-            }
-            let is_video = is_video_ext(&media_path);
-            match process_image_sidecar(&sidecar_path, prices, overrides, is_video) {
-                Ok(Some(cost)) => {
-                    total += cost.amount;
-                    known += 1;
-                    if cost.backfilled {
-                        backfilled += 1;
-                        if let Some(id) = cost.asset_id {
-                            db_updates.push((id, cost.amount));
-                        }
+        let is_video = is_video_ext(&media_path);
+        match process_image_sidecar(&sidecar_path, prices, overrides, is_video) {
+            Ok(Some(cost)) => {
+                total += cost.amount;
+                known += 1;
+                if cost.backfilled {
+                    backfilled += 1;
+                    if let Some(id) = cost.asset_id {
+                        db_updates.push((id, cost.amount));
                     }
                 }
-                Ok(None) => unknown += 1,
-                Err(e) => {
-                    tracing::warn!("cost scan: skipping {}: {e}", sidecar_path.display());
-                    unknown += 1;
-                }
+            }
+            Ok(None) => unknown += 1,
+            Err(e) => {
+                tracing::warn!("cost scan: skipping {}: {e}", sidecar_path.display());
+                unknown += 1;
             }
         }
     }
@@ -296,7 +225,10 @@ fn process_image_sidecar(
         Some(o) => o,
         None => return Ok(None),
     };
-    let asset_id = obj.get("assetId").and_then(|v| v.as_str()).map(String::from);
+    let asset_id = obj
+        .get("assetId")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     if let Some(existing) = obj.get("costUsd").and_then(|v| v.as_f64()) {
         return Ok(Some(SidecarCost {
@@ -316,14 +248,20 @@ fn process_image_sidecar(
         .and_then(|s| s.get("resolution"))
         .and_then(|v| v.as_str());
     let duration_sec = settings.and_then(|s| s.get("duration")).and_then(|v| {
-        v.as_f64().or_else(|| v.as_str().and_then(parse_duration_seconds))
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(parse_duration_seconds))
     });
     // megapixels is None here — this is a retroactive, offline scan over
     // already-written sidecars; real dimension reading (see
     // media::image_dimensions_read) only happens at generation time in
     // output.ts. An area-billed model's pre-existing sidecar with no costUsd
     // stays unpriced through this path, same as before this field existed.
-    let ctx = CostContext { is_video, duration_sec, resolution, megapixels: None };
+    let ctx = CostContext {
+        is_video,
+        duration_sec,
+        resolution,
+        megapixels: None,
+    };
     let amount = match per_item_price(provider, endpoint, prices, overrides, &ctx) {
         Some(a) => a,
         None => return Ok(None),

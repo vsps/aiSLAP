@@ -1,6 +1,11 @@
 # Script 001 — Quickstart Explainer (30s)
 
-Companion video for [quickstart.md](../quickstart.md). ~80 words VO. Mix screen-rec + gen-AI cutaways.
+> **Marketing / video production material, not product documentation.**
+> Not maintained alongside the app, and not linked from the user-facing docs. The
+> video has never been produced; delete this file if it never will be.
+
+Companion video for [quickstart.md](../guides/quickstart.md). ~80 words VO. Mix
+screen-rec + gen-AI cutaways.
 
 **Total runtime:** 30s · **Aspect:** 16:9 · **Tone:** brisk, no fluff
 
@@ -10,7 +15,7 @@ Companion video for [quickstart.md](../quickstart.md). ~80 words VO. Mix screen-
 
 | # | Time | Duration | Visual | VO |
 |---|------|----------|--------|----|
-| 1 | 0:00 | 3s | Gen-AI hero: aiSLAP logo glitches onto a moody studio desk. | "aiSLAP — a desktop GUI for fal dot ai." |
+| 1 | 0:00 | 3s | Gen-AI hero: aiSLAP logo glitches onto a moody studio desk. | "aiSLAP — a desktop GUI for fal, replicate and BytePlus." |
 | 2 | 0:03 | 3s | Screen-rec: terminal types `pnpm tauri dev`, app window opens. | "Install with pnpm, then launch." |
 | 3 | 0:06 | 3s | Screen-rec: gear icon click → Settings dialog → paste FAL_KEY → save. | "Drop your fal API key into Settings." |
 | 4 | 0:09 | 3s | Screen-rec: top bar → pick a project folder. Empty folder highlights. | "Point it at any folder — that's your project." |
@@ -37,4 +42,4 @@ Companion video for [quickstart.md](../quickstart.md). ~80 words VO. Mix screen-
 - [ ] FAL_KEY in a throwaway env (don't leak it on screen — blur if visible)
 - [ ] VO recorded + leveled to -16 LUFS
 - [ ] Hero shot rendered
-- [ ] Final export → [../videos/quickstart_001.mp4](../videos/)
+- [ ] Final export (no destination decided — the old `../videos/` path never existed)

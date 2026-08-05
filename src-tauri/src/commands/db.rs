@@ -31,16 +31,14 @@ pub async fn asset_refs_set(
 }
 
 #[tauri::command]
-pub async fn asset_refs_get(project_path: String, asset_id: String) -> AppResult<Vec<AssetRefRecord>> {
-    db::asset_refs_get(&PathBuf::from(project_path), &asset_id).await
-}
-
-#[tauri::command]
 pub async fn db_sync_outbox(project_path: String) -> AppResult<SyncReport> {
     db::sync_outbox(&PathBuf::from(project_path)).await
 }
 
 #[tauri::command]
-pub async fn project_reconcile(project_path: String, ffmpeg_path: String) -> AppResult<ReconcileReport> {
+pub async fn project_reconcile(
+    project_path: String,
+    ffmpeg_path: String,
+) -> AppResult<ReconcileReport> {
     db::project_reconcile(&PathBuf::from(project_path), &ffmpeg_path).await
 }

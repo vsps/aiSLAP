@@ -1,13 +1,17 @@
 {
     "name": "aiSLAP",
     "private": true,
-    "version": "0.3.9",
+    "version": "0.4.0",
+    "description": "Desktop GUI for generative image and video APIs (fal.ai, replicate, BytePlus), organised around a project/sequence/shot file layout.",
     "type": "module",
     "scripts": {
         "dev": "vite",
         "build": "tsc && vite build",
         "preview": "vite preview",
-        "tauri": "tauri"
+        "tauri": "tauri",
+        "typecheck": "tsc --noEmit",
+        "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+        "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
     },
     "dependencies": {
         "@fal-ai/client": "^1.9.5",
@@ -17,7 +21,6 @@
         "@tauri-apps/plugin-dialog": "^2",
         "@tauri-apps/plugin-fs": "^2",
         "@tauri-apps/plugin-http": "^2.5.8",
-        "@tauri-apps/plugin-opener": "^2",
         "@tauri-apps/plugin-window-state": "^2.4.1",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",

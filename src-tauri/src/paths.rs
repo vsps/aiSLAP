@@ -7,8 +7,7 @@ use crate::error::{AppError, AppResult};
 const APP_DIR_NAME: &str = "aiSLAP";
 
 pub fn appdata_dir() -> AppResult<PathBuf> {
-    let base = dirs::config_dir()
-        .ok_or_else(|| AppError::Msg("no config dir available".into()))?;
+    let base = dirs::config_dir().ok_or_else(|| AppError::Msg("no config dir available".into()))?;
     let dir = base.join(APP_DIR_NAME);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)

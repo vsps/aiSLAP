@@ -1,4 +1,5 @@
 import React, {
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -8,7 +9,8 @@ import React, {
 import { GalleryColumn, type DragState } from "./GalleryColumn";
 import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
-import { ModelZoomModal } from "./ModelZoomModal";
+import { LazyBoundary } from "./LazyBoundary";
+import { ModelZoomFallback } from "./ModelZoomFallback";
 import { RenameImageModal } from "./RenameImageModal";
 import { StackedView } from "./StackedView";
 import { TagEditorPopup } from "./TagEditorPopup";
@@ -16,7 +18,7 @@ import { TagFilterBar } from "./TagFilterBar";
 import { TagView } from "./TagView";
 import { TraceView } from "./TraceView";
 import { Icon } from "../lib/icon";
-import { useSessionStore } from "../stores/sessionStore";
+import { selectImageByPath, useSessionStore } from "../stores/sessionStore";
 import { useLayoutStore } from "../stores/layoutStore";
 import { useGenerationStore } from "../stores/generationStore";
 import { matchesFilter, useTagsStore } from "../stores/tagsStore";
@@ -31,6 +33,19 @@ import type {
   GalleryColumn as GalleryColumnData,
   GalleryImage,
 } from "../lib/types";
+
+/**
+ * The 3D viewer is the *only* importer of three / @react-three/fiber /
+ * @react-three/drei in the app, and it opens solely when a user zooms a `.glb`.
+ * Statically importing it put the whole three.js stack — the large majority of
+ * the bundle — on the startup path for every launch. Loading it on demand keeps
+ * it out of the entry chunk.
+ *
+ * `.then` re-map because ModelZoomModal is a named export, not a default one.
+ */
+const ModelZoomModal = lazy(() =>
+  import("./ModelZoomModal").then((m) => ({ default: m.ModelZoomModal })),
+);
 
 export function Gallery() {
   const columns = useSessionStore((s) => s.columns);
@@ -115,14 +130,14 @@ export function Gallery() {
   const thumbnailsEnabled = useSessionStore((s) => s.thumbnailsEnabled);
   const enableThumbnails = useSessionStore((s) => s.enableThumbnails);
 
-  const flatImages = columns.flatMap((c) => c.images);
+  // Two optional lookups, previously paid for by flattening every column's
+  // images on every render — including every render a drag produced.
+  const imageByPath = useSessionStore(selectImageByPath);
   const zoomImage = zoomImagePath
-    ? (flatImages.find((i) => i.path === zoomImagePath) ??
-      syntheticImage(zoomImagePath))
+    ? (imageByPath.get(zoomImagePath) ?? syntheticImage(zoomImagePath))
     : null;
   const renameImage = renameImagePath
-    ? (flatImages.find((i) => i.path === renameImagePath) ??
-      syntheticImage(renameImagePath))
+    ? (imageByPath.get(renameImagePath) ?? syntheticImage(renameImagePath))
     : null;
 
   // Stable reference — performImageAction is module-level, so memo'd
@@ -275,41 +290,73 @@ export function Gallery() {
       return null;
     }
 
+    // Returning `prev` unchanged is what makes the comment above `pointerRef`
+    // true. Pointer *position* was already kept out of state, but rebuilding
+    // the drag state object on every sample re-introduced the exact problem:
+    // a fresh object is never referentially equal, so React re-rendered
+    // Gallery and every GalleryColumn at pointer-sample rate (>120Hz) even
+    // while nothing the columns actually read had changed.
+    const setDragFlags = (
+      overColumnVersion: string | null,
+      shiftHeld: boolean,
+      ctrlHeld: boolean,
+    ) =>
+      setDragState((prev) => {
+        if (!prev) return prev;
+        if (
+          prev.overColumnVersion === overColumnVersion &&
+          prev.shiftHeld === shiftHeld &&
+          prev.ctrlHeld === ctrlHeld
+        ) {
+          return prev;
+        }
+        return { ...prev, overColumnVersion, shiftHeld, ctrlHeld };
+      });
+
     const onMove = (e: PointerEvent) => {
       setGhostPos(e.clientX, e.clientY);
       const hit = findColumnAt(e.clientX, e.clientY);
-      setDragState((prev) =>
-        prev
-          ? {
-              ...prev,
-              overColumnVersion: hit?.version ?? null,
-              shiftHeld: e.shiftKey,
-              ctrlHeld: e.ctrlKey || e.metaKey,
-            }
-          : prev,
+      setDragFlags(
+        hit?.version ?? null,
+        e.shiftKey,
+        e.ctrlKey || e.metaKey,
       );
     };
 
+    // Held modifiers auto-repeat, so keydown fires continuously — the same
+    // bail matters here, not just on pointermove.
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setDragState(null);
         setImageDrag(null);
         return;
       }
-      if (e.key === "Shift") {
-        setDragState((prev) => (prev ? { ...prev, shiftHeld: true } : prev));
-      }
-      if (e.key === "Control" || e.key === "Meta") {
-        setDragState((prev) => (prev ? { ...prev, ctrlHeld: true } : prev));
+      if (e.key === "Shift" || e.key === "Control" || e.key === "Meta") {
+        setDragState((prev) => {
+          if (!prev) return prev;
+          const shiftHeld = prev.shiftHeld || e.key === "Shift";
+          const ctrlHeld =
+            prev.ctrlHeld || e.key === "Control" || e.key === "Meta";
+          if (prev.shiftHeld === shiftHeld && prev.ctrlHeld === ctrlHeld) {
+            return prev;
+          }
+          return { ...prev, shiftHeld, ctrlHeld };
+        });
       }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Shift") {
-        setDragState((prev) => (prev ? { ...prev, shiftHeld: false } : prev));
-      }
-      if (e.key === "Control" || e.key === "Meta") {
-        setDragState((prev) => (prev ? { ...prev, ctrlHeld: false } : prev));
+      if (e.key === "Shift" || e.key === "Control" || e.key === "Meta") {
+        setDragState((prev) => {
+          if (!prev) return prev;
+          const shiftHeld = e.key === "Shift" ? false : prev.shiftHeld;
+          const ctrlHeld =
+            e.key === "Control" || e.key === "Meta" ? false : prev.ctrlHeld;
+          if (prev.shiftHeld === shiftHeld && prev.ctrlHeld === ctrlHeld) {
+            return prev;
+          }
+          return { ...prev, shiftHeld, ctrlHeld };
+        });
       }
     };
 
@@ -777,11 +824,28 @@ export function Gallery() {
 
       {zoomImage &&
         (zoomImage.isModel3d ? (
-          <ModelZoomModal
-            image={zoomImage}
-            onClose={() => setZoomImage(null)}
-            onDelete={async () => onImageAction("delete", zoomImage.path)}
-          />
+          <LazyBoundary
+            fallback={
+              <ModelZoomFallback
+                filename={zoomImage.filename}
+                onClose={() => setZoomImage(null)}
+              />
+            }
+            onError={(retry) => (
+              <ModelZoomFallback
+                filename={zoomImage.filename}
+                onClose={() => setZoomImage(null)}
+                error="The 3D viewer bundle could not be fetched. Reinstalling the app usually fixes this."
+                onRetry={retry}
+              />
+            )}
+          >
+            <ModelZoomModal
+              image={zoomImage}
+              onClose={() => setZoomImage(null)}
+              onDelete={async () => onImageAction("delete", zoomImage.path)}
+            />
+          </LazyBoundary>
         ) : (
           <ImageZoomModal
             image={zoomImage}

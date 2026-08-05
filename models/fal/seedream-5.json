@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "fal",
   "family": "Seedream 5.0 Lite",
   "category": "fal.ai/Image Generation",

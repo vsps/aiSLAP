@@ -1,4 +1,6 @@
-// Shared domain types. Kept in sync with MIGRATION_PLAN.md §2.
+// Shared domain types — the canonical definitions for the whole frontend, and
+// the TypeScript half of the IPC wire format (src-tauri/src/domain.rs is the
+// other). See docs/architecture.md § Domain model.
 
 // ---------- Models ----------
 
@@ -695,30 +697,6 @@ export type PendingSubmission = {
   chain?: ChainMetadataBlock | null;
 
   enqueuedAt: string;
-};
-
-// ---------- Generation events ----------
-
-export type GenerateProgressEvent = {
-  id: string;
-  message: string;
-  iteration?: number;
-  total?: number;
-};
-
-export type GenerateFinishedEvent = {
-  id: string;
-  outputs: GalleryImage[];
-  version: string;
-};
-
-export type GenerateErrorEvent = {
-  id: string;
-  message: string;
-};
-
-export type GenerateCancelledEvent = {
-  id: string;
 };
 
 export type LogEvent = {

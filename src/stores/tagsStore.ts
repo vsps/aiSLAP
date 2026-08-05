@@ -3,11 +3,21 @@ import { create } from "zustand";
 import type { GalleryColumn, TagDef, TagFilterMode } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { invalidateImageMetadata } from "../lib/metadataCache";
-import { useSessionStore } from "./sessionStore";
+import { findLoadedImage, useSessionStore } from "./sessionStore";
 
 type State = {
   /** The open project's vocabulary, in display order (project.json tagDefs). */
   defs: TagDef[];
+  /** Lowercased tag name -> color, derived from `defs` and kept in lockstep
+   *  with it. Exists because every Thumbnail resolves a color for every tag it
+   *  carries: with a linear scan of `defs` that was tags×defs string compares
+   *  per gallery render, which at a few hundred thumbnails is thousands of
+   *  comparisons for data that changes only when the vocabulary does.
+   *
+   *  Held as state rather than derived in a selector on purpose — a zustand
+   *  selector returning a freshly-built Map would never be referentially equal
+   *  and would re-render every subscriber on every store touch. */
+  colorsByName: Map<string, string>;
   /** Tag names currently narrowing the gallery. Empty = no filtering. */
   activeFilter: string[];
   filterMode: TagFilterMode;
@@ -26,12 +36,39 @@ type Actions = {
   clearFilter: () => void;
 };
 
-const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+/** Case-insensitive tag comparison — the single definition. Deliberately
+ *  `toLowerCase`, never `toLocaleLowerCase`: the Rust side does its own
+ *  comparison (`eq_ignore_ascii_case`), and a locale-sensitive fold here
+ *  (Turkish dotted/dotless I being the classic trap) would make the two ends
+ *  disagree about which tags are the same tag. */
+export const tagsEqual = (a: string, b: string) =>
+  a.toLowerCase() === b.toLowerCase();
+
+const eq = tagsEqual;
 
 /** Fallback color for a tag an image carries that the vocabulary hasn't
  *  caught up with (a sidecar edited outside the app, say). */
 export const UNKNOWN_TAG_COLOR = "var(--color-dim)";
 
+/** First-wins, matching the `defs.find(...)` this replaced. A last-wins loop
+ *  would silently change the rendered color whenever a project holds two defs
+ *  differing only by case. */
+function colorMapOf(defs: TagDef[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const d of defs) {
+    const k = d.name.toLowerCase();
+    if (!m.has(k)) m.set(k, d.color || UNKNOWN_TAG_COLOR);
+  }
+  return m;
+}
+
+/** `defs` and its derived color map, always set together. */
+function defsPatch(defs: TagDef[]): Pick<State, "defs" | "colorsByName"> {
+  return { defs, colorsByName: colorMapOf(defs) };
+}
+
+/** Color for a tag, given a `defs` array. Prefer subscribing to
+ *  `colorsByName` in components that render many tags. */
 export function tagColor(defs: TagDef[], name: string): string {
   return defs.find((d) => eq(d.name, name))?.color || UNKNOWN_TAG_COLOR;
 }
@@ -44,6 +81,44 @@ export function tagColor(defs: TagDef[], name: string): string {
  *  project.json has drifted (a project nested under another project's
  *  `project.json` used to send every write to the outer one). Discovered tags
  *  render in the fallback color until the vocabulary is repaired. */
+let discoveredCache: {
+  columns: unknown;
+  taggedGroups: unknown;
+  names: string[];
+} | null = null;
+
+/** Distinct tag names carried by loaded images across both views, first
+ *  spelling wins. Cached on the two array identities: this walks every image
+ *  in the project's loaded views, and it has two callers (the filter bar and
+ *  the tag editor) that would otherwise each pay for it. */
+function discoveredTagNames(
+  columns: { images: { tags?: string[] }[] }[],
+  taggedGroups: { shots: { images: { tags?: string[] }[] }[] }[],
+): string[] {
+  if (
+    discoveredCache &&
+    discoveredCache.columns === columns &&
+    discoveredCache.taggedGroups === taggedGroups
+  ) {
+    return discoveredCache.names;
+  }
+  const seen = new Map<string, string>();
+  const add = (t: string) => {
+    const k = t.toLowerCase();
+    if (!seen.has(k)) seen.set(k, t);
+  };
+  for (const c of columns) for (const i of c.images) (i.tags ?? []).forEach(add);
+  for (const s of taggedGroups)
+    for (const sh of s.shots)
+      for (const i of sh.images) (i.tags ?? []).forEach(add);
+
+  const names = [...seen.values()];
+  discoveredCache = { columns, taggedGroups, names };
+  return names;
+}
+
+let effectiveCache: { key: string; result: TagDef[] } | null = null;
+
 export function useEffectiveTagDefs(): TagDef[] {
   const defs = useTagsStore((s) => s.defs);
   const columns = useSessionStore((s) => s.columns);
@@ -51,14 +126,20 @@ export function useEffectiveTagDefs(): TagDef[] {
   return useMemo(() => {
     const byKey = new Map<string, TagDef>();
     for (const d of defs) byKey.set(d.name.toLowerCase(), d);
-    const add = (t: string) => {
+    for (const t of discoveredTagNames(columns, taggedGroups)) {
       const k = t.toLowerCase();
       if (!byKey.has(k)) byKey.set(k, { name: t, color: UNKNOWN_TAG_COLOR });
-    };
-    for (const c of columns) for (const i of c.images) (i.tags ?? []).forEach(add);
-    for (const s of taggedGroups)
-      for (const sh of s.shots) for (const i of sh.images) (i.tags ?? []).forEach(add);
-    return [...byKey.values()];
+    }
+    const result = [...byKey.values()];
+
+    // `columns` gets a fresh identity after every rescan — i.e. after every
+    // generation iteration — so without this the filter bar re-rendered its
+    // whole chip row constantly for an unchanged vocabulary. Hand back the
+    // previous array when nothing tag-relevant actually moved.
+    const key = result.map((d) => `${d.name}\u0000${d.color}`).join("\u0001");
+    if (effectiveCache && effectiveCache.key === key) return effectiveCache.result;
+    effectiveCache = { key, result };
+    return result;
   }, [defs, columns, taggedGroups]);
 }
 
@@ -92,18 +173,19 @@ function patchColumns(path: string, tags: string[]): void {
 
 export const useTagsStore = create<State & Actions>((set, get) => ({
   defs: [],
+  colorsByName: new Map(),
   activeFilter: [],
   filterMode: "any",
 
   async loadDefs(projectPath) {
     if (!projectPath) {
-      set({ defs: [], activeFilter: [] });
+      set({ ...defsPatch([]), activeFilter: [] });
       return;
     }
     try {
-      set({ defs: await cmd.project_tag_defs_get(projectPath) });
+      set(defsPatch(await cmd.project_tag_defs_get(projectPath)));
     } catch {
-      set({ defs: [] });
+      set(defsPatch([]));
     }
     // Drop filter entries the new project doesn't know about.
     const names = get().defs;
@@ -127,14 +209,8 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
   },
 
   async toggleImageTag(path, tag) {
-    const session = useSessionStore.getState();
     const current =
-      session.columns.flatMap((c) => c.images).find((i) => i.path === path)
-        ?.tags ??
-      session.taggedGroups
-        .flatMap((s) => s.shots)
-        .flatMap((s) => s.images)
-        .find((i) => i.path === path)?.tags ??
+      findLoadedImage(path)?.tags ??
       // Not in any loaded view (zoom modal on an image from elsewhere) —
       // read the sidecar rather than guessing "untagged" and wiping it.
       (await cmd.image_metadata_read(path).catch(() => null))?.tags ??
@@ -148,7 +224,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
   async renameTag(oldName, newName) {
     const { projectPath } = useSessionStore.getState();
     if (!projectPath) return;
-    set({ defs: await cmd.project_tag_rename(projectPath, oldName, newName) });
+    set(defsPatch(await cmd.project_tag_rename(projectPath, oldName, newName)));
     set((s) => ({
       activeFilter: s.activeFilter.map((t) => (eq(t, oldName) ? newName : t)),
     }));
@@ -158,7 +234,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
   async deleteTag(name) {
     const { projectPath } = useSessionStore.getState();
     if (!projectPath) return;
-    set({ defs: await cmd.project_tag_delete(projectPath, name) });
+    set(defsPatch(await cmd.project_tag_delete(projectPath, name)));
     set((s) => ({ activeFilter: s.activeFilter.filter((t) => !eq(t, name)) }));
     await refreshViews();
   },
@@ -166,8 +242,8 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
   async setDefs(defs) {
     const { projectPath } = useSessionStore.getState();
     if (!projectPath) return;
-    set({ defs });
-    set({ defs: await cmd.project_tag_defs_set(projectPath, defs) });
+    set(defsPatch(defs));
+    set(defsPatch(await cmd.project_tag_defs_set(projectPath, defs)));
   },
 
   async setColor(name, color) {

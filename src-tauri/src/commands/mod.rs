@@ -16,3 +16,4 @@ pub mod rename;
 pub mod session;
 pub mod tags;
 pub mod timeline;
+pub mod walk;

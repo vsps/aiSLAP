@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
 import { editTagsAt, type ImageAction } from "../lib/actions";
 import { IconBtn } from "./IconBtn";
@@ -69,15 +76,27 @@ export function GalleryColumn({
     total: number;
     unknown: number;
   } | null>(null);
+  // `column.images` gets a fresh identity on every shot rescan — i.e. after
+  // every generation iteration — even when the same files came back. Keying
+  // the effect on the paths themselves means an unchanged rescan doesn't
+  // re-enter this at all: no IPC round trip per image, no extra render.
+  const imagePathsKey = useMemo(
+    () => column.images.map((i) => i.path).join("\u0000"),
+    [column.images],
+  );
+  const imagesRef = useRef(column.images);
+  imagesRef.current = column.images;
+
   useEffect(() => {
-    if (column.isSrc || column.images.length === 0) {
+    const images = imagesRef.current;
+    if (column.isSrc || images.length === 0) {
       setColCost(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       const metas = await Promise.all(
-        column.images.map((img) => getImageMetadataCached(img.path)),
+        images.map((img) => getImageMetadataCached(img.path)),
       );
       if (cancelled) return;
       let total = 0;
@@ -86,7 +105,7 @@ export function GalleryColumn({
         const m = metas[i];
         const amount = m
           ? perItemPrice(m.provider, m.endpoint, prices, priceOverrides, {
-              isVideo: column.images[i].isVideo,
+              isVideo: images[i].isVideo,
               durationSec: parseDurationSeconds(m.settings?.duration),
               resolution:
                 typeof m.settings?.resolution === "string"
@@ -97,12 +116,18 @@ export function GalleryColumn({
         if (amount != null) total += amount;
         else unknown += 1;
       }
-      setColCost({ total, unknown });
+      // Bail when the numbers didn't move, so a recompute that confirms the
+      // status quo doesn't cost a render.
+      setColCost((prev) =>
+        prev && prev.total === total && prev.unknown === unknown
+          ? prev
+          : { total, unknown },
+      );
     })();
     return () => {
       cancelled = true;
     };
-  }, [column.isSrc, column.images, prices, priceOverrides]);
+  }, [column.isSrc, imagePathsKey, prices, priceOverrides]);
 
   // Stable per-column callbacks so memo'd Thumbnails skip re-renders.
   const handleSelect = useCallback(

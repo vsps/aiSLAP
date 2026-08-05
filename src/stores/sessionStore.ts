@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   GalleryColumn,
+  GalleryImage,
   PrismEntityType,
   PrismInfo,
   PromptHistoryChannel,
@@ -174,6 +175,75 @@ function clearedSelection() {
     shotHistory: emptyChannel(),
     versionComments: {},
   };
+}
+
+// ---------- path -> image lookup ----------
+//
+// Seven call sites independently did `columns.flatMap(c => c.images).find(...)`.
+// One of them (TraceView) ran it once per traced node *inside* the render, so a
+// 40-node trace over a 500-image shot flattened 20,000 entries and allocated 40
+// throwaway arrays every paint.
+//
+// Cached on the identity of the source array, which is exactly the granularity
+// the store already updates at: a rescan or a tag patch produces a new array and
+// invalidates the index; anything else reuses it. Returning a stable reference
+// also makes these safe to use directly as zustand selectors without
+// `useShallow`.
+//
+// The two views are cached separately on purpose — a single shared entry would
+// alternate between `columns` and `taggedGroups` and never hit.
+
+let columnsIndexSrc: unknown = null;
+let columnsIndex: Map<string, GalleryImage> = new Map();
+let taggedIndexSrc: unknown = null;
+let taggedIndex: Map<string, GalleryImage> = new Map();
+
+/** Path -> image across every loaded column, `images` taking precedence over
+ *  `srcImages` (the order the callers this replaced searched in).
+ *
+ *  Pass the raw `columns` array only. A derived array — a filtered view, or one
+ *  carrying pending placeholders — is rebuilt every render and would thrash the
+ *  single-entry cache into uselessness. Placeholder paths (`pending://…`) are
+ *  therefore absent by design, so callers keep their `?? syntheticImage(path)`
+ *  fallback. */
+export function imageIndexOf(
+  columns: GalleryColumn[],
+): Map<string, GalleryImage> {
+  if (columns !== columnsIndexSrc) {
+    const next = new Map<string, GalleryImage>();
+    for (const c of columns) for (const i of c.images) next.set(i.path, i);
+    for (const c of columns)
+      for (const i of c.srcImages ?? [])
+        if (!next.has(i.path)) next.set(i.path, i);
+    columnsIndex = next;
+    columnsIndexSrc = columns;
+  }
+  return columnsIndex;
+}
+
+/** Same, for the project-wide tag view. */
+export function taggedImageIndexOf(
+  taggedGroups: SeqTaggedGroup[],
+): Map<string, GalleryImage> {
+  if (taggedGroups !== taggedIndexSrc) {
+    const next = new Map<string, GalleryImage>();
+    for (const g of taggedGroups)
+      for (const sh of g.shots) for (const i of sh.images) next.set(i.path, i);
+    taggedIndex = next;
+    taggedIndexSrc = taggedGroups;
+  }
+  return taggedIndex;
+}
+
+/** Stable-reference selectors, safe to use directly without `useShallow`. */
+export const selectImageByPath = (s: State) => imageIndexOf(s.columns);
+export const selectTaggedImageByPath = (s: State) =>
+  taggedImageIndexOf(s.taggedGroups);
+
+/** Look a path up in either loaded view. */
+export function findLoadedImage(path: string): GalleryImage | undefined {
+  const s = useSessionStore.getState();
+  return selectImageByPath(s).get(path) ?? selectTaggedImageByPath(s).get(path);
 }
 
 export const useSessionStore = create<State & Actions>((set, get) => {

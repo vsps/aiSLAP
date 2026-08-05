@@ -8,7 +8,7 @@ import { seqShotNamesForMedia } from "../lib/prism";
 import { assemblePromptFromMetadata } from "../lib/actions";
 import { startThresholdDrag } from "../lib/dragThreshold";
 import { getConfigCached, getImageMetadataCached } from "../lib/metadataCache";
-import { tagColor, useTagsStore } from "../stores/tagsStore";
+import { UNKNOWN_TAG_COLOR, useTagsStore } from "../stores/tagsStore";
 
 type Props = {
   image: GalleryImage;
@@ -48,7 +48,7 @@ export const Thumbnail = memo(function Thumbnail({
   maxAspect,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const defs = useTagsStore((s) => s.defs);
+  const colorsByName = useTagsStore((s) => s.colorsByName);
   const tags = image.tags ?? [];
   const [aspect, setAspect] = useState<number>(1);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -293,7 +293,9 @@ export const Thumbnail = memo(function Thumbnail({
             <span
               key={t}
               className="w-[6px] h-[6px]"
-              style={{ background: tagColor(defs, t) }}
+              style={{
+                background: colorsByName.get(t.toLowerCase()) ?? UNKNOWN_TAG_COLOR,
+              }}
             />
           ))}
         </div>

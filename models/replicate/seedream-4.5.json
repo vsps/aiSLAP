@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "replicate",
   "family": "Seedream 4.5",
   "category": "Replicate/Image Generation",

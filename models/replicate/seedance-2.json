@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "replicate",
   "family": "Seedance 2",
   "category": "Replicate/Video Generation",

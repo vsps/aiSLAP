@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "fal",
   "family": "HappyHorse 1.0",
   "category": "fal.ai/Video Generation",
