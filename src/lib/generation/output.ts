@@ -9,6 +9,7 @@ import { estimateGenerationCost, perItemPrice, parseDurationSeconds } from "../f
 import { classifyMedia } from "../media";
 import { negativePromptParam, splitNegativePrompt } from "../args";
 import { pushLog } from "../../stores/logStore";
+import { currentUsername } from "../systemUser";
 import type {
   AssetRecord,
   AssetRefRecord,
@@ -268,6 +269,7 @@ async function recordAsset(
     settingsJson: JSON.stringify(meta.settings ?? {}),
     costUsd: meta.costUsd,
     createdAt: meta.timestamp,
+    generatedBy: meta.generatedBy,
   };
   await cmd.asset_upsert(projectPath, record).catch(() => {});
 
@@ -365,6 +367,7 @@ function buildMetadataRecord(
     costUsd,
     assetId: identity.assetId,
     contentHash: identity.contentHash,
+    generatedBy: currentUsername(),
   };
 }
 

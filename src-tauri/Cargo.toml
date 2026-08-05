@@ -40,6 +40,7 @@ sha2 = "0.10"
 libsql = "0.9"
 uuid = { version = "1", features = ["v4"] }
 imagesize = "0.15"
+whoami = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -260,6 +260,8 @@ export const cmd = {
   project_id_set: (projectPath: string, projectId: string): Promise<void> =>
     rawInvoke("project_id_set", { projectPath, projectId }),
 
+  system_username: (): Promise<string> => rawInvoke("system_username"),
+
   // Asset identity (embedded in media + content hash)
   file_hash: (path: string): Promise<string> =>
     rawInvoke("file_hash", { path }),

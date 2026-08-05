@@ -46,13 +46,15 @@ const SCHEMA: &[&str] = &[
         cost_usd REAL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        deleted_at TEXT
+        deleted_at TEXT,
+        generated_by TEXT
     )",
     // Composite, leading with project_id — correct for the remote database,
     // which genuinely holds many projects. See SCHEMA_LOCAL for why the local
     // file needs a different shape.
     "CREATE INDEX IF NOT EXISTS idx_assets_rel_path ON assets(project_id, rel_path)",
     "CREATE INDEX IF NOT EXISTS idx_assets_content_hash ON assets(project_id, content_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_assets_generated_by ON assets(project_id, generated_by)",
     "CREATE TABLE IF NOT EXISTS asset_refs (
         asset_id TEXT NOT NULL,
         ordinal INTEGER NOT NULL,
@@ -153,6 +155,12 @@ pub struct AssetRecord {
     pub updated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<String>,
+    /// OS/system username that generated this asset (via `whoami`), captured
+    /// at write time — the join key for a future central-db "who generated
+    /// what, for how much" query. Absent on rows written before this field
+    /// existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +303,29 @@ async fn bootstrap(conn: &Connection, extra: &[&str]) -> AppResult<()> {
 /// Keyed by resolved path, not by project root, so the first-open id mint
 /// (which changes which file a project resolves to) can't be served a stale
 /// handle.
+/// Best-effort column add for a table that predates this column. Checked via
+/// `PRAGMA table_info` rather than a blind `ALTER TABLE ... ADD COLUMN` plus
+/// swallow-the-duplicate-column-error: `open_remote` reopens and re-runs its
+/// setup on *every* `sync_outbox` call — i.e. after every single asset write
+/// — so a blind attempt would warn on every generation forever once the
+/// column exists, instead of once, here. The genuinely-unexpected-failure
+/// case (not "duplicate column") still warns exactly the same as before.
+async fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> AppResult<()> {
+    let mut rows = conn
+        .query(&format!("PRAGMA table_info({table})"), ())
+        .await
+        .map_err(db_err)?;
+    while let Some(row) = rows.next().await.map_err(db_err)? {
+        if row.get::<String>(1).map_err(db_err)? == column {
+            return Ok(());
+        }
+    }
+    if let Err(e) = conn.execute(ddl, ()).await {
+        tracing::warn!("{ddl} failed: {e}");
+    }
+    Ok(())
+}
+
 static LOCAL_DBS: OnceLock<Mutex<HashMap<PathBuf, Arc<Database>>>> = OnceLock::new();
 
 async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
@@ -321,6 +352,13 @@ async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
                 tracing::warn!("{pragma} failed: {e}");
             }
         }
+        ensure_column(
+            &conn,
+            "assets",
+            "generated_by",
+            "ALTER TABLE assets ADD COLUMN generated_by TEXT",
+        )
+        .await?;
     }
 
     // A concurrent opener may have won; keep whichever landed first so every
@@ -353,6 +391,13 @@ async fn open_remote(url: String, token: String) -> AppResult<Connection> {
         .map_err(db_err)?;
     let conn = db.connect().map_err(db_err)?;
     bootstrap(&conn, &[]).await?;
+    ensure_column(
+        &conn,
+        "assets",
+        "generated_by",
+        "ALTER TABLE assets ADD COLUMN generated_by TEXT",
+    )
+    .await?;
     Ok(conn)
 }
 
@@ -367,7 +412,8 @@ fn opt_string(row: &Row, idx: i32) -> AppResult<Option<String>> {
 macro_rules! asset_columns {
     () => {
         "id, project_id, rel_path, content_hash, kind, provider, model_id, \
-         endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at"
+         endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
+         generated_by"
     };
 }
 
@@ -387,6 +433,7 @@ fn row_to_asset(row: &Row) -> AppResult<AssetRecord> {
         created_at: row.get::<String>(11).map_err(db_err)?,
         updated_at: opt_string(row, 12)?,
         deleted_at: opt_string(row, 13)?,
+        generated_by: opt_string(row, 14)?,
     })
 }
 
@@ -448,14 +495,16 @@ async fn select_refs(conn: &Connection, asset_id: &str) -> AppResult<Vec<AssetRe
 async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<()> {
     conn.execute(
         "INSERT INTO assets (id, project_id, rel_path, content_hash, kind, provider, model_id, \
-             endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)
+             endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
+             generated_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14)
          ON CONFLICT(id) DO UPDATE SET
            project_id=excluded.project_id, rel_path=excluded.rel_path,
            content_hash=excluded.content_hash, kind=excluded.kind, provider=excluded.provider,
            model_id=excluded.model_id, endpoint=excluded.endpoint,
            combined_prompt=excluded.combined_prompt, settings_json=excluded.settings_json,
-           cost_usd=excluded.cost_usd, updated_at=excluded.updated_at, deleted_at=NULL",
+           cost_usd=excluded.cost_usd, updated_at=excluded.updated_at, deleted_at=NULL,
+           generated_by=excluded.generated_by",
         params!(
             record.id.clone(),
             record.project_id.clone(),
@@ -469,7 +518,8 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
             record.settings_json.clone(),
             record.cost_usd,
             record.created_at.clone(),
-            record.updated_at.clone().unwrap_or_default()
+            record.updated_at.clone().unwrap_or_default(),
+            record.generated_by.clone()
         ),
     )
     .await
@@ -1274,6 +1324,10 @@ fn reconcile_one_file(
                     .unwrap_or_else(|| now.clone()),
                 updated_at: Some(now),
                 deleted_at: None,
+                generated_by: obj
+                    .get("generatedBy")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
             })));
             report.db_ingested += 1;
         }

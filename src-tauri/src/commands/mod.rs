@@ -14,6 +14,7 @@ pub mod prism;
 pub mod prompt_history;
 pub mod rename;
 pub mod session;
+pub mod system;
 pub mod tags;
 pub mod timeline;
 pub mod walk;
