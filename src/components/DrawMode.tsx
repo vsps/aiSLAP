@@ -3,6 +3,7 @@ import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { cmd } from "../lib/tauri";
 import { useSessionStore } from "../stores/sessionStore";
+import { useTagsStore } from "../stores/tagsStore";
 import { showMessage } from "../lib/dialog";
 import { dirname, basename } from "../lib/paths";
 import { FullscreenModal } from "./FullscreenModal";
@@ -319,6 +320,7 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
       const savePath = `${dir}/${name}_paint.png`;
 
       await cmd.save_png_base64(savePath, base64);
+      await useTagsStore.getState().setImageTags(savePath, ["markup"]);
       await useSessionStore.getState().rescanShot();
       onSave(savePath);
     } catch (e) {
