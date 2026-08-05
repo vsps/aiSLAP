@@ -45,11 +45,20 @@ fn infer_kind(outputs: &[ModelOutput], declared: &Option<String>) -> String {
     if let Some(k) = declared {
         return k.clone();
     }
-    if outputs.iter().any(|o| o.data_type.eq_ignore_ascii_case("MODEL_3D")) {
+    if outputs
+        .iter()
+        .any(|o| o.data_type.eq_ignore_ascii_case("MODEL_3D"))
+    {
         return "model3d".into();
     }
-    let any_video = outputs.iter().any(|o| o.data_type.eq_ignore_ascii_case("VIDEO"));
-    if any_video { "video".into() } else { "image".into() }
+    let any_video = outputs
+        .iter()
+        .any(|o| o.data_type.eq_ignore_ascii_case("VIDEO"));
+    if any_video {
+        "video".into()
+    } else {
+        "image".into()
+    }
 }
 
 fn infer_batch_field(parameters: &[Value], declared: &Option<String>) -> Option<String> {
@@ -107,7 +116,12 @@ fn collect_model_files(dir: &std::path::Path) -> AppResult<Vec<std::path::PathBu
                 if !np.is_file() {
                     continue;
                 }
-                if np.extension().and_then(|x| x.to_str()).map(|x| x.eq_ignore_ascii_case("json")).unwrap_or(false) {
+                if np
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| x.eq_ignore_ascii_case("json"))
+                    .unwrap_or(false)
+                {
                     out.push(np);
                 }
             }
@@ -165,4 +179,173 @@ pub fn models_load(app: tauri::AppHandle) -> AppResult<Vec<ModelEntry>> {
     }
 
     Ok(entries)
+}
+
+/// The registry ships as a bundle resource, and `models_load` skips anything it
+/// cannot read or parse — silently, by design, so one bad file never stops the
+/// app booting. The cost of that choice is that a malformed model simply
+/// disappears from the picker, and the only signal is the `models: N` count in
+/// the status bar. These tests are the guard: they turn "a model vanished from
+/// a release build" into a failing PR.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn models_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri has a parent")
+            .join("models")
+    }
+
+    #[test]
+    fn every_shipped_model_file_parses_and_declares_nodes() {
+        let files = collect_model_files(&models_root()).expect("models/ is readable");
+        assert!(
+            files.len() >= 20,
+            "expected the registry to be discovered, found {} files",
+            files.len()
+        );
+
+        for path in files {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{} is unreadable: {e}", path.display()));
+            let file: ModelFile = serde_json::from_str(&text).unwrap_or_else(|e| {
+                panic!(
+                    "{} does not parse — it would silently vanish from the picker: {e}",
+                    path.display()
+                )
+            });
+
+            // A file whose nodes fail to deserialize takes the *whole file*
+            // with it, so an empty node list is almost always a mistake.
+            assert!(
+                !file.nodes.is_empty(),
+                "{} declares no nodes",
+                path.display()
+            );
+            // Empty family/category load fine but render as unlabelled picker
+            // entries — a silent misbehaviour rather than an error.
+            assert!(
+                !file.family.trim().is_empty(),
+                "{} has an empty family",
+                path.display()
+            );
+            assert!(
+                !file.category.trim().is_empty(),
+                "{} has an empty category",
+                path.display()
+            );
+
+            let mut seen = HashSet::new();
+            for node in &file.nodes {
+                for (field, value) in [
+                    ("id", &node.id),
+                    ("name", &node.name),
+                    ("endpoint", &node.endpoint),
+                ] {
+                    assert!(
+                        !value.trim().is_empty(),
+                        "{}: node {:?} has an empty {field}",
+                        path.display(),
+                        node.id
+                    );
+                }
+                assert!(
+                    seen.insert(node.id.clone()),
+                    "{} declares node id {:?} twice",
+                    path.display(),
+                    node.id
+                );
+            }
+        }
+    }
+
+    /// `kind` is inferred from outputs when omitted, and every shipped file
+    /// omits it — so a 3D model that forgets its `MODEL_3D` output silently
+    /// renders as an image. Pin the inference and the fact it is load-bearing.
+    #[test]
+    fn kind_inference_is_load_bearing_for_every_shipped_node() {
+        let out = |dt: &str| ModelOutput {
+            name: "out".into(),
+            data_type: dt.into(),
+            api_field: "images".into(),
+        };
+
+        assert_eq!(infer_kind(&[out("MODEL_3D")], &None), "model3d");
+        assert_eq!(infer_kind(&[out("VIDEO")], &None), "video");
+        assert_eq!(infer_kind(&[out("IMAGE")], &None), "image");
+        assert_eq!(infer_kind(&[], &None), "image");
+        // MODEL_3D wins over VIDEO regardless of order.
+        assert_eq!(
+            infer_kind(&[out("VIDEO"), out("MODEL_3D")], &None),
+            "model3d"
+        );
+        // A declared kind always wins.
+        assert_eq!(infer_kind(&[out("IMAGE")], &Some("video".into())), "video");
+
+        let files = collect_model_files(&models_root()).expect("models/ is readable");
+        let mut declared = 0usize;
+        for path in &files {
+            let text = std::fs::read_to_string(path).expect("readable");
+            let file: ModelFile = serde_json::from_str(&text).expect("parses");
+            declared += file.nodes.iter().filter(|n| n.kind.is_some()).count();
+        }
+        assert_eq!(
+            declared, 0,
+            "a model file started declaring `kind`; docs/model-registry.md says none do"
+        );
+    }
+
+    /// start/end become exclusive and element becomes named unless the file
+    /// opts out. The UI relies on this rather than special-casing each model.
+    #[test]
+    fn ref_role_defaults_are_annotated() {
+        let role = |r: &str| RefRoleSpec {
+            role: r.into(),
+            api_field: "image_url".into(),
+            max: None,
+            exclusive: None,
+            named: None,
+        };
+        let annotated = annotate_roles(Some(vec![
+            role("start"),
+            role("end"),
+            role("element"),
+            role("source"),
+        ]))
+        .expect("some");
+
+        assert_eq!(annotated[0].exclusive, Some(true), "start is exclusive");
+        assert_eq!(annotated[1].exclusive, Some(true), "end is exclusive");
+        assert_eq!(annotated[2].named, Some(true), "element is named");
+        assert_eq!(annotated[3].exclusive, None, "source is untouched");
+        assert_eq!(annotated[3].named, None, "source is untouched");
+
+        // An explicit value always wins over the default.
+        let mut opted_out = role("start");
+        opted_out.exclusive = Some(false);
+        let annotated = annotate_roles(Some(vec![opted_out])).expect("some");
+        assert_eq!(annotated[0].exclusive, Some(false));
+    }
+
+    #[test]
+    fn batch_field_is_inferred_from_the_known_api_field_names() {
+        let param = |api_field: &str| serde_json::json!({ "api_field": api_field });
+
+        for name in ["num_images", "num_samples", "n", "batch_size"] {
+            assert_eq!(
+                infer_batch_field(&[param(name)], &None),
+                Some(name.to_string()),
+                "{name} should be recognised as a batch field"
+            );
+        }
+        // Anything else is silently not a batch field — declare it explicitly.
+        assert_eq!(infer_batch_field(&[param("count")], &None), None);
+        assert_eq!(
+            infer_batch_field(&[param("count")], &Some("count".into())),
+            Some("count".into())
+        );
+    }
 }

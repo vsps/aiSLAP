@@ -15,6 +15,18 @@ pub fn config_save(config: Config) -> AppResult<()> {
     write_json_atomic(&paths::config_path()?, &config)
 }
 
+/// The user's configured ffmpeg binary, or empty when they haven't set one
+/// (callers then fall back to whatever is on PATH).
+///
+/// Lives here rather than in `fsutil` because it reads `config.json`, which is
+/// this module's business. `tags.rs` and `image.rs` each carried a
+/// byte-identical private copy.
+pub(crate) fn configured_ffmpeg_path() -> String {
+    read_json_or_default::<Config>(&paths::config_path().unwrap_or_default())
+        .map(|c| c.ffmpeg_path)
+        .unwrap_or_default()
+}
+
 // ----- app-state.json -----
 
 #[tauri::command]
@@ -39,7 +51,10 @@ pub fn presets_load() -> AppResult<serde_json::Value> {
     match serde_json::from_str::<serde_json::Value>(&text) {
         Ok(v) => Ok(v),
         Err(e) => {
-            tracing::warn!("corrupt presets JSON at {}: {e} — using default", path.display());
+            tracing::warn!(
+                "corrupt presets JSON at {}: {e} — using default",
+                path.display()
+            );
             Ok(serde_json::json!({ "presets": [] }))
         }
     }
@@ -131,15 +146,4 @@ pub fn provider_key_get(provider: String) -> AppResult<String> {
 pub fn provider_key_set(provider: String, key: String) -> AppResult<()> {
     let name = env_var_for(&provider);
     write_env_var(&name, &key)
-}
-
-// Legacy wrappers — kept so existing TS callers don't churn.
-#[tauri::command]
-pub fn fal_key_get() -> AppResult<String> {
-    read_env_var("FAL_KEY")
-}
-
-#[tauri::command]
-pub fn fal_key_set(key: String) -> AppResult<()> {
-    write_env_var("FAL_KEY", &key)
 }

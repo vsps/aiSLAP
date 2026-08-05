@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "bytedance",
   "family": "Seedream 5.0 Lite",
   "category": "ByteDance/Image Generation",

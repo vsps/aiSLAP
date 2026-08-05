@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "fal",
   "family": "GPT Image 2",
   "category": "fal.ai/Image Generation",

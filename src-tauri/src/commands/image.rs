@@ -2,16 +2,17 @@
 //! `.json` sidecar + `.thumb.png`), version-stack moves, base64 PNG saves,
 //! and revealing a path in the OS file manager.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::commands::fsutil::{
-    as_str, is_media_ext, next_version_name, project_root_for, relativize, sidecar_path,
-    thumb_path, validate_filename_stem, TransferMode, SHOT_SIDECAR, SRC_DIR,
+    as_str, is_media_ext, is_thumb, next_version_name, project_root_for, relativize, require_dir,
+    sidecar_path, thumb_path, validate_filename_stem, TransferMode, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
 use crate::commands::tags::tags_from_sidecar;
-use crate::db::{self, AssetRecord, TagUpdate};
-use crate::domain::{Config, ShotSidecar};
+use crate::db::{self, AssetRecord};
+use crate::domain::ShotSidecar;
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{ensure_dir, read_json_or_default, write_json_atomic};
 
@@ -133,10 +134,18 @@ fn sidecar_asset_id(media_path: &Path) -> Option<String> {
 /// log-only on failure, mirroring how `media_id_embed` failures are treated
 /// elsewhere: this is enrichment, not the durable record (the sidecar/file
 /// move already succeeded by the time this runs).
+///
+/// Grouped by project root so each one is a single batched call: a version-stack
+/// move relinks every file in the folder, and per-file calls meant a database
+/// open apiece. In practice there is exactly one root.
 async fn apply_relinks(relinks: impl IntoIterator<Item = RelinkInfo>) {
+    let mut by_root: HashMap<PathBuf, Vec<(String, String)>> = HashMap::new();
     for (root, asset_id, rel_path) in relinks {
-        if let Err(e) = crate::db::asset_relink(&root, &asset_id, &rel_path).await {
-            tracing::warn!("asset relink failed for {asset_id}: {e}");
+        by_root.entry(root).or_default().push((asset_id, rel_path));
+    }
+    for (root, moves) in by_root {
+        if let Err(e) = crate::db::assets_relink(&root, &moves).await {
+            tracing::warn!("asset relink failed under {}: {e}", as_str(&root));
         }
     }
 }
@@ -147,13 +156,6 @@ async fn apply_relinks(relinks: impl IntoIterator<Item = RelinkInfo>) {
 /// The tags come along because the copied sidecar carries them but the index
 /// rows are keyed by the *source's* asset id.
 type NewAssetInfo = (PathBuf, AssetRecord, Vec<String>);
-
-fn ffmpeg_path() -> String {
-    crate::paths::config_path()
-        .and_then(|p| read_json_or_default::<Config>(&p))
-        .map(|c| c.ffmpeg_path)
-        .unwrap_or_default()
-}
 
 /// After a **copy**, `transfer_triple_to_dir` has just duplicated the
 /// sidecar byte-for-byte — including its `assetId` — so without this the two
@@ -175,7 +177,12 @@ fn reidentify_copy(dest: &Path) -> Option<NewAssetInfo> {
 
     let project_id = db::read_project_id(&root).unwrap_or_default();
     let new_id = uuid::Uuid::new_v4().to_string();
-    let _ = media_id_embed_impl(dest, &new_id, &project_id, &ffmpeg_path());
+    let _ = media_id_embed_impl(
+        dest,
+        &new_id,
+        &project_id,
+        &crate::commands::config::configured_ffmpeg_path(),
+    );
     let hash = file_hash_impl(dest).ok()?;
 
     if let Some(map) = value.as_object_mut() {
@@ -226,23 +233,20 @@ fn reidentify_copy(dest: &Path) -> Option<NewAssetInfo> {
 
 /// Push every freshly re-identified copy into the local asset index — fire
 /// and log-only on failure, same treatment as `apply_relinks`.
+///
+/// The row and its tags go in together: previously each copy cost two database
+/// opens, and a failure between them left an indexed asset with no tags.
 async fn apply_new_assets(infos: impl IntoIterator<Item = NewAssetInfo>) {
+    let mut by_root: HashMap<PathBuf, Vec<(AssetRecord, Vec<String>)>> = HashMap::new();
     for (root, record, tags) in infos {
-        let id = record.id.clone();
-        if let Err(e) = db::asset_upsert(&root, record).await {
-            tracing::warn!("asset upsert for copied asset {id} failed: {e}");
-            continue;
-        }
-        if tags.is_empty() {
-            continue;
-        }
-        let update = TagUpdate {
-            asset_id: id.clone(),
-            record: None,
-            tags,
-        };
-        if let Err(e) = db::asset_tags_apply(&root, std::slice::from_ref(&update)).await {
-            tracing::warn!("tag copy for copied asset {id} failed: {e}");
+        by_root.entry(root).or_default().push((record, tags));
+    }
+    for (root, new_assets) in by_root {
+        if let Err(e) = db::assets_ingest(&root, &new_assets).await {
+            tracing::warn!(
+                "ingest of copied assets under {} failed: {e}",
+                as_str(&root)
+            );
         }
     }
 }
@@ -401,12 +405,7 @@ fn version_stack_move_impl(
     copy: bool,
 ) -> AppResult<(String, Vec<RelinkInfo>, Vec<NewAssetInfo>)> {
     let src_dir = PathBuf::from(&src_shot).join(&src_version);
-    if !src_dir.is_dir() {
-        return Err(AppError::Msg(format!(
-            "not a directory: {}",
-            as_str(&src_dir)
-        )));
-    }
+    require_dir(&src_dir)?;
 
     let dst_root = PathBuf::from(&dst_shot);
     let dst_version_name = match dst_version {
@@ -432,14 +431,7 @@ fn version_stack_move_impl(
         if !p.is_file() {
             continue;
         }
-        let filename = match p.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if filename.ends_with(".thumb.png") {
-            continue;
-        }
-        if !is_media_ext(&p) {
+        if is_thumb(&p) || !is_media_ext(&p) {
             continue;
         }
         moves.push(p);
@@ -584,9 +576,8 @@ pub fn reveal_in_explorer(path: String) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::fsutil::PROJECT_SIDECAR;
     use crate::db::{self, AssetRecord};
-    use crate::domain::ProjectSidecar;
+    use crate::testutil::TestProject;
     use std::fs;
 
     /// Runs on every host, so the macOS and Linux shapes are checked from the
@@ -621,10 +612,7 @@ mod tests {
             reveal_argv(file, false, RevealOs::MacOs),
             vec![(
                 "open",
-                vec![
-                    "-R".to_string(),
-                    "Z:/prj/seq/shot/v001/a.png".to_string()
-                ]
+                vec!["-R".to_string(), "Z:/prj/seq/shot/v001/a.png".to_string()]
             )]
         );
         assert_eq!(
@@ -659,28 +647,6 @@ mod tests {
         assert_eq!(HOST_OS, RevealOs::Other);
     }
 
-    /// A throwaway project under the OS temp dir, with a real project.json —
-    /// same fixture shape as db::tests::test_project, duplicated here since
-    /// that helper is private to the db module.
-    fn test_project() -> (PathBuf, String) {
-        let project_id = format!("test-image-{}", uuid::Uuid::new_v4());
-        let root = std::env::temp_dir().join(&project_id);
-        fs::create_dir_all(&root).unwrap();
-        let sidecar = ProjectSidecar {
-            project_id: project_id.clone(),
-            ..Default::default()
-        };
-        write_json_atomic(&root.join(PROJECT_SIDECAR), &sidecar).unwrap();
-        (root, project_id)
-    }
-
-    fn cleanup(root: &Path, project_id: &str) {
-        let _ = fs::remove_dir_all(root);
-        if let Ok(dir) = crate::paths::appdata_dir() {
-            let _ = fs::remove_file(dir.join("db").join(format!("{project_id}.db")));
-        }
-    }
-
     fn write_media_with_sidecar(media_path: &Path, asset_id: &str) {
         fs::create_dir_all(media_path.parent().unwrap()).unwrap();
         fs::write(media_path, b"fake image bytes").unwrap();
@@ -698,7 +664,8 @@ mod tests {
 
     #[tokio::test]
     async fn copy_to_dir_mints_a_fresh_identity_and_leaves_the_source_indexed() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("image");
+        let root = project.root.clone();
         let src = root.join("shot1").join("gen001").join("img.png");
         write_media_with_sidecar(&src, "asset-src-1");
         db::asset_upsert(
@@ -739,13 +706,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(copy_row.rel_path, "shot1/gen002/img.png");
-
-        cleanup(&root, &project_id);
     }
 
     #[tokio::test]
     async fn move_to_dir_relinks_the_indexed_asset_immediately() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("image");
+        let root = project.root.clone();
         let src = root.join("shot1").join("gen001").join("img.png");
         write_media_with_sidecar(&src, "asset-move-1");
         db::asset_upsert(
@@ -771,13 +737,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(row.rel_path, "shot1/gen002/img.png");
-
-        cleanup(&root, &project_id);
     }
 
     #[tokio::test]
     async fn rename_relinks_the_indexed_asset_immediately() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("image");
+        let root = project.root.clone();
         let src = root.join("shot1").join("gen001").join("img.png");
         write_media_with_sidecar(&src, "asset-rename-1");
         db::asset_upsert(
@@ -802,7 +767,5 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(row.rel_path, "shot1/gen001/renamed.png");
-
-        cleanup(&root, &project_id);
     }
 }

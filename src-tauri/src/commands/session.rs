@@ -3,22 +3,20 @@
 //! path cascade) lives in `rename.rs`; prompt-history appends live in
 //! `prompt_history.rs`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, list_dirs, next_version_name, sanitize, PROJECT_SIDECAR, SEL_DIR, SEQUENCE_SIDECAR,
-    SHOT_SIDECAR, SRC_DIR,
+    as_str, list_dirs, next_version_name, require_dir, sanitize, PROJECT_SIDECAR, SEL_DIR,
+    SEQUENCE_SIDECAR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::gallery::{scan_shot_columns, tag_index_for};
 use crate::commands::prism;
 use crate::domain::{GalleryColumn, ProjectSidecar, SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
-use crate::fsjson::{
-    ensure_dir, read_json_or_default as read_sidecar, write_json_atomic as write_sidecar_atomic,
-};
+use crate::fsjson::{ensure_dir, read_json_or_default, read_json_strict, write_json_atomic};
 
 // ---------- Project / sequence / shot open + create ----------
 
@@ -30,9 +28,7 @@ use crate::fsjson::{
 #[tauri::command]
 pub fn project_open(project_path: String, entity_type: Option<String>) -> AppResult<Vec<String>> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
     // Reject folders that are clearly sequences or shots, not projects.
     if root.join(SEQUENCE_SIDECAR).exists() || root.join(SHOT_SIDECAR).exists() {
         return Err(AppError::Msg("NOT A PROJECT FOLDER".into()));
@@ -46,7 +42,7 @@ pub fn project_open(project_path: String, entity_type: Option<String>) -> AppRes
             .and_then(|n| n.to_str())
             .unwrap_or("project")
             .to_string();
-        write_sidecar_atomic(
+        write_json_atomic(
             &sidecar_path,
             &ProjectSidecar {
                 title,
@@ -89,10 +85,8 @@ pub struct SequenceOpenResult {
 #[tauri::command]
 pub fn sequence_open(sequence_path: String) -> AppResult<SequenceOpenResult> {
     let root = PathBuf::from(&sequence_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {sequence_path}")));
-    }
-    let sidecar: SequenceSidecar = read_sidecar(&root.join(SEQUENCE_SIDECAR))?;
+    require_dir(&root)?;
+    let sidecar: SequenceSidecar = read_json_or_default(&root.join(SEQUENCE_SIDECAR))?;
     let layout = prism::layout_for(&root);
     let shots: Vec<String> = match &layout {
         // Asset tree: only real asset entities, so a category sitting beside
@@ -127,7 +121,7 @@ pub fn sequence_open(sequence_path: String) -> AppResult<SequenceOpenResult> {
 /// nothing about), so aiSLAP only ever creates the `Renders/AI` media root
 /// inside an entity that already exists. The UI greys these out; this is the
 /// backstop.
-fn reject_if_prism(path: &PathBuf) -> AppResult<()> {
+fn reject_if_prism(path: &Path) -> AppResult<()> {
     if prism::detect(path).is_some() || prism::layout_for(path).is_some() {
         return Err(AppError::Msg(
             "sequences and shots are managed by PRISM — create it in PRISM first".into(),
@@ -143,7 +137,7 @@ pub fn sequence_create(project_path: String, name: String) -> AppResult<String> 
     ensure_dir(&target)?;
     let sidecar_path = target.join(SEQUENCE_SIDECAR);
     if !sidecar_path.exists() {
-        write_sidecar_atomic(
+        write_json_atomic(
             &sidecar_path,
             &SequenceSidecar {
                 name: name.clone(),
@@ -167,10 +161,8 @@ pub async fn shot_open(shot_path: String) -> AppResult<ShotOpenResult> {
     let index = tag_index_for(&PathBuf::from(&shot_path)).await;
     run_blocking(move || {
         let root = PathBuf::from(&shot_path);
-        if !root.is_dir() {
-            return Err(AppError::Msg(format!("not a directory: {shot_path}")));
-        }
-        let sidecar: ShotSidecar = read_sidecar(&root.join(SHOT_SIDECAR))?;
+        require_dir(&root)?;
+        let sidecar: ShotSidecar = read_json_or_default(&root.join(SHOT_SIDECAR))?;
         let columns = scan_shot_columns(&root, &index)?;
         Ok(ShotOpenResult { columns, sidecar })
     })
@@ -188,7 +180,7 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
     ensure_dir(&target.join(SRC_DIR))?;
     let sidecar_path = target.join(SHOT_SIDECAR);
     if !sidecar_path.exists() {
-        write_sidecar_atomic(
+        write_json_atomic(
             &sidecar_path,
             &ShotSidecar {
                 name,
@@ -221,13 +213,11 @@ pub(crate) fn with_shot_sidecar(
     mutate: impl FnOnce(&mut ShotSidecar),
 ) -> AppResult<ShotSidecar> {
     let root = PathBuf::from(shot_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {shot_path}")));
-    }
+    require_dir(&root)?;
     let path = root.join(SHOT_SIDECAR);
-    let mut sidecar: ShotSidecar = read_sidecar(&path)?;
+    let mut sidecar: ShotSidecar = read_json_or_default(&path)?;
     mutate(&mut sidecar);
-    write_sidecar_atomic(&path, &sidecar)?;
+    write_json_atomic(&path, &sidecar)?;
     Ok(sidecar)
 }
 
@@ -255,9 +245,7 @@ const DEFAULT_SCRIPT: &str = "# Sequence 1\n\n## Shot 1\n\n## Shot 2\n\n## Shot 
 #[tauri::command]
 pub fn script_read(project_path: String) -> AppResult<String> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
     let p = root.join(SCRIPT_FILE);
     if !p.exists() {
         std::fs::write(&p, DEFAULT_SCRIPT)?;
@@ -269,9 +257,7 @@ pub fn script_read(project_path: String) -> AppResult<String> {
 #[tauri::command]
 pub fn script_write(project_path: String, content: String) -> AppResult<()> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
     std::fs::write(root.join(SCRIPT_FILE), content)?;
     Ok(())
 }
@@ -295,13 +281,12 @@ pub fn dirs_exist(paths: Vec<String>) -> Vec<bool> {
 #[tauri::command]
 pub fn project_version_prefix_get(project_path: String) -> AppResult<String> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
     if let Some(layout) = prism::detect(&root) {
         return Ok(layout.version_prefix);
     }
-    let sidecar: ProjectSidecar = read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    let sidecar: ProjectSidecar =
+        read_json_or_default(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
     Ok(if sidecar.version_prefix.is_empty() {
         "gen".into()
     } else {
@@ -315,9 +300,7 @@ pub fn project_version_prefix_get(project_path: String) -> AppResult<String> {
 #[tauri::command]
 pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppResult<()> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
     // A PRISM project's version naming comes from pipeline.json, so accepting a
     // prefix here would store a value nothing reads.
     if prism::detect(&root).is_some() {
@@ -339,10 +322,12 @@ pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppRe
             "Prefix must start with a letter and contain only letters, `_`, or `-`.".into(),
         ));
     }
+    // Strict: this rewrites the whole sidecar, so defaulting on a corrupt read
+    // would discard the project id and tag vocabulary along with it.
     let path = root.join(PROJECT_SIDECAR);
-    let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
+    let mut sidecar: ProjectSidecar = read_json_strict(&path)?.unwrap_or_default();
     sidecar.version_prefix = trimmed;
-    write_sidecar_atomic(&path, &sidecar)
+    write_json_atomic(&path, &sidecar)
 }
 
 /// Read the project's stable identity UUID. Returns `None` for a project
@@ -352,10 +337,9 @@ pub fn project_version_prefix_set(project_path: String, prefix: String) -> AppRe
 #[tauri::command]
 pub fn project_id_get(project_path: String) -> AppResult<Option<String>> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
-    let sidecar: ProjectSidecar = read_sidecar(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
+    require_dir(&root)?;
+    let sidecar: ProjectSidecar =
+        read_json_or_default(&root.join(PROJECT_SIDECAR)).unwrap_or_default();
     Ok(if sidecar.project_id.is_empty() {
         None
     } else {
@@ -366,13 +350,13 @@ pub fn project_id_get(project_path: String) -> AppResult<Option<String>> {
 #[tauri::command]
 pub fn project_id_set(project_path: String, project_id: String) -> AppResult<()> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
+    // Strict, as above — and doubly so here: a default read would also blank
+    // any existing id, and the local index is keyed by it.
     let path = root.join(PROJECT_SIDECAR);
-    let mut sidecar: ProjectSidecar = read_sidecar(&path)?;
+    let mut sidecar: ProjectSidecar = read_json_strict(&path)?.unwrap_or_default();
     sidecar.project_id = project_id;
-    write_sidecar_atomic(&path, &sidecar)
+    write_json_atomic(&path, &sidecar)
 }
 
 #[tauri::command]

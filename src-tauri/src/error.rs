@@ -19,18 +19,6 @@ impl Serialize for AppError {
     }
 }
 
-impl From<&str> for AppError {
-    fn from(s: &str) -> Self {
-        AppError::Msg(s.to_string())
-    }
-}
-
-impl From<String> for AppError {
-    fn from(s: String) -> Self {
-        AppError::Msg(s)
-    }
-}
-
 pub type AppResult<T> = Result<T, AppError>;
 
 /// Runs a blocking closure off the async runtime's worker pool, so

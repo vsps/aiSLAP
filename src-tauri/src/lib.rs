@@ -5,6 +5,8 @@ mod error;
 mod fsjson;
 mod paths;
 mod pricing;
+#[cfg(test)]
+mod testutil;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,7 +15,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
@@ -21,8 +22,6 @@ pub fn run() {
             commands::config::config_save,
             commands::config::app_state_load,
             commands::config::app_state_save,
-            commands::config::fal_key_get,
-            commands::config::fal_key_set,
             commands::config::provider_key_get,
             commands::config::provider_key_set,
             commands::config::presets_load,
@@ -78,11 +77,9 @@ pub fn run() {
             commands::session::project_id_set,
             commands::media_id::file_hash,
             commands::media_id::media_id_embed,
-            commands::media_id::media_id_read,
             commands::db::asset_upsert,
             commands::db::asset_lookup,
             commands::db::asset_refs_set,
-            commands::db::asset_refs_get,
             commands::db::db_sync_outbox,
             commands::db::project_reconcile,
             commands::pending::pending_load,

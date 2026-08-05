@@ -15,14 +15,12 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::commands::fsutil::{
-    as_str, has_version_dir, list_dirs, next_version_name, SRC_DIR,
-};
+use crate::commands::fsutil::{as_str, highest_version_number, list_dirs, VersionNaming, SRC_DIR};
 use crate::error::AppResult;
 use crate::fsjson::ensure_dir;
 
 /// Marker that identifies a PRISM project root.
-const PIPELINE_CONFIG: &str = "00_Pipeline/pipeline.json";
+pub(crate) const PIPELINE_CONFIG: &str = "00_Pipeline/pipeline.json";
 
 /// Where aiSLAP output lives inside a PRISM entity folder.
 pub(crate) const AI_MEDIA_SUBPATH: &str = "Renders/AI";
@@ -171,13 +169,7 @@ pub(crate) fn layout_for(path: &Path) -> Option<PrismLayout> {
 /// arbitrarily deep path, so `Assets/aus_map` (an asset) and `Assets/Signs`
 /// (a category holding assets) both sit at the same level. This mirrors PRISM's
 /// own non-strict asset detection (`globals.useStrictAssetDetection: false`).
-const ENTITY_MARKERS: &[&str] = &[
-    "Scenefiles",
-    "Export",
-    "Renders",
-    "Playblasts",
-    "Textures",
-];
+const ENTITY_MARKERS: &[&str] = &["Scenefiles", "Export", "Renders", "Playblasts", "Textures"];
 
 pub(crate) fn is_asset_entity(dir: &Path) -> bool {
     ENTITY_MARKERS.iter().any(|m| dir.join(m).is_dir())
@@ -277,9 +269,6 @@ pub(crate) fn is_media_root(path: &Path) -> bool {
 
 /// Version-folder digit count for newly minted folders under `path`: PRISM's
 /// configured padding, else aiSLAP's historical 3.
-pub(crate) fn version_padding_for(path: &Path) -> usize {
-    layout_for(path).map(|l| l.version_padding).unwrap_or(3)
-}
 
 // ---------- Commands ----------
 
@@ -311,8 +300,14 @@ pub fn prism_media_root_ensure(entity_path: String) -> AppResult<String> {
     ensure_dir(&media_root.join(SRC_DIR))?;
     // Only seed a version folder for a brand-new media root; an existing one
     // keeps whatever versions it has.
-    if !has_version_dir(&media_root) {
-        ensure_dir(&media_root.join(next_version_name(&media_root)))?;
+    //
+    // One `read_dir` answers both "are there any versions?" and "what is the
+    // highest?" — this used to scan the directory twice and parse pipeline.json
+    // twice on top of that.
+    let highest = highest_version_number(&media_root);
+    if highest.is_none() {
+        let naming = VersionNaming::for_path(&media_root);
+        ensure_dir(&media_root.join(naming.name(1)))?;
     }
     Ok(as_str(&media_root))
 }
@@ -327,12 +322,10 @@ mod tests {
 
     #[test]
     fn templates_resolve_to_project_relative_dirs() {
-        let c = cfg(
-            r#"{"folder_structure":{
+        let c = cfg(r#"{"folder_structure":{
                 "sequences":{"value":"@project_path@/03_Production/Shots/@sequence@"},
                 "assets":{"value":"@project_path@/03_Production/Assets/@asset_path@"}
-            }}"#,
-        );
+            }}"#);
         assert_eq!(
             rel_dir_from_template(&c, "sequences", DEFAULT_SHOTS_REL),
             "03_Production/Shots"
@@ -347,12 +340,10 @@ mod tests {
     fn templates_fall_back_when_unusable() {
         // Expression template, missing key, and a non-@project_path@ root all
         // fall back rather than producing a bogus directory.
-        let c = cfg(
-            r#"{"folder_structure":{
+        let c = cfg(r#"{"folder_structure":{
                 "sequences":{"value":"[expression,template = \"x\"]"},
                 "assets":{"value":"/mnt/elsewhere/@asset_path@"}
-            }}"#,
-        );
+            }}"#);
         assert_eq!(
             rel_dir_from_template(&c, "sequences", DEFAULT_SHOTS_REL),
             DEFAULT_SHOTS_REL
@@ -371,8 +362,14 @@ mod tests {
     fn media_root_and_entity_round_trip() {
         let entity = PathBuf::from("Z:/prj/03_Production/Shots/MOD/s0010");
         let media = media_root_for(&entity);
-        assert_eq!(as_str(&media), "Z:/prj/03_Production/Shots/MOD/s0010/Renders/AI");
-        assert_eq!(entity_for(&media).map(|p| as_str(&p)), Some(as_str(&entity)));
+        assert_eq!(
+            as_str(&media),
+            "Z:/prj/03_Production/Shots/MOD/s0010/Renders/AI"
+        );
+        assert_eq!(
+            entity_for(&media).map(|p| as_str(&p)),
+            Some(as_str(&entity))
+        );
         assert!(is_media_root(&media));
         // Not a media root: the entity itself, or a version folder inside one.
         assert!(!is_media_root(&entity));
@@ -425,7 +422,9 @@ mod tests {
         std::fs::create_dir_all(assets.join("Signs/SRC")).unwrap();
         std::fs::write(assets.join(crate::commands::fsutil::PROJECT_SIDECAR), "{}").unwrap();
         std::fs::write(
-            assets.join("Signs").join(crate::commands::fsutil::PROJECT_SIDECAR),
+            assets
+                .join("Signs")
+                .join(crate::commands::fsutil::PROJECT_SIDECAR),
             r#"{"versionPrefix":"gen"}"#,
         )
         .unwrap();
@@ -494,7 +493,7 @@ mod tests {
             "expected v0001 in {media}"
         );
         assert_eq!(
-            crate::commands::fsutil::version_prefix_for(&PathBuf::from(&media)),
+            crate::commands::fsutil::VersionNaming::for_path(&PathBuf::from(&media)).prefix,
             "v"
         );
 
@@ -521,7 +520,8 @@ mod tests {
 
         // `_sequence` is PRISM's sequence-level entity, not a shot.
         let opened =
-            crate::commands::session::sequence_open(format!("{p}/03_Production/Shots/MOD")).unwrap();
+            crate::commands::session::sequence_open(format!("{p}/03_Production/Shots/MOD"))
+                .unwrap();
         assert_eq!(
             opened.shots,
             vec![
@@ -556,10 +556,9 @@ mod tests {
         sidecar.version_prefix = "gen".into();
         crate::fsjson::write_json_atomic(&sidecar_path, &sidecar).unwrap();
 
-        let media =
-            prism_media_root_ensure(format!("{p}/03_Production/Shots/MOD/s0010")).unwrap();
+        let media = prism_media_root_ensure(format!("{p}/03_Production/Shots/MOD/s0010")).unwrap();
         assert_eq!(
-            next_version_name(&PathBuf::from(&media)),
+            crate::commands::fsutil::next_version_name(&PathBuf::from(&media)),
             "v0002",
             "PRISM prefix + padding, not the sidecar's gen001"
         );
@@ -575,7 +574,11 @@ mod tests {
 
         assert_eq!(prefix_from_format("v#"), "v");
         assert_eq!(prefix_from_format("ver###"), "ver");
-        assert_eq!(prefix_from_format("###"), "", "falls back to \"v\" in detect");
+        assert_eq!(
+            prefix_from_format("###"),
+            "",
+            "falls back to \"v\" in detect"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -593,9 +596,11 @@ mod tests {
         );
 
         // Fresh shot: creates Renders/AI with SRC and a padded first version.
-        let media =
-            prism_media_root_ensure(format!("{p}/03_Production/Shots/MOD/s0010")).unwrap();
-        assert_eq!(media, format!("{p}/03_Production/Shots/MOD/s0010/Renders/AI"));
+        let media = prism_media_root_ensure(format!("{p}/03_Production/Shots/MOD/s0010")).unwrap();
+        assert_eq!(
+            media,
+            format!("{p}/03_Production/Shots/MOD/s0010/Renders/AI")
+        );
         assert!(PathBuf::from(&media).join(SRC_DIR).is_dir());
         assert!(
             PathBuf::from(&media).join("v0001").is_dir(),
@@ -611,7 +616,10 @@ mod tests {
         let existing = PathBuf::from(&existing);
         assert!(existing.join("v0002").is_dir());
         assert!(!existing.join("v0001").is_dir(), "must not backfill v0001");
-        assert_eq!(next_version_name(&existing), "v0003");
+        assert_eq!(
+            crate::commands::fsutil::next_version_name(&existing),
+            "v0003"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }

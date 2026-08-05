@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::fsutil::{as_str, project_root_for, sanitize, SEQUENCE_SIDECAR, SHOT_SIDECAR};
+use crate::commands::fsutil::{
+    as_str, project_root_for, require_dir, sanitize, SEQUENCE_SIDECAR, SHOT_SIDECAR,
+};
 use crate::domain::{SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{
@@ -141,9 +143,7 @@ fn rename_subtree(
         return Err(AppError::Msg("New name has no usable characters.".into()));
     }
     let old = PathBuf::from(old_path);
-    if !old.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {old_path}")));
-    }
+    require_dir(&old)?;
     let current_base = old
         .file_name()
         .and_then(|n| n.to_str())
@@ -213,38 +213,17 @@ fn rename_subtree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::fsutil::PROJECT_SIDECAR;
     use crate::db::{self, AssetRecord};
-    use crate::domain::ProjectSidecar;
-    use std::fs;
-
-    fn test_project() -> (PathBuf, String) {
-        let project_id = format!("test-rename-{}", uuid::Uuid::new_v4());
-        let root = std::env::temp_dir().join(&project_id);
-        fs::create_dir_all(&root).unwrap();
-        let sidecar = ProjectSidecar {
-            project_id: project_id.clone(),
-            ..Default::default()
-        };
-        write_json_atomic(&root.join(PROJECT_SIDECAR), &sidecar).unwrap();
-        (root, project_id)
-    }
-
-    fn cleanup(root: &Path, project_id: &str) {
-        let _ = fs::remove_dir_all(root);
-        if let Ok(dir) = crate::paths::appdata_dir() {
-            let _ = fs::remove_file(dir.join("db").join(format!("{project_id}.db")));
-        }
-    }
+    use crate::testutil::TestProject;
 
     #[tokio::test]
     async fn shot_rename_rewrites_the_indexed_assets_rel_path_prefix() {
-        let (root, project_id) = test_project();
-        let shot_dir = root.join("seq1").join("shot1");
-        fs::create_dir_all(&shot_dir).unwrap();
+        let project = TestProject::new("rename");
+        let root = &project.root;
+        let shot_dir = project.dir("seq1/shot1");
 
         db::asset_upsert(
-            &root,
+            root,
             AssetRecord {
                 id: "asset-1".to_string(),
                 rel_path: "seq1/shot1/gen001/img.png".to_string(),
@@ -261,12 +240,10 @@ mod tests {
             .unwrap();
         assert!(new_path.ends_with("shot1-renamed"));
 
-        let row = db::asset_lookup(&root, Some("asset-1".to_string()), None)
+        let row = db::asset_lookup(root, Some("asset-1".to_string()), None)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(row.rel_path, "seq1/shot1-renamed/gen001/img.png");
-
-        cleanup(&root, &project_id);
     }
 }

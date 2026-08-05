@@ -22,9 +22,10 @@ pub struct ImageDimensions {
 #[tauri::command]
 pub async fn image_dimensions_read(path: String) -> AppResult<Option<ImageDimensions>> {
     run_blocking(move || {
-        Ok(imagesize::size(&path)
-            .ok()
-            .map(|s| ImageDimensions { width: s.width as u32, height: s.height as u32 }))
+        Ok(imagesize::size(&path).ok().map(|s| ImageDimensions {
+            width: s.width as u32,
+            height: s.height as u32,
+        }))
     })
     .await
 }

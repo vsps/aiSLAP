@@ -8,7 +8,9 @@ use chrono::Utc;
 use crate::commands::fsutil::{SEQUENCE_SIDECAR, SHOT_SIDECAR};
 use crate::domain::{PromptEntry, SequenceSidecar, ShotSidecar};
 use crate::error::AppResult;
-use crate::fsjson::{read_json_or_default as read_sidecar, write_json_atomic as write_sidecar_atomic};
+use crate::fsjson::{
+    read_json_or_default as read_sidecar, write_json_atomic as write_sidecar_atomic,
+};
 
 #[tauri::command]
 pub fn sequence_prompt_append(sequence_path: String, prompt: String) -> AppResult<SequenceSidecar> {

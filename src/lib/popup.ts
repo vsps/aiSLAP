@@ -1,11 +1,17 @@
 import { useEffect, useLayoutEffect, useState, type RefObject } from "react";
 
 /**
- * Dismiss a popup/menu on outside click or Escape. Ref-based (checks
- * `!ref.current.contains(e.target)`) rather than a plain global listener —
- * a plain listener fires on mousedown before a click on the popup's own
- * buttons has a chance to register, since the popup can unmount between
- * mousedown and click.
+ * Dismiss a popup/menu on outside click, Escape, or the cursor leaving the
+ * window. Ref-based (checks `!ref.current.contains(e.target)`) rather than a
+ * plain global listener — a plain listener fires on mousedown before a click
+ * on the popup's own buttons has a chance to register, since the popup can
+ * unmount between mousedown and click.
+ *
+ * Registered in the capture phase (not bubble) so it still fires when a
+ * trigger elsewhere (e.g. another thumbnail's onContextMenu) calls
+ * stopPropagation — otherwise an already-open popup never hears the event
+ * that should have dismissed it, and right-clicking around the app stacks
+ * up menus instead of replacing them.
  */
 export function usePopupDismiss(
   ref: RefObject<HTMLElement | null>,
@@ -20,13 +26,20 @@ export function usePopupDismiss(
     const esc = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    window.addEventListener("mousedown", down);
+    const leave = (e: MouseEvent) => {
+      if (e.relatedTarget === null) onClose();
+    };
+    window.addEventListener("mousedown", down, { capture: true });
     window.addEventListener("keydown", esc);
-    if (dismissOnContextMenu) window.addEventListener("contextmenu", down);
+    document.documentElement.addEventListener("mouseleave", leave);
+    if (dismissOnContextMenu)
+      window.addEventListener("contextmenu", down, { capture: true });
     return () => {
-      window.removeEventListener("mousedown", down);
+      window.removeEventListener("mousedown", down, { capture: true });
       window.removeEventListener("keydown", esc);
-      if (dismissOnContextMenu) window.removeEventListener("contextmenu", down);
+      document.documentElement.removeEventListener("mouseleave", leave);
+      if (dismissOnContextMenu)
+        window.removeEventListener("contextmenu", down, { capture: true });
     };
   }, [ref, onClose, dismissOnContextMenu]);
 }

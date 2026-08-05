@@ -1,0 +1,69 @@
+# Tags
+
+Tags replaced two earlier mechanisms: the star / "visible" list, and the physical
+"copy to SELECTS" file move. Neither survives.
+
+- The star became the **`fav`** tag.
+- `SEL/` became the **`select`** tag. `SEL/` folders still render as a gallery column
+  for projects that have them, but **nothing is ever moved into one**.
+
+## Three layers, in order of authority
+
+**1. The sidecar's `tags: string[]` — the source of truth.**
+Because the sidecar travels with the media triple, tags survive copy, move and rename
+with **no path bookkeeping at all**. That is the whole reason for this design, and why
+none of the old `visible_set_*` path-tracking hooks exist any more.
+
+**2. `db::asset_tags(asset_id, tag)` — a rebuildable index.**
+So a gallery scan is one query rather than one sidecar read per file. Keyed by
+`asset_id`, which means the existing outbox/Turso sync covers it unchanged. Rebuilt by
+`project_tags_reindex` (a sidecar sweep, no hashing) and by `project_reconcile`, which
+pulls sidecar tags back over the index when they drift.
+
+**3. `project.json` `tagDefs: [{name, color}]` — the vocabulary.**
+Images reference a tag *by name*; the definition only carries its colour. A tag an
+image carries that the vocabulary doesn't know renders in a fallback colour rather
+than disappearing — the sidecars are authoritative for names.
+
+## Surfaces
+
+- **`TagEditorPopup`** — add/remove tags on one image.
+- **`TagFilterBar`** — narrows the gallery, in `any` or `all` mode.
+- **`TagView`** — every tagged item across the whole project, grouped by sequence and
+  shot. This is the cross-referencing surface that replaced the old
+  promoted-images list.
+- **Export by tag** — copies matching media out of the project, in a flattened or
+  path-preserving layout. The **whole media triple** travels, so the export stays
+  self-describing and browsable.
+- **`ProjectSettingsDialog`** — manages the vocabulary (rename, recolour, reorder,
+  delete).
+
+## Gotchas
+
+- **`image_tags_set` mints an `assetId`** (embed + hash) for files that don't have
+  one. Tagging is therefore how `SRC/` and legacy files enter the index at all.
+- **A copy's tag rows are re-keyed** in `apply_new_assets`, because `reidentify_copy`
+  gives the duplicate a fresh id — otherwise the copy would inherit rows pointing at
+  the original.
+- **`image_delete` / `column_delete` call `db::assets_purge`**, so the index doesn't
+  accumulate rows for deleted files.
+- **Tags broke the "sidecars never change" premise** of `metadataCache.ts`. Hence
+  `invalidateImageMetadata` on every tag write. Anything else that starts mutating
+  sidecars must do the same.
+- **Comparison is case-insensitive on both sides**, and the two implementations must
+  agree: `tagsEqual` (TypeScript, `toLowerCase`) and `eq_tag` (Rust,
+  `eq_ignore_ascii_case`). Deliberately *not* locale-aware — a locale-sensitive fold
+  would desync the two ends, producing tags that filter but don't display.
+- **The colour map is first-wins.** `tagsStore.colorsByName` mirrors the old
+  `defs.find(...)` semantics; a last-wins loop would silently change rendered colours
+  when a project holds two defs differing only by case.
+
+## Migration
+
+`project_tags_migrate` converts a pre-tags project **once**, guarded by `tagsMigrated`
+in `project.json`:
+
+- entries in the old `visible` list → the `fav` tag
+- contents of `SEL/` folders → the `select` tag
+
+The files themselves are not moved; only their sidecars gain tags.

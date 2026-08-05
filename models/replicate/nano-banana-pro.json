@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "replicate",
   "family": "Nano Banana Pro",
   "category": "Replicate/Image Generation",

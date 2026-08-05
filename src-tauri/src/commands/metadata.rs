@@ -93,7 +93,7 @@ pub async fn column_delete(column_path: String) -> AppResult<()> {
     Ok(())
 }
 
-fn metadata_path_for(p: &PathBuf) -> AppResult<PathBuf> {
+fn metadata_path_for(p: &Path) -> AppResult<PathBuf> {
     let stem = p
         .file_stem()
         .and_then(|s| s.to_str())

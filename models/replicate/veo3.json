@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "replicate",
   "family": "Veo3",
   "category": "Replicate/Video Generation",

@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "replicate",
   "family": "Topaz Upscale",
   "category": "Replicate/Upscaling",

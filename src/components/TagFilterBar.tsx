@@ -1,4 +1,8 @@
-import { useEffectiveTagDefs, useTagsStore } from "../stores/tagsStore";
+import {
+  tagsEqual,
+  useEffectiveTagDefs,
+  useTagsStore,
+} from "../stores/tagsStore";
 import { ToggleGroup } from "./ToggleGroup";
 import { Icon } from "../lib/icon";
 import type { TagFilterMode } from "../lib/types";
@@ -19,8 +23,7 @@ export function TagFilterBar() {
   const clearFilter = useTagsStore((s) => s.clearFilter);
 
   if (defs.length === 0) return null;
-  const isOn = (name: string) =>
-    activeFilter.some((t) => t.toLowerCase() === name.toLowerCase());
+  const isOn = (name: string) => activeFilter.some((t) => tagsEqual(t, name));
 
   return (
     <div className="flex items-center gap-2 shrink-0 px-2 py-1 bg-surface border-b border-border overflow-x-auto thin-scroll">

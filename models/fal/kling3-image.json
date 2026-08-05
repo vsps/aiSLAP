@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "fal",
   "family": "Kling 3 Image",
   "category": "fal.ai/Image Generation",

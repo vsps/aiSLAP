@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::commands::fsutil::{
-    as_str, is_media_ext, project_root_for, relativize, sidecar_path, PROJECT_SIDECAR, SEL_DIR,
+    as_str, is_media_ext, is_thumb, project_root_for, relativize, require_dir, sidecar_path,
+    thumb_path, ProjectRoot, PROJECT_SIDECAR, SEL_DIR,
 };
 use crate::commands::gallery::try_make_gallery_image;
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
@@ -27,7 +28,7 @@ use crate::commands::prism;
 use crate::db::{self, AssetRecord, TagUpdate};
 use crate::domain::{GalleryImage, ProjectSidecar, TagDef};
 use crate::error::{run_blocking, AppError, AppResult};
-use crate::fsjson::{ensure_dir, read_json_or_default, write_json_atomic};
+use crate::fsjson::{ensure_dir, read_json_or_default, read_json_strict, write_json_atomic};
 
 /// Tags carried over from the systems this replaced: the star became `fav`,
 /// the SEL folder became `select`.
@@ -97,13 +98,6 @@ fn read_sidecar_value(media: &Path) -> Value {
     }
 }
 
-fn ffmpeg_path() -> String {
-    crate::paths::config_path()
-        .and_then(|p| read_json_or_default::<crate::domain::Config>(&p))
-        .map(|c| c.ffmpeg_path)
-        .unwrap_or_default()
-}
-
 /// Give a media file an identity if it doesn't have one, mutating `obj` in
 /// place. Same mint-embed-hash sequence as `reidentify_copy` and reconcile's
 /// legacy backfill — a tag is the first durable thing many SRC/legacy files
@@ -116,7 +110,12 @@ fn ensure_identity(media: &Path, project_id: &str, obj: &mut Map<String, Value>)
     let id = uuid::Uuid::new_v4().to_string();
     // Best-effort, exactly as elsewhere: a format we can't embed into still
     // gets an id, just not a recoverable in-file tag.
-    let _ = media_id_embed_impl(media, &id, project_id, &ffmpeg_path());
+    let _ = media_id_embed_impl(
+        media,
+        &id,
+        project_id,
+        &crate::commands::config::configured_ffmpeg_path(),
+    );
     obj.insert("assetId".into(), Value::String(id));
     if let Ok(hash) = file_hash_impl(media) {
         obj.insert("contentHash".into(), Value::String(hash));
@@ -209,8 +208,23 @@ fn write_tags(
 
 // ---------- vocabulary (project.json) ----------
 
+/// Lenient read, for callers that only *report* the vocabulary. A missing or
+/// damaged `project.json` reads as "no tags defined", which is a survivable
+/// answer when nothing is written back.
 fn load_sidecar(project_root: &Path) -> AppResult<ProjectSidecar> {
     read_json_or_default(&project_root.join(PROJECT_SIDECAR))
+}
+
+/// Strict read, for every read-modify-write of `project.json`.
+///
+/// The lenient read is actively dangerous here: it turns a damaged file into an
+/// empty `ProjectSidecar`, and the save that follows then commits that empty
+/// document — discarding the project id, title, creation date, the
+/// `tagsMigrated` flag and the whole tag vocabulary, with nothing but a `warn!`
+/// to show for it. Missing is still fine (a project that has never had tags),
+/// so only a genuine parse failure is an error.
+fn load_sidecar_for_update(project_root: &Path) -> AppResult<ProjectSidecar> {
+    Ok(read_json_strict(&project_root.join(PROJECT_SIDECAR))?.unwrap_or_default())
 }
 
 fn save_sidecar(project_root: &Path, sidecar: &ProjectSidecar) -> AppResult<()> {
@@ -220,7 +234,7 @@ fn save_sidecar(project_root: &Path, sidecar: &ProjectSidecar) -> AppResult<()> 
 /// Append a definition for every name that doesn't have one yet, picking the
 /// next palette color. Returns the full vocabulary.
 fn ensure_tag_defs(project_root: &Path, names: &[String]) -> AppResult<Vec<TagDef>> {
-    let mut sidecar = load_sidecar(project_root)?;
+    let mut sidecar = load_sidecar_for_update(project_root)?;
     let mut added = false;
     for name in names {
         if sidecar.tag_defs.iter().any(|d| eq_tag(&d.name, name)) {
@@ -257,7 +271,7 @@ fn walk_media(root: &Path, out: &mut Vec<PathBuf>) {
             if !name.starts_with('.') && !name.starts_with('$') {
                 walk_media(&path, out);
             }
-        } else if is_media_ext(&path) && !name.ends_with(".thumb.png") {
+        } else if is_media_ext(&path) && !is_thumb(&path) {
             out.push(path);
         }
     }
@@ -273,18 +287,42 @@ fn project_media(project_root: &Path) -> Vec<PathBuf> {
 /// Rewrite every sidecar in the project whose tags `edit` changes. Used by
 /// rename and delete, which have to reach files the index may not know
 /// about — the sidecar is the record that has to be right.
+///
+/// The filesystem walk is deliberately kept: narrowing to what the index knows
+/// would silently skip a file dropped in from outside, or a sidecar edited by
+/// hand, and this is precisely the path that has to repair those. What the index
+/// *does* save is the read — a project-wide tag rename used to parse every
+/// sidecar on disk to find the handful carrying that tag. Now a file the index
+/// knows is decided from the index, and only the ones actually being changed are
+/// read and written. Files the index has never seen still fall back to reading
+/// their sidecar, so nothing is missed.
 fn sweep_tags(
     project_root: &Path,
+    index: &db::TagIndex,
     edit: impl Fn(&[String]) -> Option<Vec<String>>,
 ) -> AppResult<Vec<TagUpdate>> {
     let project_id = db::read_project_id(project_root)?;
+    let root = ProjectRoot::from_root(project_root.to_path_buf());
     let mut updates = Vec::new();
+
     for media in project_media(project_root) {
-        let value = read_sidecar_value(&media);
-        let Some(obj) = value.as_object() else {
-            continue;
+        let indexed_tags = root
+            .rel(&media)
+            .filter(|rel| index.is_indexed(rel))
+            .map(|rel| index.tags_for(rel.as_str()));
+
+        // Only touch the disk when the index doesn't already know the answer.
+        let current = match indexed_tags {
+            Some(tags) => tags,
+            None => {
+                let value = read_sidecar_value(&media);
+                match value.as_object() {
+                    Some(obj) => tags_from_sidecar(obj),
+                    None => continue,
+                }
+            }
         };
-        let current = tags_from_sidecar(obj);
+
         let Some(next) = edit(&current) else {
             continue;
         };
@@ -343,7 +381,7 @@ pub fn project_tag_defs_get(project_path: String) -> AppResult<Vec<TagDef>> {
 #[tauri::command]
 pub fn project_tag_defs_set(project_path: String, defs: Vec<TagDef>) -> AppResult<Vec<TagDef>> {
     let root = PathBuf::from(&project_path);
-    let mut sidecar = load_sidecar(&root)?;
+    let mut sidecar = load_sidecar_for_update(&root)?;
     sidecar.tag_defs = defs;
     save_sidecar(&root, &sidecar)?;
     Ok(sidecar.tag_defs)
@@ -355,6 +393,11 @@ pub async fn project_tag_rename(
     old_name: String,
     new_name: String,
 ) -> AppResult<Vec<TagDef>> {
+    // Loaded once, before the blocking sweep, so it can decide most files
+    // without reading their sidecars.
+    let index = db::tags_all(&PathBuf::from(&project_path))
+        .await
+        .unwrap_or_default();
     let (root, defs, updates) = run_blocking(move || {
         let root = PathBuf::from(&project_path);
         let old =
@@ -364,7 +407,7 @@ pub async fn project_tag_rename(
         if eq_tag(&old, &new) {
             return Ok((root.clone(), load_sidecar(&root)?.tag_defs, Vec::new()));
         }
-        let updates = sweep_tags(&root, |current| {
+        let updates = sweep_tags(&root, &index, |current| {
             if !current.iter().any(|t| eq_tag(t, &old)) {
                 return None;
             }
@@ -379,7 +422,7 @@ pub async fn project_tag_rename(
             })))
         })?;
 
-        let mut sidecar = load_sidecar(&root)?;
+        let mut sidecar = load_sidecar_for_update(&root)?;
         let already = sidecar.tag_defs.iter().any(|d| eq_tag(&d.name, &new));
         sidecar
             .tag_defs
@@ -399,11 +442,14 @@ pub async fn project_tag_rename(
 
 #[tauri::command]
 pub async fn project_tag_delete(project_path: String, name: String) -> AppResult<Vec<TagDef>> {
+    let index = db::tags_all(&PathBuf::from(&project_path))
+        .await
+        .unwrap_or_default();
     let (root, defs, updates) = run_blocking(move || {
         let root = PathBuf::from(&project_path);
         let target =
             normalize_tag(&name).ok_or_else(|| AppError::Msg("no tag to delete".into()))?;
-        let updates = sweep_tags(&root, |current| {
+        let updates = sweep_tags(&root, &index, |current| {
             if !current.iter().any(|t| eq_tag(t, &target)) {
                 return None;
             }
@@ -415,7 +461,7 @@ pub async fn project_tag_delete(project_path: String, name: String) -> AppResult
                     .collect(),
             )
         })?;
-        let mut sidecar = load_sidecar(&root)?;
+        let mut sidecar = load_sidecar_for_update(&root)?;
         sidecar.tag_defs.retain(|d| !eq_tag(&d.name, &target));
         save_sidecar(&root, &sidecar)?;
         Ok((root, sidecar.tag_defs, updates))
@@ -478,7 +524,7 @@ pub struct TagMigrationReport {
 pub async fn project_tags_migrate(project_path: String) -> AppResult<TagMigrationReport> {
     let (root, report, updates) = run_blocking(move || {
         let root = PathBuf::from(&project_path);
-        let sidecar = load_sidecar(&root)?;
+        let sidecar = load_sidecar_for_update(&root)?;
         if sidecar.tags_migrated {
             return Ok((root, TagMigrationReport::default(), Vec::new()));
         }
@@ -522,7 +568,7 @@ pub async fn project_tags_migrate(project_path: String) -> AppResult<TagMigratio
             }
         }
 
-        let mut sidecar = load_sidecar(&root)?;
+        let mut sidecar = load_sidecar_for_update(&root)?;
         let mut used: Vec<String> = Vec::new();
         if starred > 0 {
             used.push(TAG_FAV.to_string());
@@ -570,17 +616,12 @@ pub struct SeqTaggedGroup {
 
 /// "any" (default) matches an image carrying at least one of `tags`; "all"
 /// requires every one of them. An empty `tags` means "anything tagged".
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TagFilterMode {
+    #[default]
     Any,
     All,
-}
-
-impl Default for TagFilterMode {
-    fn default() -> Self {
-        Self::Any
-    }
 }
 
 fn matches(image_tags: &[String], wanted: &[String], mode: TagFilterMode) -> bool {
@@ -604,9 +645,7 @@ pub async fn project_tag_scan(
     mode: Option<TagFilterMode>,
 ) -> AppResult<Vec<SeqTaggedGroup>> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
     let mode = mode.unwrap_or_default();
     let wanted = normalize_tags(tags);
     let index = db::tags_all(&root).await?;
@@ -688,8 +727,8 @@ pub async fn project_tag_scan(
 
 /// Copy every image matching the filter out of the project. `mode`
 /// "preserve" mirrors each file's path under the destination; anything else
-/// flattens into one folder with a `seq_shot_` filename prefix. Sidecars
-/// come along so the export stays self-describing.
+/// flattens into one folder with a `seq_shot_` filename prefix. The sidecar and
+/// thumbnail come along so the export stays self-describing and browsable.
 #[tauri::command]
 pub async fn export_by_tag(
     project_path: String,
@@ -699,9 +738,7 @@ pub async fn export_by_tag(
     layout: String,
 ) -> AppResult<u32> {
     let root = PathBuf::from(&project_path);
-    if !root.is_dir() {
-        return Err(AppError::Msg(format!("not a directory: {project_path}")));
-    }
+    require_dir(&root)?;
     let wanted = normalize_tags(tags);
     let filter_mode = mode.unwrap_or_default();
     let index = db::tags_all(&root).await?;
@@ -742,12 +779,19 @@ pub async fn export_by_tag(
             };
             std::fs::copy(&src, &dst)?;
             copied += 1;
-            // Sidecar travels with the media so the export keeps its
-            // provenance (and its tags).
-            let src_sidecar = sidecar_path(&src);
-            if src_sidecar.is_file() {
-                if let Err(e) = std::fs::copy(&src_sidecar, sidecar_path(&dst)) {
-                    tracing::warn!("sidecar export failed for {rel}: {e}");
+            // The whole media triple travels, so the export keeps its
+            // provenance (and its tags) and stays browsable. Both companions
+            // are derived from `dst`, not copied under their source names: the
+            // flatten layout renames the media to `{prefix}_{fname}`, and a
+            // companion that keeps the old stem would never be found again.
+            for (src_side, dst_side, what) in [
+                (sidecar_path(&src), sidecar_path(&dst), "sidecar"),
+                (thumb_path(&src), thumb_path(&dst), "thumbnail"),
+            ] {
+                if src_side.is_file() {
+                    if let Err(e) = std::fs::copy(&src_side, &dst_side) {
+                        tracing::warn!("{what} export failed for {rel}: {e}");
+                    }
                 }
             }
         }
@@ -759,32 +803,8 @@ pub async fn export_by_tag(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::TestProject;
     use std::fs;
-
-    /// A throwaway project with one tagged image, mirroring db/mod.rs's
-    /// `test_project` (including cleaning up the index file it creates under
-    /// %APPDATA%/aiSLAP/db/).
-    fn test_project() -> (PathBuf, String) {
-        let project_id = format!("test-tags-{}", uuid::Uuid::new_v4());
-        let root = std::env::temp_dir().join(&project_id);
-        fs::create_dir_all(&root).unwrap();
-        write_json_atomic(
-            &root.join(PROJECT_SIDECAR),
-            &ProjectSidecar {
-                project_id: project_id.clone(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        (root, project_id)
-    }
-
-    fn cleanup(root: &Path, project_id: &str) {
-        let _ = fs::remove_dir_all(root);
-        if let Ok(dir) = crate::paths::appdata_dir() {
-            let _ = fs::remove_file(dir.join("db").join(format!("{project_id}.db")));
-        }
-    }
 
     fn media(root: &Path, rel: &str, sidecar: Option<Value>) -> PathBuf {
         let path = root.join(rel);
@@ -805,7 +825,8 @@ mod tests {
 
     #[tokio::test]
     async fn setting_tags_writes_the_sidecar_and_seeds_the_vocabulary() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
         // No sidecar at all — an OS-dragged reference image.
         let img = media(&root, "seq1/shot1/SRC/ref.png", None);
 
@@ -835,13 +856,12 @@ mod tests {
             .unwrap()
             .tags_for("seq1/shot1/SRC/ref.png")
             .is_empty());
-
-        cleanup(&root, &project_id);
     }
 
     #[tokio::test]
     async fn rename_and_delete_sweep_every_sidecar() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
         let a = media(&root, "seq1/shot1/gen001/a.png", None);
         let b = media(&root, "seq1/shot2/gen001/b.png", None);
         image_tags_set(as_str(&a), vec!["fav".into(), "wip".into()])
@@ -872,13 +892,57 @@ mod tests {
         assert_eq!(defs.len(), 1);
         assert_eq!(sidecar_tags_of(&a), vec!["fav".to_string()]);
         assert!(sidecar_tags_of(&b).is_empty());
+    }
 
-        cleanup(&root, &project_id);
+    /// The sweep consults the tag index to avoid reading every sidecar on disk,
+    /// but the index is only ever a shortcut — a file it has never seen must
+    /// still be found and repaired. That is the entire reason the sweep walks
+    /// the filesystem instead of querying the index for candidates.
+    #[tokio::test]
+    async fn sweep_still_reaches_a_file_the_index_has_never_seen() {
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
+
+        // Indexed the normal way.
+        let known = media(&root, "seq1/shot1/gen001/known.png", None);
+        image_tags_set(as_str(&known), vec!["wip".into()])
+            .await
+            .unwrap();
+
+        // Dropped in from outside with a hand-written sidecar: it carries the
+        // tag, but nothing ever told the index about it.
+        let stranger = media(
+            &root,
+            "seq1/shot1/gen001/stranger.png",
+            Some(serde_json::json!({ "tags": ["wip"] })),
+        );
+        let index = db::tags_all(&root).await.unwrap();
+        assert!(
+            !index.is_indexed("seq1/shot1/gen001/stranger.png"),
+            "precondition: the index must not know this file"
+        );
+
+        project_tag_rename(as_str(&root), "wip".into(), "done".into())
+            .await
+            .unwrap();
+
+        assert_eq!(sidecar_tags_of(&known), vec!["done".to_string()]);
+        assert_eq!(
+            sidecar_tags_of(&stranger),
+            vec!["done".to_string()],
+            "an unindexed sidecar must still be swept"
+        );
+
+        project_tag_delete(as_str(&root), "done".into())
+            .await
+            .unwrap();
+        assert!(sidecar_tags_of(&stranger).is_empty());
     }
 
     #[tokio::test]
     async fn migration_converts_stars_and_sel_contents_exactly_once() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
         let starred = media(&root, "seq1/shot1/gen001/star.png", None);
         let selected = media(&root, "seq1/shot1/SEL/keep.png", None);
         media(&root, "seq1/shot1/gen001/plain.png", None);
@@ -908,13 +972,12 @@ mod tests {
         // Second run is a no-op.
         let again = project_tags_migrate(as_str(&root)).await.unwrap();
         assert!(!again.ran);
-
-        cleanup(&root, &project_id);
     }
 
     #[tokio::test]
     async fn reindex_rebuilds_the_index_from_sidecars_alone() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
         let img = media(&root, "seq1/shot1/gen001/a.png", None);
         image_tags_set(as_str(&img), vec!["fav".into()])
             .await
@@ -948,13 +1011,12 @@ mod tests {
                 .tags_for("seq1/shot1/gen001/a.png"),
             vec!["fav".to_string()]
         );
-
-        cleanup(&root, &project_id);
     }
 
     #[tokio::test]
     async fn scan_groups_by_sequence_and_shot_and_honours_the_filter() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
         let a = media(&root, "seq1/shot1/gen001/a.png", None);
         let b = media(&root, "seq1/shot2/gen001/b.png", None);
         let c = media(&root, "seq2/shot1/gen001/c.png", None);
@@ -992,8 +1054,6 @@ mod tests {
             .unwrap();
         assert_eq!(favs.len(), 1);
         assert_eq!(favs[0].seq_name, "seq1");
-
-        cleanup(&root, &project_id);
     }
 
     /// In a PRISM project every media path carries the entity root and the
@@ -1001,7 +1061,8 @@ mod tests {
     /// everything under "03_Production / Shots".
     #[tokio::test]
     async fn scan_groups_prism_paths_by_entity() {
-        let (root, project_id) = test_project();
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
         fs::create_dir_all(root.join("00_Pipeline")).unwrap();
         fs::write(
             root.join("00_Pipeline/pipeline.json"),
@@ -1046,8 +1107,116 @@ mod tests {
 
         let props = groups.iter().find(|g| g.seq_name == "PROPS").unwrap();
         assert_eq!(props.shots[0].shot_name, "cube");
+    }
 
-        cleanup(&root, &project_id);
+    /// The media triple has to survive an export intact. The thumbnail is the
+    /// one that used to be dropped, which mattered most for video and 3D
+    /// output — there the thumbnail *is* the only thing a file browser can
+    /// show. Both companions must land under the *destination* stem, since the
+    /// flatten layout renames the media.
+    #[tokio::test]
+    async fn export_carries_the_sidecar_and_the_thumbnail_in_both_layouts() {
+        let project = TestProject::new("export");
+        let root = project.root.clone();
+
+        let video = media(
+            &root,
+            "seq1/shot1/gen001/clip.mp4",
+            Some(serde_json::json!({ "tags": ["fav"], "assetId": "a1" })),
+        );
+        fs::write(thumb_path(&video), b"fake thumb").unwrap();
+        image_tags_set(as_str(&video), vec!["fav".into()])
+            .await
+            .unwrap();
+
+        // Flattened: media is renamed `seq1_shot1_gen001_clip.mp4`, so the
+        // companions must be renamed to match or nothing resolves them.
+        let flat = root.join("out-flat");
+        let n = export_by_tag(
+            as_str(&root),
+            vec!["fav".into()],
+            None,
+            as_str(&flat),
+            "flatten".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+        let flat_media = flat.join("seq1_shot1_gen001_clip.mp4");
+        assert!(flat_media.is_file(), "media exported");
+        assert!(sidecar_path(&flat_media).is_file(), "sidecar exported");
+        assert!(thumb_path(&flat_media).is_file(), "thumbnail exported");
+
+        // Preserved: same three files, original names, mirrored path.
+        let tree = root.join("out-tree");
+        export_by_tag(
+            as_str(&root),
+            vec!["fav".into()],
+            None,
+            as_str(&tree),
+            "preserve".into(),
+        )
+        .await
+        .unwrap();
+        let kept = tree.join("seq1/shot1/gen001/clip.mp4");
+        assert!(kept.is_file(), "media exported");
+        assert!(sidecar_path(&kept).is_file(), "sidecar exported");
+        assert!(thumb_path(&kept).is_file(), "thumbnail exported");
+    }
+
+    /// A damaged `project.json` used to read as an empty `ProjectSidecar`, and
+    /// the save that followed committed that emptiness — taking the project id,
+    /// title, migration flag and the entire tag vocabulary with it. The write
+    /// must now refuse, and the file must still be on disk afterwards.
+    #[test]
+    fn a_corrupt_project_json_is_never_silently_replaced() {
+        let project = TestProject::new("corrupt");
+        let root = project.root.clone();
+
+        // Seed a real vocabulary, then damage the file.
+        project_tag_defs_set(
+            as_str(&root),
+            vec![TagDef {
+                name: "hero".into(),
+                color: "#ff0000".into(),
+            }],
+        )
+        .unwrap();
+        let sidecar_file = root.join(PROJECT_SIDECAR);
+        let intact = fs::read_to_string(&sidecar_file).unwrap();
+        assert!(intact.contains("hero"));
+
+        fs::write(&sidecar_file, b"{ this is not json").unwrap();
+
+        // Every read-modify-write path must refuse rather than default.
+        assert!(
+            project_tag_defs_set(as_str(&root), vec![]).is_err(),
+            "defs_set must not overwrite a corrupt project.json"
+        );
+        assert!(
+            ensure_tag_defs(&root, &["new".to_string()]).is_err(),
+            "ensure_tag_defs must not overwrite a corrupt project.json"
+        );
+
+        // The damaged bytes survive, and a recovery copy was made alongside.
+        assert_eq!(
+            fs::read_to_string(&sidecar_file).unwrap(),
+            "{ this is not json"
+        );
+        let backups: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("project.corrupt-")
+            })
+            .collect();
+        assert!(!backups.is_empty(), "a .corrupt- copy should be preserved");
+
+        // A pure read still degrades gracefully — the picker shows no tags
+        // rather than the whole app refusing to open the project.
+        assert!(project_tag_defs_get(as_str(&root)).unwrap().is_empty());
     }
 
     #[test]

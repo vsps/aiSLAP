@@ -35,10 +35,14 @@ pub async fn file_hash(path: String) -> AppResult<String> {
     run_blocking(move || file_hash_impl(&PathBuf::from(path))).await
 }
 
+/// Streamed rather than slurped: this runs over every media file in a project
+/// during reconcile, and the media in question is routinely video. Reading a
+/// 2 GB mp4 into a `Vec<u8>` just to hash it is a 2 GB allocation for a 32-byte
+/// answer; `io::copy` through a buffered reader bounds it to the copy buffer.
 pub(crate) fn file_hash_impl(path: &Path) -> AppResult<String> {
-    let bytes = std::fs::read(path)?;
+    let mut file = std::io::BufReader::new(std::fs::File::open(path)?);
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    std::io::copy(&mut file, &mut hasher)?;
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -53,8 +57,10 @@ pub async fn media_id_embed(
     project_id: String,
     ffmpeg_path: String,
 ) -> AppResult<bool> {
-    run_blocking(move || media_id_embed_impl(&PathBuf::from(path), &asset_id, &project_id, &ffmpeg_path))
-        .await
+    run_blocking(move || {
+        media_id_embed_impl(&PathBuf::from(path), &asset_id, &project_id, &ffmpeg_path)
+    })
+    .await
 }
 
 pub(crate) fn media_id_embed_impl(
@@ -77,12 +83,18 @@ pub(crate) fn media_id_embed_impl(
     }
 }
 
-#[tauri::command]
-pub async fn media_id_read(path: String, ffmpeg_path: String) -> AppResult<Option<MediaId>> {
-    run_blocking(move || media_id_read_impl(&PathBuf::from(path), &ffmpeg_path)).await
-}
-
-fn media_id_read_impl(path: &Path, ffmpeg_path: &str) -> AppResult<Option<MediaId>> {
+/// Recover the identity embedded in a media file, if it has one.
+///
+/// This is the read half of the recovery story in the module docs, and it is
+/// what `project_reconcile` consults before minting a fresh id for a file whose
+/// sidecar has none: an id already inside the file is the *same* asset, so
+/// reusing it keeps the existing index row and its tags instead of orphaning
+/// them behind a new uuid.
+///
+/// Only reached for files with no `assetId` in their sidecar — the legacy and
+/// hand-copied cases — so the video path's ffmpeg call runs once per such file,
+/// not on every scan.
+pub(crate) fn media_id_read_impl(path: &Path, ffmpeg_path: &str) -> AppResult<Option<MediaId>> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -154,7 +166,8 @@ fn strip_keyword<'a>(contents: &'a [u8], keyword: &[u8]) -> Option<&'a [u8]> {
 
 fn embed_jpeg(path: &Path, asset_id: &str, project_id: &str) -> AppResult<bool> {
     let bytes = Bytes::from(std::fs::read(path)?);
-    let mut jpeg = Jpeg::from_bytes(bytes).map_err(|e| AppError::Msg(format!("jpeg parse: {e}")))?;
+    let mut jpeg =
+        Jpeg::from_bytes(bytes).map_err(|e| AppError::Msg(format!("jpeg parse: {e}")))?;
     // Set EXIF before the COM insert below — `Jpeg::set_exif` inserts at a
     // fixed segment index that assumes the segment count/order of the
     // freshly parsed file, so doing it first avoids any interaction with
@@ -195,7 +208,8 @@ fn read_jpeg(path: &Path) -> AppResult<Option<MediaId>> {
 
 fn embed_webp(path: &Path, asset_id: &str, project_id: &str) -> AppResult<bool> {
     let bytes = Bytes::from(std::fs::read(path)?);
-    let mut webp = WebP::from_bytes(bytes).map_err(|e| AppError::Msg(format!("webp parse: {e}")))?;
+    let mut webp =
+        WebP::from_bytes(bytes).map_err(|e| AppError::Msg(format!("webp parse: {e}")))?;
     webp.set_exif(Some(exif_user_comment_bytes(asset_id, project_id)));
     webp.chunks_mut().retain(|c| c.id() != WEBP_CHUNK_ID);
     let text = format!("{{\"assetId\":\"{asset_id}\",\"projectId\":\"{project_id}\"}}");
@@ -274,7 +288,11 @@ fn exif_user_comment_bytes(asset_id: &str, project_id: &str) -> Bytes {
 }
 
 fn exif_u16(b: &[u8], le: bool) -> u16 {
-    if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) }
+    if le {
+        u16::from_le_bytes([b[0], b[1]])
+    } else {
+        u16::from_be_bytes([b[0], b[1]])
+    }
 }
 
 fn exif_u32(b: &[u8], le: bool) -> u32 {
@@ -449,7 +467,7 @@ fn tmp_sibling(path: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bytes::{BufMut, BytesMut};
 
@@ -477,7 +495,9 @@ mod tests {
         buf.freeze()
     }
 
-    fn minimal_png_bytes() -> Bytes {
+    /// Shared with `db`'s reconcile tests, which need a file the PNG embedder
+    /// will actually accept.
+    pub(crate) fn minimal_png_bytes() -> Bytes {
         const SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
         let mut ihdr = BytesMut::new();
         ihdr.put_u32(1); // width
@@ -491,7 +511,11 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.extend_from_slice(&SIGNATURE);
         buf.extend_from_slice(&PngChunk::new(*b"IHDR", ihdr.freeze()).encoder().bytes());
-        buf.extend_from_slice(&PngChunk::new(*b"IDAT", Bytes::from_static(&[0x00])).encoder().bytes());
+        buf.extend_from_slice(
+            &PngChunk::new(*b"IDAT", Bytes::from_static(&[0x00]))
+                .encoder()
+                .bytes(),
+        );
         buf.extend_from_slice(&PngChunk::new(*b"IEND", Bytes::new()).encoder().bytes());
         buf.freeze()
     }
@@ -503,7 +527,10 @@ mod tests {
         // so an arbitrary placeholder isn't accepted here like it is for
         // the opaque JPEG/PNG chunk contents used elsewhere in this file.
         let vp8_frame = [0x00, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x01, 0x00, 0x01, 0x00];
-        let vp8 = RiffChunk::new(*b"VP8 ", RiffContent::Data(Bytes::copy_from_slice(&vp8_frame)));
+        let vp8 = RiffChunk::new(
+            *b"VP8 ",
+            RiffContent::Data(Bytes::copy_from_slice(&vp8_frame)),
+        );
         let riff = RiffChunk::new(
             *b"RIFF",
             RiffContent::List {
@@ -516,8 +543,49 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
-        p.push(format!("aislap_media_id_test_{name}_{}", std::process::id()));
+        p.push(format!(
+            "aislap_media_id_test_{name}_{}",
+            std::process::id()
+        ));
         p
+    }
+
+    /// The hash is streamed rather than read whole, so the thing worth pinning
+    /// is that chunking doesn't change the answer: a file comfortably larger
+    /// than the internal copy buffer must hash the same as the one-shot
+    /// computation, and an empty file must still produce SHA-256's empty digest
+    /// rather than erroring.
+    #[test]
+    fn file_hash_streams_without_changing_the_digest() {
+        const EMPTY_SHA256: &str =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        let empty = temp_path("hash_empty");
+        std::fs::write(&empty, b"").unwrap();
+        assert_eq!(file_hash_impl(&empty).unwrap(), EMPTY_SHA256);
+        let _ = std::fs::remove_file(&empty);
+
+        // ~1 MiB of non-repeating bytes: many copy-buffer fills, and a
+        // pattern that would expose a dropped or reordered chunk.
+        let big: Vec<u8> = (0..1_048_576u32).map(|i| (i % 251) as u8).collect();
+        let path = temp_path("hash_big");
+        std::fs::write(&path, &big).unwrap();
+
+        let streamed = file_hash_impl(&path).unwrap();
+        let one_shot = {
+            let mut h = Sha256::new();
+            h.update(&big);
+            format!("{:x}", h.finalize())
+        };
+        assert_eq!(streamed, one_shot);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn file_hash_errors_on_a_missing_file() {
+        let missing = temp_path("hash_missing_never_created");
+        let _ = std::fs::remove_file(&missing);
+        assert!(file_hash_impl(&missing).is_err());
     }
 
     #[test]
@@ -560,7 +628,9 @@ mod tests {
         std::fs::write(&path, minimal_jpeg_bytes()).unwrap();
 
         embed_jpeg(&path, "jpeg-asset", "jpeg-project").unwrap();
-        let id = read_jpeg(&path).unwrap().expect("primary COM marker readable");
+        let id = read_jpeg(&path)
+            .unwrap()
+            .expect("primary COM marker readable");
         assert_eq!(id.asset_id, "jpeg-asset");
 
         let mut jpeg = Jpeg::from_bytes(Bytes::from(std::fs::read(&path).unwrap())).unwrap();
@@ -582,7 +652,9 @@ mod tests {
         std::fs::write(&path, minimal_png_bytes()).unwrap();
 
         embed_png(&path, "png-asset", "png-project").unwrap();
-        let id = read_png(&path).unwrap().expect("primary tEXt marker readable");
+        let id = read_png(&path)
+            .unwrap()
+            .expect("primary tEXt marker readable");
         assert_eq!(id.asset_id, "png-asset");
 
         let mut png = Png::from_bytes(Bytes::from(std::fs::read(&path).unwrap())).unwrap();
@@ -604,7 +676,9 @@ mod tests {
         std::fs::write(&path, minimal_webp_bytes()).unwrap();
 
         embed_webp(&path, "webp-asset", "webp-project").unwrap();
-        let id = read_webp(&path).unwrap().expect("primary private chunk readable");
+        let id = read_webp(&path)
+            .unwrap()
+            .expect("primary private chunk readable");
         assert_eq!(id.asset_id, "webp-asset");
 
         let mut webp = WebP::from_bytes(Bytes::from(std::fs::read(&path).unwrap())).unwrap();

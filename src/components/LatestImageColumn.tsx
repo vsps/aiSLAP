@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSessionStore } from "../stores/sessionStore";
+import {
+  imageIndexOf,
+  taggedImageIndexOf,
+  useSessionStore,
+} from "../stores/sessionStore";
 import {
   useTimelineStore,
   resolveClipMedia,
@@ -585,27 +589,20 @@ function pickImage(
   taggedGroups: SeqTaggedGroup[],
 ): GalleryImage | null {
   if (selectedImagePath) {
-    for (const c of columns) {
-      const hit = c.images.find((i) => i.path === selectedImagePath);
-      if (hit) return hit;
-    }
-    for (const c of columns) {
-      const hit = c.srcImages.find((i) => i.path === selectedImagePath);
-      if (hit) return hit;
-    }
+    // `imageIndexOf` searches images before srcImages, same precedence as the
+    // two sequential column scans this replaced.
+    const hit = imageIndexOf(columns).get(selectedImagePath);
+    if (hit) return hit;
     // Selected image belongs to a shot other than the one currently open
     // (e.g. picked from the tag view) — its columns aren't loaded here, but
     // it's still the user's explicit selection, so show it rather than
     // silently falling back to "no image". Check the tag-view data first so
     // the tag dots/metadata reflect reality; otherwise fall back to a bare
     // synthetic image built from the path alone.
-    for (const seq of taggedGroups) {
-      for (const shot of seq.shots) {
-        const hit = shot.images.find((i) => i.path === selectedImagePath);
-        if (hit) return hit;
-      }
-    }
-    return syntheticImage(selectedImagePath);
+    return (
+      taggedImageIndexOf(taggedGroups).get(selectedImagePath) ??
+      syntheticImage(selectedImagePath)
+    );
   }
   // Fall back to the last image in the target version column.
   const target = columns.find((c) => c.version === targetVersion && !c.isSrc);

@@ -43,9 +43,6 @@ export const cmd = {
   presets_save: (data: { presets: ChainPreset[] }): Promise<void> =>
     rawInvoke("presets_save", { data }),
 
-  fal_key_get: (): Promise<string> => rawInvoke("fal_key_get"),
-  fal_key_set: (key: string): Promise<void> =>
-    rawInvoke("fal_key_set", { key }),
   provider_key_get: (provider: string): Promise<string> =>
     rawInvoke("provider_key_get", { provider }),
   provider_key_set: (provider: string, key: string): Promise<void> =>
@@ -273,11 +270,6 @@ export const cmd = {
     ffmpegPath: string,
   ): Promise<boolean> =>
     rawInvoke("media_id_embed", { path, assetId, projectId, ffmpegPath }),
-  media_id_read: (
-    path: string,
-    ffmpegPath: string,
-  ): Promise<{ assetId: string; projectId: string } | null> =>
-    rawInvoke("media_id_read", { path, ffmpegPath }),
 
   // Local asset index + Turso sync
   asset_upsert: (projectPath: string, record: AssetRecord): Promise<void> =>
@@ -294,11 +286,6 @@ export const cmd = {
     refs: AssetRefRecord[],
   ): Promise<void> =>
     rawInvoke("asset_refs_set", { projectPath, assetId, refs }),
-  asset_refs_get: (
-    projectPath: string,
-    assetId: string,
-  ): Promise<AssetRefRecord[]> =>
-    rawInvoke("asset_refs_get", { projectPath, assetId }),
   db_sync_outbox: (projectPath: string): Promise<SyncReport> =>
     rawInvoke("db_sync_outbox", { projectPath }),
   project_reconcile: (

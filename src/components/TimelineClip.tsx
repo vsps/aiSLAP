@@ -32,26 +32,34 @@ function videoThumbCandidate(videoPath: string): string {
   return `${stem}.thumb.png`;
 }
 
-// Generous tile count so the strip stays covered even for a tall/narrow
-// source image next to a long clip; unused copies are just clipped by
-// overflow-hidden and cost nothing extra (same cached request).
-const TILE_COUNT = 24;
-
 /** Fits the thumbnail to the clip's height and repeats it horizontally
- *  (filmstrip-style) instead of stretching a single frame across the clip. */
+ *  (filmstrip-style) instead of stretching a single frame across the clip.
+ *
+ *  This used to mount 24 copies of the same `<img>` per clip and let
+ *  overflow-hidden clip the surplus — on a sequence of 30 shots that is 720
+ *  image elements in the document for 30 distinct pictures. A repeating
+ *  background does the same thing in one node, sized `auto 100%` so the tile
+ *  keeps the thumbnail's aspect ratio at the clip's height, exactly as
+ *  `h-full w-auto` did. */
 function TiledThumb({ src, onError }: { src: string; onError?: () => void }) {
   return (
-    <div className="absolute inset-0 flex overflow-hidden">
-      {Array.from({ length: TILE_COUNT }, (_, i) => (
-        <img
-          key={i}
-          src={src}
-          alt=""
-          className="h-full w-auto shrink-0"
-          onError={i === 0 ? onError : undefined}
-          draggable={false}
-        />
-      ))}
+    <div className="absolute inset-0 overflow-hidden">
+      <div
+        className="absolute inset-0"
+        style={{
+          // CSS.escape isn't right here (it escapes for selectors); a URL can
+          // legitimately contain quotes, so escape only what breaks the
+          // url("…") literal.
+          backgroundImage: `url("${src.replace(/["\\]/g, "\\$&")}")`,
+          backgroundRepeat: "repeat-x",
+          backgroundSize: "auto 100%",
+          backgroundPosition: "left center",
+        }}
+      />
+      {/* A CSS background has no error event, and `onError` is what drives the
+          thumb-missing fallback. This probe issues the same (cached) request
+          and is never painted. */}
+      <img src={src} alt="" onError={onError} className="hidden" />
     </div>
   );
 }

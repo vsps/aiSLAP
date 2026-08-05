@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSessionStore } from "../stores/sessionStore";
+import { selectImageByPath, useSessionStore } from "../stores/sessionStore";
 import { editTagsAt, selectImagePath as selectImageAction } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 import type { GalleryImage, RefImage } from "../lib/types";
@@ -138,7 +138,7 @@ function computeLayout(
 export function TraceView({ onDragStart }: Props) {
   const traceActive = useSessionStore((s) => s.traceActive);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
-  const galleryColumns = useSessionStore((s) => s.columns);
+  const imageByPath = useSessionStore(selectImageByPath);
 
   const layout = useMemo(
     () =>
@@ -215,8 +215,7 @@ export function TraceView({ onDragStart }: Props) {
   // visibility star reflects real state; fall back to a synthetic image for
   // paths outside the current shot's scan.
   const imageFor = (p: string): GalleryImage =>
-    galleryColumns.flatMap((c) => c.images).find((i) => i.path === p) ??
-    syntheticImage(p);
+    imageByPath.get(p) ?? syntheticImage(p);
 
   if (!traceActive || !layout || layout.columns.length === 0) {
     return (

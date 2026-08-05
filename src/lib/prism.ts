@@ -7,28 +7,24 @@
  *  `seqShotNames` below is for.
  *
  *  These helpers key off the path suffix rather than session state, so they stay
- *  usable from pure code (filename templates, script matching, thumbnails). */
+ *  usable from pure code (filename templates, script matching, thumbnails).
+ *
+ *  Note this mirrors `prism.rs` only in the entity <-> media-root *direction we
+ *  actually need on this side*. The forward mapping (`media_root_for`) has no TS
+ *  counterpart on purpose: creating a media root also creates directories, so
+ *  `setShot` goes through `cmd.prism_media_root_ensure` rather than deriving the
+ *  path locally. */
 
 import { basename, dirname, normalizeDir } from "./paths";
 
 /** Where aiSLAP output lives inside a PRISM entity folder. */
 export const AI_MEDIA_SUBPATH = "Renders/AI";
 
-/** `<entity>` -> `<entity>/Renders/AI`. Idempotent. */
-export function mediaRootFor(entityPath: string): string {
-  const p = normalizeDir(entityPath);
-  return isMediaRoot(p) ? p : `${p}/${AI_MEDIA_SUBPATH}`;
-}
-
 /** `<entity>/Renders/AI` -> `<entity>`, or null when it isn't a media root. */
 export function entityFor(path: string): string | null {
   const p = normalizeDir(path);
   const suffix = `/${AI_MEDIA_SUBPATH}`;
   return p.endsWith(suffix) ? p.slice(0, -suffix.length) : null;
-}
-
-export function isMediaRoot(path: string): boolean {
-  return entityFor(path) !== null;
 }
 
 /** Sequence and shot names for a shot path, whether it's a native shot folder

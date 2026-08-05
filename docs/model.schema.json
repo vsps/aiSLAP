@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/heckler/aiSLAP/docs/model.schema.json",
+  "title": "aiSLAP model family",
+  "description": "One model family per file, under models/<provider>/. See docs/model-registry.md. Note the loader ignores unknown keys, so this schema is advisory at author time only — it is not enforced at runtime.",
+  "type": "object",
+  "required": ["family", "category", "nodes"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "provider": {
+      "type": "string",
+      "description": "Inherited by every node unless the node overrides it. Absent everywhere resolves to \"fal\" at dispatch."
+    },
+    "family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Groups nodes in the picker. Technically optional to the loader, but an empty family renders as an unlabelled entry."
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Picker heading, e.g. \"fal.ai/Video Generation\"."
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "description": "One endpoint or mode.",
+      "required": ["id", "name", "endpoint"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable unique identity, persisted in app-state.json and in sidecars. Changing it orphans saved state."
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Passed to the provider verbatim."
+        },
+        "provider": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["image", "video", "model3d"],
+          "description": "Almost always omit this. When absent it is inferred from outputs: any MODEL_3D output wins, else any VIDEO output, else image. Every shipped model relies on that inference."
+        },
+        "batch_field": {
+          "type": "string",
+          "description": "Omit when a parameter's api_field is already one of num_images, num_samples, n, batch_size — those are detected. Declare it explicitly for any other name, or the iteration count is silently not sent."
+        },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/input" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/output" } },
+        "ref_roles": { "type": "array", "items": { "$ref": "#/$defs/refRole" } },
+        "parameters": { "type": "array", "items": { "$ref": "#/$defs/parameter" } }
+      }
+    },
+
+    "input": {
+      "type": "object",
+      "required": ["name", "data_type", "api_field"],
+      "properties": {
+        "name": { "type": "string" },
+        "data_type": { "type": "string", "enum": ["STRING", "IMAGE", "VIDEO", "AUDIO"] },
+        "api_field": { "type": "string" },
+        "api_format": {
+          "type": "string",
+          "enum": ["array"],
+          "description": "Send as an array even when there is only one value."
+        },
+        "required": { "type": "boolean" },
+        "max": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "required": ["name", "data_type", "api_field"],
+      "description": "Outputs drive kind inference — see the node's `kind` field.",
+      "properties": {
+        "name": { "type": "string" },
+        "data_type": { "type": "string", "enum": ["IMAGE", "VIDEO", "MODEL_3D"] },
+        "api_field": { "type": "string" }
+      }
+    },
+
+    "refRole": {
+      "type": "object",
+      "required": ["role", "api_field"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "Deliberately free-form rather than an enum — free-form is the actual contract. In practice: source, start, end, element, image.",
+          "examples": ["source", "start", "end", "element", "image", "mesh"]
+        },
+        "api_field": { "type": "string" },
+        "max": { "type": "integer", "minimum": 1 },
+        "exclusive": {
+          "type": "boolean",
+          "description": "Auto-set to true for start/end unless declared. Set explicitly to opt out."
+        },
+        "named": {
+          "type": "boolean",
+          "description": "Auto-set to true for element unless declared. Set explicitly to opt out."
+        }
+      }
+    },
+
+    "parameter": {
+      "type": "object",
+      "required": ["name", "type", "api_field"],
+      "properties": {
+        "name": { "type": "string" },
+        "label": { "type": "string" },
+        "api_field": { "type": "string" },
+        "type": { "type": "string", "enum": ["enum", "int", "float", "bool", "prompts"] }
+      },
+      "oneOf": [
+        {
+          "title": "enum",
+          "properties": {
+            "type": { "const": "enum" },
+            "options": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "default": { "type": "string" }
+          },
+          "required": ["options"]
+        },
+        {
+          "title": "int",
+          "properties": {
+            "type": { "const": "int" },
+            "default": { "type": "integer" },
+            "min": { "type": "integer" },
+            "max": { "type": "integer" }
+          }
+        },
+        {
+          "title": "float",
+          "properties": {
+            "type": { "const": "float" },
+            "default": { "type": "number" },
+            "min": { "type": "number" },
+            "max": { "type": "number" },
+            "step": { "type": "number" }
+          }
+        },
+        {
+          "title": "bool",
+          "properties": {
+            "type": { "const": "bool" },
+            "default": { "type": "boolean" }
+          }
+        },
+        {
+          "title": "prompts",
+          "description": "The SAM point/box geometry editor. Writes point_prompts and box_prompts directly into settings; api_field is nominal.",
+          "properties": {
+            "type": { "const": "prompts" }
+          }
+        }
+      ]
+    }
+  }
+}

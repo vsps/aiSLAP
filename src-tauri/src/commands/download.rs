@@ -8,7 +8,10 @@ pub async fn download_to_path(url: String, target: String) -> AppResult<()> {
         .await
         .map_err(|e| AppError::Msg(format!("fetch: {e}")))?;
     if !resp.status().is_success() {
-        return Err(AppError::Msg(format!("HTTP {} downloading {url}", resp.status())));
+        return Err(AppError::Msg(format!(
+            "HTTP {} downloading {url}",
+            resp.status()
+        )));
     }
     let bytes = resp
         .bytes()

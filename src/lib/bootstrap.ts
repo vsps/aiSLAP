@@ -266,8 +266,34 @@ function installPersistence(): () => void {
     }, 500);
   };
 
-  const unsubG = useGenerationStore.subscribe(schedule);
-  const unsubS = useSessionStore.subscribe(schedule);
+  // Gate on exactly the fields `currentAppState` reads. Subscribing to the
+  // whole stores meant every job-progress tick — roughly once a second per
+  // in-flight job — and every gallery rescan re-armed the debounce and ended
+  // in a full JSON.stringify of the app state, for data that had not moved.
+  //
+  // Keep this list in sync with `currentAppState` above: `lastSerialized`
+  // means a *missing* field here shows up as app-state silently not
+  // persisting, never as a wrong write.
+  const unsubG = useGenerationStore.subscribe((s, prev) => {
+    if (
+      s.links !== prev.links ||
+      s.expandedIdx !== prev.expandedIdx ||
+      s.iterations !== prev.iterations
+    ) {
+      schedule();
+    }
+  });
+  const unsubS = useSessionStore.subscribe((s, prev) => {
+    if (
+      s.projectPath !== prev.projectPath ||
+      s.sequencePath !== prev.sequencePath ||
+      s.shotPath !== prev.shotPath ||
+      s.prism !== prev.prism ||
+      s.entityType !== prev.entityType
+    ) {
+      schedule();
+    }
+  });
 
   return () => {
     unsubG();

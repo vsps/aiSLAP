@@ -175,16 +175,40 @@ mod tests {
         let mut prices = HashMap::new();
         prices.insert("fal-ai/foo".to_string(), "$0.01 per image".to_string());
         let overrides = HashMap::new();
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/foo", &prices, &overrides, &NOT_VIDEO), Some(0.01));
-        assert_eq!(per_item_price(Some("replicate"), "fal-ai/foo", &prices, &overrides, &NOT_VIDEO), None);
-        assert_eq!(per_item_price(None, "fal-ai/foo", &prices, &overrides, &NOT_VIDEO), Some(0.01));
+        assert_eq!(
+            per_item_price(Some("fal"), "fal-ai/foo", &prices, &overrides, &NOT_VIDEO),
+            Some(0.01)
+        );
+        assert_eq!(
+            per_item_price(
+                Some("replicate"),
+                "fal-ai/foo",
+                &prices,
+                &overrides,
+                &NOT_VIDEO
+            ),
+            None
+        );
+        assert_eq!(
+            per_item_price(None, "fal-ai/foo", &prices, &overrides, &NOT_VIDEO),
+            Some(0.01)
+        );
     }
 
     #[test]
     fn missing_or_unparsable_price_text_returns_none() {
         let prices = HashMap::new();
         let overrides = HashMap::new();
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/unknown", &prices, &overrides, &NOT_VIDEO), None);
+        assert_eq!(
+            per_item_price(
+                Some("fal"),
+                "fal-ai/unknown",
+                &prices,
+                &overrides,
+                &NOT_VIDEO
+            ),
+            None
+        );
     }
 
     #[test]
@@ -193,7 +217,13 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("replicate-model/foo".to_string(), 0.42);
         assert_eq!(
-            per_item_price(Some("replicate"), "replicate-model/foo", &prices, &overrides, &NOT_VIDEO),
+            per_item_price(
+                Some("replicate"),
+                "replicate-model/foo",
+                &prices,
+                &overrides,
+                &NOT_VIDEO
+            ),
             Some(0.42)
         );
     }
@@ -203,10 +233,32 @@ mod tests {
         let prices = HashMap::new();
         let mut overrides = HashMap::new();
         overrides.insert("fal-ai/vid".to_string(), 0.05);
-        let video_5s = CostContext { is_video: true, duration_sec: Some(5.0), resolution: None, megapixels: None };
-        let video_unknown = CostContext { is_video: true, duration_sec: None, resolution: None, megapixels: None };
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_5s), Some(0.25));
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_unknown), None);
+        let video_5s = CostContext {
+            is_video: true,
+            duration_sec: Some(5.0),
+            resolution: None,
+            megapixels: None,
+        };
+        let video_unknown = CostContext {
+            is_video: true,
+            duration_sec: None,
+            resolution: None,
+            megapixels: None,
+        };
+        assert_eq!(
+            per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_5s),
+            Some(0.25)
+        );
+        assert_eq!(
+            per_item_price(
+                Some("fal"),
+                "fal-ai/vid",
+                &prices,
+                &overrides,
+                &video_unknown
+            ),
+            None
+        );
     }
 
     #[test]
@@ -214,8 +266,16 @@ mod tests {
         let mut prices = HashMap::new();
         prices.insert("fal-ai/vid".to_string(), "$0.08 per second".to_string());
         let overrides = HashMap::new();
-        let video_10s = CostContext { is_video: true, duration_sec: Some(10.0), resolution: None, megapixels: None };
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_10s), Some(0.8));
+        let video_10s = CostContext {
+            is_video: true,
+            duration_sec: Some(10.0),
+            resolution: None,
+            megapixels: None,
+        };
+        assert_eq!(
+            per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_10s),
+            Some(0.8)
+        );
     }
 
     #[test]
@@ -224,10 +284,26 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("fal-ai/img::1080p".to_string(), 0.02);
         overrides.insert("fal-ai/img".to_string(), 0.01);
-        let ctx_1080p = CostContext { is_video: false, duration_sec: None, resolution: Some("1080p"), megapixels: None };
-        let ctx_720p = CostContext { is_video: false, duration_sec: None, resolution: Some("720p"), megapixels: None };
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_1080p), Some(0.02));
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_720p), Some(0.01));
+        let ctx_1080p = CostContext {
+            is_video: false,
+            duration_sec: None,
+            resolution: Some("1080p"),
+            megapixels: None,
+        };
+        let ctx_720p = CostContext {
+            is_video: false,
+            duration_sec: None,
+            resolution: Some("720p"),
+            megapixels: None,
+        };
+        assert_eq!(
+            per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_1080p),
+            Some(0.02)
+        );
+        assert_eq!(
+            per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_720p),
+            Some(0.01)
+        );
     }
 
     #[test]
@@ -240,39 +316,97 @@ mod tests {
         // happens to hold one anyway (e.g. cached config.json data from
         // before that migration), rather than a real currently-populated path.
         let mut prices = HashMap::new();
-        prices.insert("fal-ai/vid::720p".to_string(), "$0.10 per second".to_string());
-        prices.insert("fal-ai/vid::1080p".to_string(), "$0.15 per second".to_string());
+        prices.insert(
+            "fal-ai/vid::720p".to_string(),
+            "$0.10 per second".to_string(),
+        );
+        prices.insert(
+            "fal-ai/vid::1080p".to_string(),
+            "$0.15 per second".to_string(),
+        );
         prices.insert(
             "fal-ai/vid".to_string(),
-            "Your request will cost $0.10 per second for 720p, $0.15 per second for 1080p.".to_string(),
+            "Your request will cost $0.10 per second for 720p, $0.15 per second for 1080p."
+                .to_string(),
         );
         let overrides = HashMap::new();
-        let ctx_720p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("720p"), megapixels: None };
-        let ctx_1080p = CostContext { is_video: true, duration_sec: Some(5.0), resolution: Some("1080p"), megapixels: None };
-        let ctx_unknown_res = CostContext { is_video: true, duration_sec: Some(5.0), resolution: None, megapixels: None };
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_720p), Some(0.5));
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_1080p), Some(0.75));
+        let ctx_720p = CostContext {
+            is_video: true,
+            duration_sec: Some(5.0),
+            resolution: Some("720p"),
+            megapixels: None,
+        };
+        let ctx_1080p = CostContext {
+            is_video: true,
+            duration_sec: Some(5.0),
+            resolution: Some("1080p"),
+            megapixels: None,
+        };
+        let ctx_unknown_res = CostContext {
+            is_video: true,
+            duration_sec: Some(5.0),
+            resolution: None,
+            megapixels: None,
+        };
+        assert_eq!(
+            per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_720p),
+            Some(0.5)
+        );
+        assert_eq!(
+            per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_1080p),
+            Some(0.75)
+        );
         // No resolution context: falls back to the flat text, which resolves
         // to the first ($0.10/sec) tier rather than failing outright.
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_unknown_res), Some(0.5));
+        assert_eq!(
+            per_item_price(
+                Some("fal"),
+                "fal-ai/vid",
+                &prices,
+                &overrides,
+                &ctx_unknown_res
+            ),
+            Some(0.5)
+        );
     }
 
     #[test]
     fn area_billed_price_multiplies_by_measured_megapixels() {
         let mut prices = HashMap::new();
-        prices.insert("fal-ai/flux/dev".to_string(), "$0.025 per megapixels".to_string());
+        prices.insert(
+            "fal-ai/flux/dev".to_string(),
+            "$0.025 per megapixels".to_string(),
+        );
         let overrides = HashMap::new();
         // 1024x1024 = 1.048576 MP — a real measured output size, not a guess.
-        let ctx = CostContext { is_video: false, duration_sec: None, resolution: None, megapixels: Some(1.048576) };
-        let amount = per_item_price(Some("fal"), "fal-ai/flux/dev", &prices, &overrides, &ctx).unwrap();
+        let ctx = CostContext {
+            is_video: false,
+            duration_sec: None,
+            resolution: None,
+            megapixels: Some(1.048576),
+        };
+        let amount =
+            per_item_price(Some("fal"), "fal-ai/flux/dev", &prices, &overrides, &ctx).unwrap();
         assert!((amount - 0.025 * 1.048576).abs() < 1e-9);
     }
 
     #[test]
     fn area_billed_price_without_measured_dimensions_returns_none() {
         let mut prices = HashMap::new();
-        prices.insert("fal-ai/flux/dev".to_string(), "$0.025 per megapixels".to_string());
+        prices.insert(
+            "fal-ai/flux/dev".to_string(),
+            "$0.025 per megapixels".to_string(),
+        );
         let overrides = HashMap::new();
-        assert_eq!(per_item_price(Some("fal"), "fal-ai/flux/dev", &prices, &overrides, &NOT_VIDEO), None);
+        assert_eq!(
+            per_item_price(
+                Some("fal"),
+                "fal-ai/flux/dev",
+                &prices,
+                &overrides,
+                &NOT_VIDEO
+            ),
+            None
+        );
     }
 }

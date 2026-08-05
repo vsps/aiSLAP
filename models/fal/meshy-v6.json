@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "fal",
   "family": "Meshy v6",
   "category": "fal.ai/3D Generation",

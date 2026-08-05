@@ -1,4 +1,5 @@
 {
+  "$schema": "../../docs/model.schema.json",
   "provider": "bytedance",
   "family": "AI MediaKit",
   "category": "ByteDance/Utility",
