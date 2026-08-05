@@ -22,7 +22,7 @@ import {
 import { useSessionStore } from "../../stores/sessionStore";
 import { getProvider } from "../providers";
 import { swallow } from "../errors";
-import { preflightChain } from "../chainValidation";
+import { hasUnsupportedRefs, preflightChain } from "../chainValidation";
 import { isVideoPath } from "../media";
 import {
   buildCombinedForLink,
@@ -178,6 +178,13 @@ export async function enqueueGeneration(): Promise<void> {
   );
   if (runs.length === 0) {
     gen.setError("Both prompts are empty.");
+    return;
+  }
+
+  if (hasUnsupportedRefs(node, activeLink.refImages)) {
+    gen.setError(
+      `${node.name} doesn't accept image or video input — the attached reference(s) would be ignored. Remove them or switch to a model that supports references.`,
+    );
     return;
   }
 

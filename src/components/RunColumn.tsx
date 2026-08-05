@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   selectCurrentModel,
+  selectRefImages,
   selectSequencePrompt,
   selectShotPrompts,
   useGenerationStore,
@@ -11,7 +12,7 @@ import {
   enqueueChain,
   enqueueGeneration,
 } from "../lib/generation/enqueue";
-import { preflightChain } from "../lib/chainValidation";
+import { hasUnsupportedRefs, preflightChain } from "../lib/chainValidation";
 import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
@@ -48,6 +49,7 @@ export function RunColumn() {
   const iterations = useGenerationStore((s) => s.iterations);
   const setIterations = useGenerationStore((s) => s.setIterations);
   const currentModel = useGenerationStore(selectCurrentModel);
+  const refImages = useGenerationStore(selectRefImages);
   const sequencePrompt = useGenerationStore(selectSequencePrompt);
   const shotPrompts = useGenerationStore(selectShotPrompts);
   const jobs = useGenerationStore((s) => s.jobs);
@@ -66,6 +68,9 @@ export function RunColumn() {
   const links = useGenerationStore((s) => s.links);
   const expandedIdx = useGenerationStore((s) => s.expandedIdx);
   const isMultiLink = links.length > 1;
+  // Multi-link mismatches are already covered per-link by chainHasErrors.
+  const refsUnsupported =
+    !isMultiLink && !!currentModel && hasUnsupportedRefs(currentModel, refImages);
 
   // Each included, non-empty shot prompt fans out into its own parallel run.
   const activeLink = expandedIdx != null ? links[expandedIdx] : links[0];
@@ -130,14 +135,16 @@ export function RunColumn() {
     targetVersion !== null &&
     !srcVersions.includes(targetVersion ?? "") &&
     hasPrompt &&
-    chainGateOk;
+    chainGateOk &&
+    !refsUnsupported;
 
   const canRunPlus =
     !!currentModel &&
     !!shotPath &&
     hasPrompt &&
     !srcVersions.includes(targetVersion ?? "") &&
-    chainGateOk;
+    chainGateOk &&
+    !refsUnsupported;
 
   const disabledReason = !currentModel
     ? "Pick a model"
@@ -147,11 +154,13 @@ export function RunColumn() {
         ? "Enter a prompt"
         : targetVersion && srcVersions.includes(targetVersion)
           ? "SRC is not a valid target"
-          : isMultiLink && expandedIdx != null
-            ? "Collapse the chain (▶) before submitting"
-            : isMultiLink && chainHasErrors
-              ? "Chain has errors — fix red links before submitting"
-              : "";
+          : refsUnsupported
+            ? "Model can't use the attached reference(s) — remove them or pick an edit/img2img model"
+            : isMultiLink && expandedIdx != null
+              ? "Collapse the chain (▶) before submitting"
+              : isMultiLink && chainHasErrors
+                ? "Chain has errors — fix red links before submitting"
+                : "";
 
   async function runIntoNewVersion() {
     try {

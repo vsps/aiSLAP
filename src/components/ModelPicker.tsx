@@ -7,6 +7,7 @@ import {
   useGenerationStore,
 } from "../stores/generationStore";
 import type { ModelEntry } from "../lib/types";
+import { hasUnsupportedRefs } from "../lib/chainValidation";
 
 type Provider = "fal" | "replicate" | "bytedance";
 
@@ -127,7 +128,7 @@ export function ModelPicker() {
     let first = familyList[0];
     if (refImages.length > 0) {
       const editModel = familyList.find(
-        (e) => e.node.ref_roles && e.node.ref_roles.length > 0,
+        (e) => !hasUnsupportedRefs(e.node, refImages),
       );
       if (editModel) first = editModel;
     }

@@ -1,5 +1,5 @@
 import { classifyMedia } from "./media";
-import type { ChainLink, ModelInput, ModelNode } from "./types";
+import type { ChainLink, ModelInput, ModelNode, RefImage } from "./types";
 
 export type ProblemSeverity = "error" | "warn";
 
@@ -131,6 +131,14 @@ export function preflightChain(links: ChainLink[]): LinkProblem[] {
       }
     }
 
+    if (hasUnsupportedRefs(link.model, link.refImages)) {
+      problems.push({
+        linkId: link.id,
+        severity: "error",
+        message: "Model has no image/video input — attached reference(s) would be ignored",
+      });
+    }
+
     prevOutput = outputKindOf(link.model);
     isHead = false;
   }
@@ -143,6 +151,27 @@ function extToType(path: string): "IMAGE" | "VIDEO" | null {
   if (kind === "video") return "VIDEO";
   if (kind === "image") return "IMAGE";
   return null;
+}
+
+/**
+ * True when the model has no way at all to accept the reference media
+ * currently attached — it would be silently dropped rather than sent.
+ * Models that declare `ref_roles` route media through a named role instead
+ * of `inputs[]` (SAM3's tools and Meshy's img→3D node ship with `inputs: []`
+ * entirely), and `RefRoleSpec` carries no media-kind marker, so any
+ * `ref_roles` presence is treated as "this model has some way to accept
+ * media" and skipped. Only the unambiguous case is flagged: a model with
+ * neither a declared IMAGE/VIDEO input slot nor any ref_roles at all (a true
+ * txt2img/txt2vid node). Synthetic chain_prev placeholders are excluded —
+ * they're wiring, not user-attached data that would be dropped.
+ */
+export function hasUnsupportedRefs(model: ModelNode, refs: RefImage[]): boolean {
+  if ((model.ref_roles?.length ?? 0) > 0) return false;
+  return refs.some((r) => {
+    if (r.roleAssignment?.kind === "chain_prev") return false;
+    const t = extToType(r.path);
+    return t !== null && !hasMediaSlotOfType(model, t);
+  });
 }
 
 export function problemsByLinkId(
