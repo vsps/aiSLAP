@@ -54,7 +54,6 @@ const SCHEMA: &[&str] = &[
     // file needs a different shape.
     "CREATE INDEX IF NOT EXISTS idx_assets_rel_path ON assets(project_id, rel_path)",
     "CREATE INDEX IF NOT EXISTS idx_assets_content_hash ON assets(project_id, content_hash)",
-    "CREATE INDEX IF NOT EXISTS idx_assets_generated_by ON assets(project_id, generated_by)",
     "CREATE TABLE IF NOT EXISTS asset_refs (
         asset_id TEXT NOT NULL,
         ordinal INTEGER NOT NULL,
@@ -348,7 +347,14 @@ async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
             "PRAGMA synchronous=NORMAL",
             "PRAGMA busy_timeout=5000",
         ] {
-            if let Err(e) = conn.execute(pragma, ()).await {
+            // `execute` rejects a statement that returns rows, and
+            // journal_mode/busy_timeout both hand back the value they were set
+            // to — `query` is the one that actually applies them.
+            let result = match conn.query(pragma, ()).await {
+                Ok(mut rows) => rows.next().await.map(|_| ()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = result {
                 tracing::warn!("{pragma} failed: {e}");
             }
         }
@@ -359,6 +365,15 @@ async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
             "ALTER TABLE assets ADD COLUMN generated_by TEXT",
         )
         .await?;
+        // Not in SCHEMA: on a legacy db this index would be created before the
+        // column-add above ever ran, and `CREATE INDEX ... (generated_by)`
+        // against a table that doesn't have it yet fails outright.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_generated_by ON assets(project_id, generated_by)",
+            (),
+        )
+        .await
+        .map_err(db_err)?;
     }
 
     // A concurrent opener may have won; keep whichever landed first so every
@@ -384,21 +399,49 @@ pub(crate) fn evict_cached_db(path: &Path) {
     }
 }
 
+/// Cached by URL, same shape as `LOCAL_DBS`. `sync_outbox` calls `open_remote`
+/// after every single asset write, and rebuilding the connection (a fresh TLS
+/// handshake) plus replaying every `CREATE TABLE`/`CREATE INDEX`/`ensure_column`
+/// statement over the network on each of those calls was previously masked —
+/// local opens failed before ever reaching this point (see `generated_by`
+/// migration ordering fix) — so it never ran in practice until now. A stale
+/// entry from Turso credentials changed mid-session is a known gap, matching
+/// `local_db`'s handling of a path's underlying file changing identity.
+static REMOTE_DBS: OnceLock<Mutex<HashMap<String, Arc<Database>>>> = OnceLock::new();
+
 async fn open_remote(url: String, token: String) -> AppResult<Connection> {
-    let db = Builder::new_remote(url, token)
-        .build()
+    let cache = REMOTE_DBS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(db) = cache.lock().expect("db cache poisoned").get(&url) {
+        return db.connect().map_err(db_err);
+    }
+
+    let db = Arc::new(
+        Builder::new_remote(url.clone(), token)
+            .build()
+            .await
+            .map_err(db_err)?,
+    );
+    {
+        let conn = db.connect().map_err(db_err)?;
+        bootstrap(&conn, &[]).await?;
+        ensure_column(
+            &conn,
+            "assets",
+            "generated_by",
+            "ALTER TABLE assets ADD COLUMN generated_by TEXT",
+        )
+        .await?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_generated_by ON assets(project_id, generated_by)",
+            (),
+        )
         .await
         .map_err(db_err)?;
-    let conn = db.connect().map_err(db_err)?;
-    bootstrap(&conn, &[]).await?;
-    ensure_column(
-        &conn,
-        "assets",
-        "generated_by",
-        "ALTER TABLE assets ADD COLUMN generated_by TEXT",
-    )
-    .await?;
-    Ok(conn)
+    }
+
+    let mut guard = cache.lock().expect("db cache poisoned");
+    let db = guard.entry(url).or_insert(db).clone();
+    db.connect().map_err(db_err)
 }
 
 // ---------- row <-> struct ----------
@@ -753,6 +796,13 @@ fn prefix_range(clean_prefix: &str) -> (String, String) {
 /// cascade — so renaming `shot_1` never touches `shot_10`.
 ///
 /// Returns the number of rows updated.
+///
+/// The `rel_path` match below carries no `project_id` predicate — safe only
+/// because this always opens its own `open_local` connection (below) and
+/// never accepts one from a caller. If this is ever refactored to take a
+/// `Connection`/`Transaction` parameter, that parameter must never be one
+/// from `open_remote`: the shared table has no such guarantee, and this
+/// query would rewrite matching paths across every project on it.
 pub async fn asset_rename_prefix(
     project_root: &Path,
     old_rel_prefix: &str,
@@ -944,6 +994,11 @@ pub async fn asset_tags_apply(project_root: &Path, updates: &[TagUpdate]) -> App
 /// directory). A hard delete rather than a `deleted_at` stamp: the index is
 /// rebuildable from disk, and the tag views query it directly, so a
 /// tombstone would just be a ghost with tags. Returns the rows removed.
+///
+/// Same caveat as `asset_rename_prefix`: the `rel_path` match has no
+/// `project_id` predicate, safe only because `open_local` below is always
+/// this project's own file. Never wire this to a `open_remote` connection
+/// without adding one.
 pub async fn assets_purge(project_root: &Path, rel: &str, is_prefix: bool) -> AppResult<u32> {
     let conn = open_local(project_root).await?;
     let clean = rel.trim_end_matches('/').to_string();
