@@ -124,6 +124,21 @@ Notes that are easy to get wrong:
   local-only indexes (`SCHEMA_LOCAL`) therefore lead with `content_hash` / `rel_path`
   rather than `project_id`; the composite indexes in the shared schema are correct for
   the *remote* database, which genuinely holds many projects.
+- **The remote `assets`/`asset_refs`/`asset_tags` are one shared table per name, not
+  one per project.** Considered splitting by project when the `generated_by` index
+  went in; rejected. SQLite's write lock and B-tree depth are functions of the
+  *database*, not the table — more tables in the same Turso database buys no
+  concurrency and no shallower lookups, and Turso bills rows read/written, not table
+  count. A `project_id`-leading index already bounds a project's own queries to its own
+  rows regardless of how large other projects grow. Splitting would also cost the one
+  thing this shared remote db is *for*: `generated_by` + its index exist so a future
+  "who generated what, for how much" report is one `GROUP BY` — splitting turns that
+  into a cross-table union or, if split into per-project databases instead (the
+  actually-correct way to get real isolation, per Turso's own multi-tenant guidance),
+  a scheduled ETL job. Revisit only for a real compliance/isolation requirement or
+  measured write contention — not for row count; low millions of rows per project is
+  the point where a low-cardinality leading column would start to matter, and this
+  isn't near it.
 - The local db filename falls back to a hash of the project path when the project id
   hasn't been minted yet. `adopt_path_keyed_db` renames such a file into place once the
   id lands, so a first-open race doesn't strand a whole index.
