@@ -19,6 +19,7 @@ import { swallow } from "../lib/errors";
 import { normalizeDir } from "../lib/paths";
 import { entityFor } from "../lib/prism";
 import { coalesceAsync } from "../lib/coalesce";
+import { reportOutboxSync } from "../lib/outboxSync";
 import { pushLog } from "./logStore";
 
 type PromptScope = "sequence" | "shot";
@@ -368,7 +369,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         .catch(swallow("project id mint"));
       // Flush anything queued from a prior offline/no-Turso-configured
       // session. Best-effort and fire-and-forget — never blocks opening.
-      void cmd.db_sync_outbox(normalized).catch(swallow("turso outbox sync"));
+      void cmd
+        .db_sync_outbox(normalized)
+        .then(reportOutboxSync)
+        .catch(swallow("turso outbox sync"));
       // Self-heal the asset index in the background: assigns ids to
       // anything generated before Phase 1, relinks files moved outside the
       // app since the last scan. Fire-and-forget — hashing every media file
