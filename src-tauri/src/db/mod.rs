@@ -24,6 +24,7 @@ use crate::commands::fsutil::{
     as_str, is_image_ext, is_model3d_ext, is_video_ext, sidecar_path, ProjectRoot, PROJECT_SIDECAR,
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl, media_id_read_impl};
+use crate::commands::session::project_title_for;
 use crate::commands::tags::tags_from_sidecar;
 use crate::commands::walk;
 use crate::domain::ProjectSidecar;
@@ -105,6 +106,16 @@ const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS outbox (
         asset_id TEXT PRIMARY KEY,
         queued_at TEXT NOT NULL
+    )",
+    // Human-readable project name, keyed by the same project id every asset
+    // row carries — the join the remote db's cross-project reports were
+    // otherwise missing. One row per project; refreshed opportunistically by
+    // `sync_outbox` rather than queued through `outbox`, since `outbox` is
+    // keyed by asset id and a title change has no asset to hang off.
+    "CREATE TABLE IF NOT EXISTS projects (
+        project_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        updated_at TEXT NOT NULL
     )",
 ];
 
@@ -290,7 +301,7 @@ async fn bootstrap(conn: &Connection, extra: &[&str]) -> AppResult<()> {
 /// Opened `Database` handles, keyed by the index file they point at.
 ///
 /// Building a `Database` runs `create_dir_all`, opens the file, and replays all
-/// nine `CREATE TABLE`/`CREATE INDEX` statements. Doing that per call turned
+/// ten `CREATE TABLE`/`CREATE INDEX` statements. Doing that per call turned
 /// batch work into an N+1 — the cost scan opened, bootstrapped and closed the
 /// database once *per backfilled asset*.
 ///
@@ -563,6 +574,27 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
             record.created_at.clone(),
             record.updated_at.clone().unwrap_or_default(),
             record.generated_by.clone()
+        ),
+    )
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn upsert_project_row(
+    conn: &Connection,
+    project_id: &str,
+    title: &str,
+    updated_at: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO projects (project_id, title, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(project_id) DO UPDATE SET
+           title=excluded.title, updated_at=excluded.updated_at",
+        params!(
+            project_id.to_string(),
+            title.to_string(),
+            updated_at.to_string()
         ),
     )
     .await
@@ -1052,6 +1084,24 @@ pub async fn assets_purge(project_root: &Path, rel: &str, is_prefix: bool) -> Ap
 pub async fn sync_outbox(project_root: &Path) -> AppResult<SyncReport> {
     let local = open_local(project_root).await?;
 
+    // Best-effort, every call: cheap (one row) and keeps the index's project
+    // name from going stale if `pipeline.json` changes after the project was
+    // first opened. Skipped while the project id hasn't been minted yet — the
+    // frontend mints it fire-and-forget right after `project_open`, so an
+    // early call here can still race it; the next call (after an asset write,
+    // or the next project open) picks it up.
+    let project_id = read_project_id(project_root)?;
+    if !project_id.is_empty() {
+        let title = project_title_for(project_root);
+        upsert_project_row(
+            &local,
+            &project_id,
+            &title,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await?;
+    }
+
     let Some((url, token)) = turso_config()? else {
         return Ok(SyncReport {
             configured: false,
@@ -1071,6 +1121,22 @@ pub async fn sync_outbox(project_root: &Path) -> AppResult<SyncReport> {
             });
         }
     };
+
+    if !project_id.is_empty() {
+        let title = project_title_for(project_root);
+        if let Err(e) = upsert_project_row(
+            &remote,
+            &project_id,
+            &title,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await
+        {
+            // Best-effort, same as an individual asset push failing below —
+            // never blocks the asset sync that follows.
+            tracing::warn!("turso sync: project title push failed: {e}");
+        }
+    }
 
     let ids = pending_outbox_ids(&local).await?;
     let mut pushed = 0u32;

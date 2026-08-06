@@ -37,11 +37,11 @@ pub fn project_open(project_path: String, entity_type: Option<String>) -> AppRes
     // Auto-create project.json on first open (new project or migration).
     let sidecar_path = root.join(PROJECT_SIDECAR);
     if !sidecar_path.exists() {
-        let title = root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("project")
-            .to_string();
+        let title = prism
+            .as_ref()
+            .map(|l| l.project_name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| folder_title(&root));
         write_json_atomic(
             &sidecar_path,
             &ProjectSidecar {
@@ -73,6 +73,30 @@ pub fn project_open(project_path: String, entity_type: Option<String>) -> AppRes
         None => list_dirs(&root)?,
     };
     Ok(dirs.iter().map(|p| as_str(p)).collect())
+}
+
+fn folder_title(root: &Path) -> String {
+    root.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project")
+        .to_string()
+}
+
+/// Human-readable project name: a PRISM project's `pipeline.json`
+/// `globals.project_name` when set, else the folder name. Live-derived —
+/// same reasoning as `project_version_prefix_get` — rather than trusting the
+/// `title` stored in `project.json` at creation time, so a later pipeline.json
+/// edit is picked up immediately instead of going stale.
+///
+/// The frontend derives the same value itself (it already has `prism` from
+/// `prism_detect`, plus the folder path) rather than round-tripping through a
+/// command; this copy is what `db::sync_outbox` mirrors into the `projects`
+/// table, so the two must stay in lockstep.
+pub(crate) fn project_title_for(root: &Path) -> String {
+    prism::detect(root)
+        .map(|l| l.project_name)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| folder_title(root))
 }
 
 #[derive(Serialize)]

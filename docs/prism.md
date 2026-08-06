@@ -30,7 +30,11 @@ Every consequence below follows from that one substitution.
 **Names.** `basename(shotPath)` would read `"AI"`. Anything needing the sequence or
 shot name — filename tokens, script-heading matching, thumbnails, timeline and queue
 labels — uses `seqShotNames` / `seqShotNamesForMedia` from `lib/prism.ts`. Rust emits
-entity names in `shot_name` and media roots in `shot_path`.
+entity names in `shot_name` and media roots in `shot_path`. The *project's* name works
+the same way: `globals.project_name` (`PrismLayout.project_name`, `PrismInfo.projectName`)
+wins over the project folder's basename wherever a human-readable project title is
+needed — `project_title_for` in `commands/session.rs`, mirrored client-side in
+`sessionStore.setProject` — see [storage.md](storage.md)'s `projects` table.
 
 **Depth.** The project root is no longer `shotPath/../..`. Rust walks *up* to
 `project.json` (`project_root_for`); the TypeScript side carries `projectPath` on

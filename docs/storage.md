@@ -113,10 +113,24 @@ re-read.
 ## The SQLite index
 
 Per project, under `%APPDATA%`, keyed by the project id. Tables: `assets`,
-`asset_refs`, `asset_tags`, `outbox` (plus `shot_state` and `prompt_history`, created
-ahead of the feature that will use them).
+`asset_refs`, `asset_tags`, `outbox`, `projects` (plus `shot_state` and
+`prompt_history`, created ahead of the feature that will use them).
 
 It is a **cache**. Deleting it costs a reindex, not data.
+
+**`projects` is the human-readable name for a `project_id`.** One row
+(`project_id`, `title`, `updated_at`), refreshed by `sync_outbox` on every
+call rather than queued through `outbox` — `outbox` is keyed by asset id, and
+a title change has no asset to hang off. The title itself comes from
+`commands::session::project_title_for`: a PRISM project's `pipeline.json`
+`globals.project_name` when set, else the folder name — live-derived every
+time, never trusted from the `title` stored in `project.json` at creation, so
+a later pipeline.json edit doesn't go stale. This is what gives the remote
+Turso database — genuinely multi-project, see below — a name to show next to
+`project_id` in a cross-project report. The frontend derives the identical
+value itself (`prism.projectName` from `prism_detect`, else the folder
+basename) for the SessionBar label rather than round-tripping through a
+command; keep the two derivations in lockstep if this rule ever changes.
 
 Notes that are easy to get wrong:
 
