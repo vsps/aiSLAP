@@ -83,6 +83,7 @@ const ROW_TITLE: Record<MediaKind, string> = {
 type DropTarget =
   | { kind: "reorder"; idx: number }
   | { kind: "slot"; role: "start" | "end" }
+  | { kind: "compare"; role: "a" | "b" }
   | null;
 
 export function RefImagesColumn() {
@@ -130,6 +131,8 @@ export function RefImagesColumn() {
   } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const imageDrag = useSessionStore((s) => s.imageDrag);
+  const setImageDrag = useSessionStore((s) => s.setImageDrag);
+  const setCompareSlot = useSessionStore((s) => s.setCompareSlot);
 
   // While a gallery thumbnail is being dragged, track whether the pointer is
   // over the ref panel so we can highlight it as a drop target. Drop itself is
@@ -170,11 +173,17 @@ export function RefImagesColumn() {
   ) {
     handleEl.setPointerCapture(pointerId);
     setDragState({ fromIdx, overIdx: null });
+    setImageDrag({ fromPath: refImages[fromIdx].path });
     let currentTarget: DropTarget = null;
 
     const resolveDrop = (x: number, y: number): DropTarget => {
       const el = document.elementFromPoint(x, y);
       if (!el) return null;
+      const compareSlot = el.closest<HTMLElement>("[data-compare-drop]");
+      if (compareSlot) {
+        const role = compareSlot.dataset.compareDrop;
+        if (role === "a" || role === "b") return { kind: "compare", role };
+      }
       const slot = el.closest<HTMLElement>("[data-role-slot]");
       if (slot) {
         const role = slot.dataset.roleSlot;
@@ -202,11 +211,16 @@ export function RefImagesColumn() {
       handleEl.removeEventListener("pointerup", onUp);
       handleEl.removeEventListener("pointercancel", onUp);
       setDragState(null);
+      setImageDrag(null);
 
       const t = currentTarget;
       const dragged = refImages[fromIdx];
       if (!t || !dragged) return;
 
+      if (t.kind === "compare") {
+        setCompareSlot(t.role, dragged.path);
+        return;
+      }
       if (t.kind === "slot") {
         assignRole(dragged.path, { kind: t.role });
         return;

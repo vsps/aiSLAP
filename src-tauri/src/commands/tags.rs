@@ -84,6 +84,14 @@ pub(crate) fn tags_from_sidecar(obj: &Map<String, Value>) -> Vec<String> {
     normalize_tags(arr.iter().filter_map(|v| v.as_str()))
 }
 
+/// Mirrors `tags_from_sidecar` for the `generatedBy` field — the sidecar
+/// fallback path for files the tag/generated-by index hasn't indexed yet.
+pub(crate) fn generated_by_from_sidecar(obj: &Map<String, Value>) -> Option<String> {
+    obj.get("generatedBy")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
 fn eq_tag(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
@@ -691,7 +699,8 @@ pub async fn project_tag_scan(
         if !abs.is_file() {
             continue;
         }
-        let Some(img) = try_make_gallery_image(&abs, image_tags.clone()) else {
+        let generated_by = index.generated_by_for(rel);
+        let Some(img) = try_make_gallery_image(&abs, image_tags.clone(), generated_by) else {
             continue;
         };
         by_seq

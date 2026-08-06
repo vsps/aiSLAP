@@ -53,21 +53,28 @@ export function Gallery() {
   const pendingOutputs = useGenerationStore((s) => s.pendingOutputs);
   const activeFilter = useTagsStore((s) => s.activeFilter);
   const filterMode = useTagsStore((s) => s.filterMode);
+  const activeUserFilter = useTagsStore((s) => s.activeUserFilter);
 
   // What the gallery actually shows: the loaded columns narrowed to the
-  // active tag filter. Keyboard nav walks this too, so arrows can't land on
-  // a thumbnail the filter has hidden.
+  // active tag + user filter. Keyboard nav walks this too, so arrows can't
+  // land on a thumbnail the filter has hidden.
   const filtered = useMemo<GalleryColumnData[]>(
     () =>
-      activeFilter.length === 0
+      activeFilter.length === 0 && !activeUserFilter
         ? columns
         : columns.map((c) => ({
             ...c,
             images: c.images.filter((i) =>
-              matchesFilter(i.tags, activeFilter, filterMode),
+              matchesFilter(
+                i.tags,
+                activeFilter,
+                filterMode,
+                i.generatedBy,
+                activeUserFilter,
+              ),
             ),
           })),
-    [columns, activeFilter, filterMode],
+    [columns, activeFilter, filterMode, activeUserFilter],
   );
 
   // Merge pending-output placeholders in so the gallery shows skeleton tiles

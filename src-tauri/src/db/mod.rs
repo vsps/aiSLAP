@@ -937,6 +937,10 @@ pub async fn asset_refs_get(project_root: &Path, asset_id: &str) -> AppResult<Ve
 pub struct TagIndex {
     pub by_rel: HashMap<String, Vec<String>>,
     pub indexed: HashSet<String>,
+    /// OS username that generated each asset, from `assets.generated_by`.
+    /// Absent for rows that predate that column or were never generated
+    /// (SRC/ref images).
+    pub generated_by: HashMap<String, String>,
 }
 
 impl TagIndex {
@@ -946,6 +950,10 @@ impl TagIndex {
 
     pub fn is_indexed(&self, rel: &str) -> bool {
         self.indexed.contains(rel)
+    }
+
+    pub fn generated_by_for(&self, rel: &str) -> Option<String> {
+        self.generated_by.get(rel).cloned()
     }
 }
 
@@ -968,7 +976,7 @@ pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
     let conn = open_local(project_root).await?;
     let mut rows = conn
         .query(
-            "SELECT a.rel_path, t.tag FROM assets a \
+            "SELECT a.rel_path, t.tag, a.generated_by FROM assets a \
              LEFT JOIN asset_tags t ON t.asset_id = a.id \
              WHERE a.deleted_at IS NULL",
             (),
@@ -979,9 +987,13 @@ pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
     while let Some(row) = rows.next().await.map_err(db_err)? {
         let rel = row.get::<String>(0).map_err(db_err)?;
         let tag = opt_string(&row, 1)?;
+        let generated_by = opt_string(&row, 2)?;
         idx.indexed.insert(rel.clone());
         if let Some(tag) = tag {
-            idx.by_rel.entry(rel).or_default().push(tag);
+            idx.by_rel.entry(rel.clone()).or_default().push(tag);
+        }
+        if let Some(generated_by) = generated_by {
+            idx.generated_by.insert(rel, generated_by);
         }
     }
     for tags in idx.by_rel.values_mut() {

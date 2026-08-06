@@ -455,7 +455,8 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       // folder (from the dropdown) or a media root (from session restore), and
       // create the folder on first visit — it's an output dir inside an entity
       // PRISM already made, not a pipeline entity.
-      const { prism } = get();
+      const { prism, shotPath: prevShotPath, targetVersion: prevTargetVersion } =
+        get();
       let resolved = shotPath;
       let entityPath: string | null = null;
       if (prism) {
@@ -463,11 +464,23 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         resolved = await cmd.prism_media_root_ensure(entityPath);
       }
       const { columns, sidecar } = await cmd.shot_open(resolved);
+      // Re-opening the shot that's already active (e.g. re-clicking it in
+      // StackedView, or another collaborator adding a version elsewhere)
+      // must not clobber an explicit local selection — only a genuine
+      // switch to a different shot, or a selection whose version no longer
+      // exists, falls back to "latest on disk".
+      const sameShot = prevShotPath === resolved;
+      const targetVersion =
+        sameShot &&
+        prevTargetVersion &&
+        columns.some((c) => c.version === prevTargetVersion)
+          ? prevTargetVersion
+          : latestVersion(columns);
       set({
         shotPath: resolved,
         shotEntityPath: entityPath,
         columns,
-        targetVersion: latestVersion(columns),
+        targetVersion,
         selectedImagePath: null,
         compareMode: false,
         compareA: null,

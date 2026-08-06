@@ -196,6 +196,9 @@ export type GalleryImage = {
   thumbPath?: string;
   /** Tag names on this image, resolved at scan time. */
   tags?: string[];
+  /** OS username that generated this image, resolved at scan time the same
+   *  way as `tags`. Absent for SRC/ref images. */
+  generatedBy?: string;
   /** True when the image hasn't been generated yet — renders a placeholder tile. */
   pending?: boolean;
 };
