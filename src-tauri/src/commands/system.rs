@@ -6,3 +6,15 @@
 pub fn system_username() -> String {
     whoami::username()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returns_a_nonempty_name_on_this_machine() {
+        let name = system_username();
+        eprintln!("whoami::username() = {name:?}");
+        assert!(!name.is_empty());
+    }
+}

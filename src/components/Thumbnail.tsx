@@ -59,6 +59,10 @@ export const Thumbnail = memo(function Thumbnail({
 
   // Hover tooltip state
   const [tooltipMeta, setTooltipMeta] = useState<ImageMetadata | null>(null);
+  // Distinguishes "haven't looked up metadata yet" from "looked it up, there
+  // isn't any" (e.g. SRC/ref images, which have no sidecar) — the latter
+  // still gets a tooltip with filename/dims, just without metadata fields.
+  const [metaLoaded, setMetaLoaded] = useState(false);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null,
   );
@@ -116,6 +120,7 @@ export const Thumbnail = memo(function Thumbnail({
     hoverTimerRef.current = setTimeout(async () => {
       const m = await getImageMetadataCached(image.path);
       setTooltipMeta(m);
+      setMetaLoaded(true);
 
       // Video-only: fps/duration aren't derivable from the thumbnail image
       // (which is what's actually rendered when a thumbPath exists), so probe
@@ -146,6 +151,7 @@ export const Thumbnail = memo(function Thumbnail({
   function onMouseLeave() {
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     setTooltipMeta(null);
+    setMetaLoaded(false);
     setTooltipPos(null);
     setVideoInfo(null);
   }
@@ -320,7 +326,7 @@ export const Thumbnail = memo(function Thumbnail({
             : "opacity-0 group-hover:opacity-100 text-white hover:text-accent"
         }`}
       />
-      {tooltipPos && tooltipMeta !== null && (
+      {tooltipPos && metaLoaded && (
         <div
           className="fixed z-50 pointer-events-none max-w-xs bg-panel/95 border border-dim shadow-xl px-2 py-1.5 text-xs space-y-0.5"
           style={{
@@ -329,10 +335,10 @@ export const Thumbnail = memo(function Thumbnail({
             transform: "translateY(-100%)",
           }}
         >
-          {tooltipMeta.provider && (
+          {tooltipMeta?.provider && (
             <div className="text-dim">{tooltipMeta.provider}</div>
           )}
-          {tooltipMeta.model && (
+          {tooltipMeta?.model && (
             <div className="text-text font-semibold truncate">
               {tooltipMeta.model}
             </div>

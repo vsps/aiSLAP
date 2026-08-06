@@ -411,6 +411,10 @@ pub struct GalleryImage {
     /// sidecar fallback for files the index hasn't seen yet).
     #[serde(default)]
     pub tags: Vec<String>,
+    /// OS username that generated this image, resolved the same way as
+    /// `tags`. Absent for SRC/ref images and anything predating the field.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub generated_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

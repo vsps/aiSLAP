@@ -12,7 +12,7 @@ use crate::commands::fsutil::{
     as_str, is_image_ext, is_model3d_ext, is_thumb, is_video_ext, project_root_for, require_dir,
     sidecar_path, thumb_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
-use crate::commands::tags::tags_from_sidecar;
+use crate::commands::tags::{generated_by_from_sidecar, tags_from_sidecar};
 use crate::commands::walk;
 use crate::db::TagIndex;
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
@@ -139,7 +139,11 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
 /// rather than resolved here since callers differ on how they know them: a
 /// directory scan looks each file up in the index, while a scan driven by the
 /// index itself already has them in hand.
-pub(crate) fn try_make_gallery_image(path: &Path, tags: Vec<String>) -> Option<GalleryImage> {
+pub(crate) fn try_make_gallery_image(
+    path: &Path,
+    tags: Vec<String>,
+    generated_by: Option<String>,
+) -> Option<GalleryImage> {
     let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
     if is_thumb(path) {
         return None;
@@ -169,6 +173,7 @@ pub(crate) fn try_make_gallery_image(path: &Path, tags: Vec<String>) -> Option<G
         is_model_3d,
         thumb_path,
         tags,
+        generated_by,
     })
 }
 
@@ -192,6 +197,23 @@ fn tags_for_file(path: &Path, project_root: Option<&ProjectRoot>, index: &TagInd
     }
 }
 
+/// `generatedBy` for one file, mirroring `tags_for_file`'s index-with-sidecar-
+/// fallback shape. `None` for SRC/ref images, which were never generated.
+fn generated_by_for_file(
+    path: &Path,
+    project_root: Option<&ProjectRoot>,
+    index: &TagIndex,
+) -> Option<String> {
+    let rel = project_root.and_then(|r| r.rel(path));
+    match rel {
+        Some(rel) if index.is_indexed(&rel) => index.generated_by_for(&rel),
+        _ => std::fs::read_to_string(sidecar_path(path))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|v| v.as_object().and_then(generated_by_from_sidecar)),
+    }
+}
+
 fn scan_directory_images(
     dir: &Path,
     project_root: Option<&ProjectRoot>,
@@ -200,7 +222,8 @@ fn scan_directory_images(
     let mut out: Vec<GalleryImage> = Vec::new();
     for path in walk::dir_media(dir)? {
         let tags = tags_for_file(&path, project_root, index);
-        if let Some(img) = try_make_gallery_image(&path, tags) {
+        let generated_by = generated_by_for_file(&path, project_root, index);
+        if let Some(img) = try_make_gallery_image(&path, tags, generated_by) {
             out.push(img);
         }
     }

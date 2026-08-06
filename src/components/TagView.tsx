@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useSessionStore } from "../stores/sessionStore";
-import { useTagsStore } from "../stores/tagsStore";
+import { tagsEqual, useTagsStore } from "../stores/tagsStore";
 import { editTagsAt, selectImagePath } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
+import type { SeqTaggedGroup } from "../lib/types";
 
 type Props = {
   onDragStart: (payload: {
@@ -19,11 +20,31 @@ export function TagView({ onDragStart }: Props) {
   const rescanTagged = useSessionStore((s) => s.rescanTagged);
   const activeFilter = useTagsStore((s) => s.activeFilter);
   const filterMode = useTagsStore((s) => s.filterMode);
+  const activeUserFilter = useTagsStore((s) => s.activeUserFilter);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
 
   useEffect(() => {
     if (projectPath) void rescanTagged();
   }, [projectPath, rescanTagged]);
+
+  // The tag filter drives the server query above; the user filter narrows
+  // client-side on top of it, same shape as Gallery.tsx's columns-view filter.
+  const visibleGroups = useMemo<SeqTaggedGroup[]>(() => {
+    if (!activeUserFilter) return taggedGroups;
+    return taggedGroups
+      .map((seq) => ({
+        ...seq,
+        shots: seq.shots
+          .map((sh) => ({
+            ...sh,
+            images: sh.images.filter(
+              (i) => i.generatedBy && tagsEqual(i.generatedBy, activeUserFilter),
+            ),
+          }))
+          .filter((sh) => sh.images.length > 0),
+      }))
+      .filter((seq) => seq.shots.length > 0);
+  }, [taggedGroups, activeUserFilter]);
 
   if (!projectPath) {
     return (
@@ -41,12 +62,14 @@ export function TagView({ onDragStart }: Props) {
     );
   }
 
-  if (taggedGroups.length === 0) {
+  if (visibleGroups.length === 0) {
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-dim">
-        {activeFilter.length > 0
-          ? `Nothing tagged ${activeFilter.join(filterMode === "all" ? " + " : " / ")}.`
-          : "Nothing tagged in this project yet."}
+        {activeUserFilter
+          ? `Nothing tagged by "${activeUserFilter}".`
+          : activeFilter.length > 0
+            ? `Nothing tagged ${activeFilter.join(filterMode === "all" ? " + " : " / ")}.`
+            : "Nothing tagged in this project yet."}
       </div>
     );
   }
@@ -54,7 +77,7 @@ export function TagView({ onDragStart }: Props) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface">
       <div className="flex flex-col gap-gallery-column-gap p-gallery-column">
-        {taggedGroups.map((seq) => (
+        {visibleGroups.map((seq) => (
           <div
             key={seq.seqPath}
             className="flex flex-col gap-gallery-column-gap"
