@@ -24,6 +24,7 @@ use crate::commands::fsutil::{
     as_str, is_image_ext, is_model3d_ext, is_video_ext, sidecar_path, ProjectRoot, PROJECT_SIDECAR,
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl, media_id_read_impl};
+use crate::commands::session::project_title_for;
 use crate::commands::tags::tags_from_sidecar;
 use crate::commands::walk;
 use crate::domain::ProjectSidecar;
@@ -46,7 +47,8 @@ const SCHEMA: &[&str] = &[
         cost_usd REAL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        deleted_at TEXT
+        deleted_at TEXT,
+        generated_by TEXT
     )",
     // Composite, leading with project_id — correct for the remote database,
     // which genuinely holds many projects. See SCHEMA_LOCAL for why the local
@@ -105,6 +107,16 @@ const SCHEMA: &[&str] = &[
         asset_id TEXT PRIMARY KEY,
         queued_at TEXT NOT NULL
     )",
+    // Human-readable project name, keyed by the same project id every asset
+    // row carries — the join the remote db's cross-project reports were
+    // otherwise missing. One row per project; refreshed opportunistically by
+    // `sync_outbox` rather than queued through `outbox`, since `outbox` is
+    // keyed by asset id and a title change has no asset to hang off.
+    "CREATE TABLE IF NOT EXISTS projects (
+        project_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )",
 ];
 
 /// Local-only indexes.
@@ -153,6 +165,12 @@ pub struct AssetRecord {
     pub updated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<String>,
+    /// OS/system username that generated this asset (via `whoami`), captured
+    /// at write time — the join key for a future central-db "who generated
+    /// what, for how much" query. Absent on rows written before this field
+    /// existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,7 +301,7 @@ async fn bootstrap(conn: &Connection, extra: &[&str]) -> AppResult<()> {
 /// Opened `Database` handles, keyed by the index file they point at.
 ///
 /// Building a `Database` runs `create_dir_all`, opens the file, and replays all
-/// nine `CREATE TABLE`/`CREATE INDEX` statements. Doing that per call turned
+/// ten `CREATE TABLE`/`CREATE INDEX` statements. Doing that per call turned
 /// batch work into an N+1 — the cost scan opened, bootstrapped and closed the
 /// database once *per backfilled asset*.
 ///
@@ -295,6 +313,29 @@ async fn bootstrap(conn: &Connection, extra: &[&str]) -> AppResult<()> {
 /// Keyed by resolved path, not by project root, so the first-open id mint
 /// (which changes which file a project resolves to) can't be served a stale
 /// handle.
+/// Best-effort column add for a table that predates this column. Checked via
+/// `PRAGMA table_info` rather than a blind `ALTER TABLE ... ADD COLUMN` plus
+/// swallow-the-duplicate-column-error: `open_remote` reopens and re-runs its
+/// setup on *every* `sync_outbox` call — i.e. after every single asset write
+/// — so a blind attempt would warn on every generation forever once the
+/// column exists, instead of once, here. The genuinely-unexpected-failure
+/// case (not "duplicate column") still warns exactly the same as before.
+async fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> AppResult<()> {
+    let mut rows = conn
+        .query(&format!("PRAGMA table_info({table})"), ())
+        .await
+        .map_err(db_err)?;
+    while let Some(row) = rows.next().await.map_err(db_err)? {
+        if row.get::<String>(1).map_err(db_err)? == column {
+            return Ok(());
+        }
+    }
+    if let Err(e) = conn.execute(ddl, ()).await {
+        tracing::warn!("{ddl} failed: {e}");
+    }
+    Ok(())
+}
+
 static LOCAL_DBS: OnceLock<Mutex<HashMap<PathBuf, Arc<Database>>>> = OnceLock::new();
 
 async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
@@ -317,10 +358,33 @@ async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
             "PRAGMA synchronous=NORMAL",
             "PRAGMA busy_timeout=5000",
         ] {
-            if let Err(e) = conn.execute(pragma, ()).await {
+            // `execute` rejects a statement that returns rows, and
+            // journal_mode/busy_timeout both hand back the value they were set
+            // to — `query` is the one that actually applies them.
+            let result = match conn.query(pragma, ()).await {
+                Ok(mut rows) => rows.next().await.map(|_| ()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = result {
                 tracing::warn!("{pragma} failed: {e}");
             }
         }
+        ensure_column(
+            &conn,
+            "assets",
+            "generated_by",
+            "ALTER TABLE assets ADD COLUMN generated_by TEXT",
+        )
+        .await?;
+        // Not in SCHEMA: on a legacy db this index would be created before the
+        // column-add above ever ran, and `CREATE INDEX ... (generated_by)`
+        // against a table that doesn't have it yet fails outright.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_generated_by ON assets(project_id, generated_by)",
+            (),
+        )
+        .await
+        .map_err(db_err)?;
     }
 
     // A concurrent opener may have won; keep whichever landed first so every
@@ -346,14 +410,49 @@ pub(crate) fn evict_cached_db(path: &Path) {
     }
 }
 
+/// Cached by URL, same shape as `LOCAL_DBS`. `sync_outbox` calls `open_remote`
+/// after every single asset write, and rebuilding the connection (a fresh TLS
+/// handshake) plus replaying every `CREATE TABLE`/`CREATE INDEX`/`ensure_column`
+/// statement over the network on each of those calls was previously masked —
+/// local opens failed before ever reaching this point (see `generated_by`
+/// migration ordering fix) — so it never ran in practice until now. A stale
+/// entry from Turso credentials changed mid-session is a known gap, matching
+/// `local_db`'s handling of a path's underlying file changing identity.
+static REMOTE_DBS: OnceLock<Mutex<HashMap<String, Arc<Database>>>> = OnceLock::new();
+
 async fn open_remote(url: String, token: String) -> AppResult<Connection> {
-    let db = Builder::new_remote(url, token)
-        .build()
+    let cache = REMOTE_DBS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(db) = cache.lock().expect("db cache poisoned").get(&url) {
+        return db.connect().map_err(db_err);
+    }
+
+    let db = Arc::new(
+        Builder::new_remote(url.clone(), token)
+            .build()
+            .await
+            .map_err(db_err)?,
+    );
+    {
+        let conn = db.connect().map_err(db_err)?;
+        bootstrap(&conn, &[]).await?;
+        ensure_column(
+            &conn,
+            "assets",
+            "generated_by",
+            "ALTER TABLE assets ADD COLUMN generated_by TEXT",
+        )
+        .await?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_generated_by ON assets(project_id, generated_by)",
+            (),
+        )
         .await
         .map_err(db_err)?;
-    let conn = db.connect().map_err(db_err)?;
-    bootstrap(&conn, &[]).await?;
-    Ok(conn)
+    }
+
+    let mut guard = cache.lock().expect("db cache poisoned");
+    let db = guard.entry(url).or_insert(db).clone();
+    db.connect().map_err(db_err)
 }
 
 // ---------- row <-> struct ----------
@@ -367,7 +466,8 @@ fn opt_string(row: &Row, idx: i32) -> AppResult<Option<String>> {
 macro_rules! asset_columns {
     () => {
         "id, project_id, rel_path, content_hash, kind, provider, model_id, \
-         endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at"
+         endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
+         generated_by"
     };
 }
 
@@ -387,6 +487,7 @@ fn row_to_asset(row: &Row) -> AppResult<AssetRecord> {
         created_at: row.get::<String>(11).map_err(db_err)?,
         updated_at: opt_string(row, 12)?,
         deleted_at: opt_string(row, 13)?,
+        generated_by: opt_string(row, 14)?,
     })
 }
 
@@ -448,14 +549,16 @@ async fn select_refs(conn: &Connection, asset_id: &str) -> AppResult<Vec<AssetRe
 async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<()> {
     conn.execute(
         "INSERT INTO assets (id, project_id, rel_path, content_hash, kind, provider, model_id, \
-             endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)
+             endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
+             generated_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14)
          ON CONFLICT(id) DO UPDATE SET
            project_id=excluded.project_id, rel_path=excluded.rel_path,
            content_hash=excluded.content_hash, kind=excluded.kind, provider=excluded.provider,
            model_id=excluded.model_id, endpoint=excluded.endpoint,
            combined_prompt=excluded.combined_prompt, settings_json=excluded.settings_json,
-           cost_usd=excluded.cost_usd, updated_at=excluded.updated_at, deleted_at=NULL",
+           cost_usd=excluded.cost_usd, updated_at=excluded.updated_at, deleted_at=NULL,
+           generated_by=excluded.generated_by",
         params!(
             record.id.clone(),
             record.project_id.clone(),
@@ -469,7 +572,29 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
             record.settings_json.clone(),
             record.cost_usd,
             record.created_at.clone(),
-            record.updated_at.clone().unwrap_or_default()
+            record.updated_at.clone().unwrap_or_default(),
+            record.generated_by.clone()
+        ),
+    )
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn upsert_project_row(
+    conn: &Connection,
+    project_id: &str,
+    title: &str,
+    updated_at: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO projects (project_id, title, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(project_id) DO UPDATE SET
+           title=excluded.title, updated_at=excluded.updated_at",
+        params!(
+            project_id.to_string(),
+            title.to_string(),
+            updated_at.to_string()
         ),
     )
     .await
@@ -703,6 +828,13 @@ fn prefix_range(clean_prefix: &str) -> (String, String) {
 /// cascade — so renaming `shot_1` never touches `shot_10`.
 ///
 /// Returns the number of rows updated.
+///
+/// The `rel_path` match below carries no `project_id` predicate — safe only
+/// because this always opens its own `open_local` connection (below) and
+/// never accepts one from a caller. If this is ever refactored to take a
+/// `Connection`/`Transaction` parameter, that parameter must never be one
+/// from `open_remote`: the shared table has no such guarantee, and this
+/// query would rewrite matching paths across every project on it.
 pub async fn asset_rename_prefix(
     project_root: &Path,
     old_rel_prefix: &str,
@@ -894,6 +1026,11 @@ pub async fn asset_tags_apply(project_root: &Path, updates: &[TagUpdate]) -> App
 /// directory). A hard delete rather than a `deleted_at` stamp: the index is
 /// rebuildable from disk, and the tag views query it directly, so a
 /// tombstone would just be a ghost with tags. Returns the rows removed.
+///
+/// Same caveat as `asset_rename_prefix`: the `rel_path` match has no
+/// `project_id` predicate, safe only because `open_local` below is always
+/// this project's own file. Never wire this to a `open_remote` connection
+/// without adding one.
 pub async fn assets_purge(project_root: &Path, rel: &str, is_prefix: bool) -> AppResult<u32> {
     let conn = open_local(project_root).await?;
     let clean = rel.trim_end_matches('/').to_string();
@@ -947,6 +1084,24 @@ pub async fn assets_purge(project_root: &Path, rel: &str, is_prefix: bool) -> Ap
 pub async fn sync_outbox(project_root: &Path) -> AppResult<SyncReport> {
     let local = open_local(project_root).await?;
 
+    // Best-effort, every call: cheap (one row) and keeps the index's project
+    // name from going stale if `pipeline.json` changes after the project was
+    // first opened. Skipped while the project id hasn't been minted yet — the
+    // frontend mints it fire-and-forget right after `project_open`, so an
+    // early call here can still race it; the next call (after an asset write,
+    // or the next project open) picks it up.
+    let project_id = read_project_id(project_root)?;
+    if !project_id.is_empty() {
+        let title = project_title_for(project_root);
+        upsert_project_row(
+            &local,
+            &project_id,
+            &title,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await?;
+    }
+
     let Some((url, token)) = turso_config()? else {
         return Ok(SyncReport {
             configured: false,
@@ -966,6 +1121,22 @@ pub async fn sync_outbox(project_root: &Path) -> AppResult<SyncReport> {
             });
         }
     };
+
+    if !project_id.is_empty() {
+        let title = project_title_for(project_root);
+        if let Err(e) = upsert_project_row(
+            &remote,
+            &project_id,
+            &title,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await
+        {
+            // Best-effort, same as an individual asset push failing below —
+            // never blocks the asset sync that follows.
+            tracing::warn!("turso sync: project title push failed: {e}");
+        }
+    }
 
     let ids = pending_outbox_ids(&local).await?;
     let mut pushed = 0u32;
@@ -1274,6 +1445,10 @@ fn reconcile_one_file(
                     .unwrap_or_else(|| now.clone()),
                 updated_at: Some(now),
                 deleted_at: None,
+                generated_by: obj
+                    .get("generatedBy")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
             })));
             report.db_ingested += 1;
         }

@@ -565,6 +565,11 @@ export type ImageMetadata = {
    *  the file on copy/move/rename for free. Written by image_tags_set;
    *  never set at generation time. */
   tags?: string[];
+  /** OS/system username that ran this generation, captured at write time via
+   *  whoami — the attribution join key for a future central-db "who
+   *  generated what, for how much" query. Absent on sidecars written before
+   *  this field existed. */
+  generatedBy?: string;
 };
 
 // ---------- Tags ----------
@@ -608,6 +613,7 @@ export type AssetRecord = {
   createdAt: string;
   updatedAt?: string;
   deletedAt?: string;
+  generatedBy?: string;
 };
 
 export type AssetRefRecord = {

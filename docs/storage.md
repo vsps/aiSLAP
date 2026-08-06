@@ -113,10 +113,24 @@ re-read.
 ## The SQLite index
 
 Per project, under `%APPDATA%`, keyed by the project id. Tables: `assets`,
-`asset_refs`, `asset_tags`, `outbox` (plus `shot_state` and `prompt_history`, created
-ahead of the feature that will use them).
+`asset_refs`, `asset_tags`, `outbox`, `projects` (plus `shot_state` and
+`prompt_history`, created ahead of the feature that will use them).
 
 It is a **cache**. Deleting it costs a reindex, not data.
+
+**`projects` is the human-readable name for a `project_id`.** One row
+(`project_id`, `title`, `updated_at`), refreshed by `sync_outbox` on every
+call rather than queued through `outbox` — `outbox` is keyed by asset id, and
+a title change has no asset to hang off. The title itself comes from
+`commands::session::project_title_for`: a PRISM project's `pipeline.json`
+`globals.project_name` when set, else the folder name — live-derived every
+time, never trusted from the `title` stored in `project.json` at creation, so
+a later pipeline.json edit doesn't go stale. This is what gives the remote
+Turso database — genuinely multi-project, see below — a name to show next to
+`project_id` in a cross-project report. The frontend derives the identical
+value itself (`prism.projectName` from `prism_detect`, else the folder
+basename) for the SessionBar label rather than round-tripping through a
+command; keep the two derivations in lockstep if this rule ever changes.
 
 Notes that are easy to get wrong:
 
@@ -124,6 +138,21 @@ Notes that are easy to get wrong:
   local-only indexes (`SCHEMA_LOCAL`) therefore lead with `content_hash` / `rel_path`
   rather than `project_id`; the composite indexes in the shared schema are correct for
   the *remote* database, which genuinely holds many projects.
+- **The remote `assets`/`asset_refs`/`asset_tags` are one shared table per name, not
+  one per project.** Considered splitting by project when the `generated_by` index
+  went in; rejected. SQLite's write lock and B-tree depth are functions of the
+  *database*, not the table — more tables in the same Turso database buys no
+  concurrency and no shallower lookups, and Turso bills rows read/written, not table
+  count. A `project_id`-leading index already bounds a project's own queries to its own
+  rows regardless of how large other projects grow. Splitting would also cost the one
+  thing this shared remote db is *for*: `generated_by` + its index exist so a future
+  "who generated what, for how much" report is one `GROUP BY` — splitting turns that
+  into a cross-table union or, if split into per-project databases instead (the
+  actually-correct way to get real isolation, per Turso's own multi-tenant guidance),
+  a scheduled ETL job. Revisit only for a real compliance/isolation requirement or
+  measured write contention — not for row count; low millions of rows per project is
+  the point where a low-cardinality leading column would start to matter, and this
+  isn't near it.
 - The local db filename falls back to a hash of the project path when the project id
   hasn't been minted yet. `adopt_path_keyed_db` renames such a file into place once the
   id lands, so a first-open race doesn't strand a whole index.

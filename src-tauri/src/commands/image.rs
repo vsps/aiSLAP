@@ -226,6 +226,10 @@ fn reidentify_copy(dest: &Path) -> Option<NewAssetInfo> {
                 .unwrap_or_else(|| now.clone()),
             updated_at: Some(now),
             deleted_at: None,
+            generated_by: obj
+                .get("generatedBy")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         },
         tags_from_sidecar(&obj),
     ))

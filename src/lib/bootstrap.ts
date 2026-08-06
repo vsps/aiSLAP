@@ -14,6 +14,7 @@ import {
   useGenerationStore,
 } from "../stores/generationStore";
 import { swallow } from "./errors";
+import { loadSystemUsername } from "./systemUser";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePresetsStore } from "../stores/presetsStore";
 import { usePricesStore } from "../stores/pricesStore";
@@ -121,6 +122,7 @@ export async function bootstrap(): Promise<() => void> {
     cmd.config_load().catch(() => null),
     modelsPromise,
     presetsPromise,
+    loadSystemUsername(),
   ]);
   const appState: AppState = isRecord(appStateRaw)
     ? (appStateRaw as unknown as AppState)

@@ -16,9 +16,10 @@ import { useTimelineStore } from "./timelineStore";
 import { useScriptStore } from "./scriptStore";
 import { useTagsStore } from "./tagsStore";
 import { swallow } from "../lib/errors";
-import { normalizeDir } from "../lib/paths";
+import { basename, normalizeDir } from "../lib/paths";
 import { entityFor } from "../lib/prism";
 import { coalesceAsync } from "../lib/coalesce";
+import { reportOutboxSync } from "../lib/outboxSync";
 import { pushLog } from "./logStore";
 
 type PromptScope = "sequence" | "shot";
@@ -30,6 +31,9 @@ type State = {
    *  persisted to project.json. The join key for a future central asset
    *  index; also stamped into every output's sidecar + embedded media tag. */
   projectId: string | null;
+  /** Read-only derived project name — PRISM's pipeline.json name, else the
+   *  folder name. Display only; there is no setter. */
+  projectTitle: string | null;
   sequencePath: string | null;
   /** Where this shot's media lives. In a PRISM project that's the
    *  `<entity>/Renders/AI` media root, not the entity folder — everything
@@ -271,6 +275,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
   return {
     projectPath: null,
     projectId: null,
+    projectTitle: null,
     sequencePath: null,
     shotPath: null,
     shotEntityPath: null,
@@ -333,6 +338,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       set({
         projectPath: normalized,
         projectId: null,
+        // PRISM's pipeline.json name when set, else the folder name — same
+        // rule the Rust side uses for the title it mirrors into the DB
+        // index (see project_title_for in commands/session.rs).
+        projectTitle: prism?.projectName || basename(normalized),
         prism,
         sequencesInProject: sequences,
         ...clearedSelection(),
@@ -368,7 +377,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         .catch(swallow("project id mint"));
       // Flush anything queued from a prior offline/no-Turso-configured
       // session. Best-effort and fire-and-forget — never blocks opening.
-      void cmd.db_sync_outbox(normalized).catch(swallow("turso outbox sync"));
+      void cmd
+        .db_sync_outbox(normalized)
+        .then(reportOutboxSync)
+        .catch(swallow("turso outbox sync"));
       // Self-heal the asset index in the background: assigns ids to
       // anything generated before Phase 1, relinks files moved outside the
       // app since the last scan. Fire-and-forget — hashing every media file

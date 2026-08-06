@@ -1,6 +1,6 @@
 [package]
 name = "aislap"
-version = "0.4.0"
+version = "0.4.2"
 description = "aiSLAP - AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
@@ -40,6 +40,7 @@ sha2 = "0.10"
 libsql = "0.9"
 uuid = { version = "1", features = ["v4"] }
 imagesize = "0.15"
+whoami = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

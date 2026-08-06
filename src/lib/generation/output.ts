@@ -9,6 +9,8 @@ import { estimateGenerationCost, perItemPrice, parseDurationSeconds } from "../f
 import { classifyMedia } from "../media";
 import { negativePromptParam, splitNegativePrompt } from "../args";
 import { pushLog } from "../../stores/logStore";
+import { currentUsername } from "../systemUser";
+import { reportOutboxSync } from "../outboxSync";
 import type {
   AssetRecord,
   AssetRefRecord,
@@ -268,6 +270,7 @@ async function recordAsset(
     settingsJson: JSON.stringify(meta.settings ?? {}),
     costUsd: meta.costUsd,
     createdAt: meta.timestamp,
+    generatedBy: meta.generatedBy,
   };
   await cmd.asset_upsert(projectPath, record).catch(() => {});
 
@@ -285,7 +288,7 @@ async function recordAsset(
     await cmd.asset_refs_set(projectPath, identity.assetId, refs).catch(() => {});
   }
 
-  void cmd.db_sync_outbox(projectPath).catch(() => {});
+  void cmd.db_sync_outbox(projectPath).then(reportOutboxSync).catch(() => {});
 }
 
 /** Some providers echo the actual seed used even when the request left it to
@@ -365,6 +368,7 @@ function buildMetadataRecord(
     costUsd,
     assetId: identity.assetId,
     contentHash: identity.contentHash,
+    generatedBy: currentUsername(),
   };
 }
 

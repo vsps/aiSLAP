@@ -26,6 +26,7 @@ pub fn run() {
             commands::config::provider_key_set,
             commands::config::presets_load,
             commands::config::presets_save,
+            commands::system::system_username,
             commands::models::models_load,
             commands::session::project_open,
             commands::prism::prism_detect,

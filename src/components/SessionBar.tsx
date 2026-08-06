@@ -19,6 +19,7 @@ export function SessionBar({
   onOpenProjectSettings,
 }: Props) {
   const projectPath = useSessionStore((s) => s.projectPath);
+  const projectTitle = useSessionStore((s) => s.projectTitle);
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const shotPath = useSessionStore((s) => s.shotPath);
   const shotEntityPath = useSessionStore((s) => s.shotEntityPath);
@@ -119,6 +120,12 @@ export function SessionBar({
           truncate
           onClick={pickProject}
           title={projectPath ?? "No project"}
+        />
+        {/* Derived, read-only — see project_title_for in commands/session.rs.
+            Not an input: renaming happens on the folder (or in PRISM), never here. */}
+        <Pill
+          value={projectTitle ?? "—"}
+          title={projectTitle ? `Project name: ${projectTitle}` : undefined}
         />
 
         <IconBtn
