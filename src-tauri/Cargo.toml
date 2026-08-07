@@ -1,6 +1,6 @@
 [package]
 name = "aislap"
-version = "0.4.3"
+version = "0.4.4"
 description = "aiSLAP - AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
@@ -24,6 +24,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-http = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }

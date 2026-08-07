@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bootstrap } from "./lib/bootstrap";
+import { cmd } from "./lib/tauri";
 import { isJobTerminal } from "./lib/jobs";
 import { swallow } from "./lib/errors";
 import { installOsDragDropListener } from "./lib/osDragDrop";
+import { checkForUpdate } from "./lib/updater";
 import { SessionBar } from "./components/SessionBar";
 import { Workbench } from "./components/Workbench";
 import { Timeline } from "./components/Timeline";
@@ -15,11 +17,13 @@ import { QueueChecklist } from "./components/QueueChecklist";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { SplashScreen } from "./components/SplashScreen";
+import { UpdateAvailableDialog } from "./components/UpdateAvailableDialog";
 import { ResizeBar } from "./components/ResizeBar";
 import { useGenerationStore } from "./stores/generationStore";
 import { useModelsStore } from "./stores/modelsStore";
 import { useSessionStore } from "./stores/sessionStore";
 import { useLayoutStore } from "./stores/layoutStore";
+import { useUpdateStore } from "./stores/updateStore";
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -27,6 +31,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [version, setVersion] = useState<string>("");
+  const pendingUpdate = useUpdateStore((s) => s.pendingUpdate);
+  const setPendingUpdate = useUpdateStore((s) => s.setPendingUpdate);
   const traceActive = useSessionStore((s) => s.traceActive);
   const setTrace = useSessionStore((s) => s.setTrace);
   const galleryHeight = useLayoutStore((s) => s.panelSizes.galleryHeight);
@@ -66,6 +72,25 @@ export default function App() {
       if (dispose) dispose();
     };
   }, []);
+
+  // Background update check, once the app is interactive. Silent unless it
+  // finds something — errors here are never surfaced, the manual "Check for
+  // updates" button in Settings is the path that reports failures.
+  useEffect(() => {
+    if (!ready) return;
+    void (async () => {
+      try {
+        const config = await cmd.config_load().catch(() => null);
+        if (config?.autoCheckUpdates === false) return;
+        const update = await checkForUpdate();
+        if (!update) return;
+        if (config?.lastDismissedUpdateVersion === update.version) return;
+        setPendingUpdate(update);
+      } catch {
+        // Silent — background check, not user-initiated.
+      }
+    })();
+  }, [ready, setPendingUpdate]);
 
   // Global Esc: exit trace (only if no other modal is open — ErrorPopup / zoom modal handle their own).
   useEffect(() => {
@@ -147,6 +172,12 @@ export default function App() {
       </div>
       <StatusBar ready={ready} bootError={bootError} />
       <ErrorPopup />
+      {pendingUpdate && (
+        <UpdateAvailableDialog
+          update={pendingUpdate}
+          onClose={() => setPendingUpdate(null)}
+        />
+      )}
       {settingsOpen && (
         <SettingsDialog onClose={() => setSettingsOpen(false)} />
       )}

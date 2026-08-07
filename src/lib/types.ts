@@ -287,6 +287,12 @@ export type Config = {
     /** Days before uploaded refs auto-expire via the bucket lifecycle rule. */
     refExpiryDays?: number;
   };
+  /** Background-check for app updates on launch. Default true. */
+  autoCheckUpdates?: boolean;
+  /** Version dismissed via the background auto-check's "Later" — suppresses
+   *  re-prompting for that version on the next launch. The manual "Check for
+   *  updates" button in Settings ignores this. */
+  lastDismissedUpdateVersion?: string;
 };
 
 export const DEFAULT_MAX_CONCURRENT_JOBS = 3;
@@ -302,6 +308,8 @@ export const DEFAULT_CONFIG: Config = {
   filenameTemplate: undefined,
   colors: undefined,
   falLifecycle: undefined,
+  autoCheckUpdates: true,
+  lastDismissedUpdateVersion: undefined,
 };
 
 // ---------- Submission queue ----------

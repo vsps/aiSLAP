@@ -309,3 +309,25 @@ cargo test              # add -- --test-threads=1 to match CI
 
 The Rust tests write into the real `%APPDATA%/aiSLAP/db/`, keyed by a per-run uuid,
 which is why CI runs them single-threaded.
+
+### Self-update
+
+`tauri-plugin-updater` checks `plugins.updater.endpoints` in `tauri.conf.json` —
+GitHub's `releases/latest/download/latest.json` — against a signed manifest that
+`release.yaml` produces via `bundle.createUpdaterArtifacts` plus the
+`TAURI_SIGNING_PRIVATE_KEY`/`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets (keypair
+from `pnpm tauri signer generate`; the public half lives in `tauri.conf.json`, not
+secret). This key is unrelated to the Apple signing/notarization secrets used for the
+macOS build — it's a separate Tauri-native Ed25519 key covering all three platforms.
+
+**Windows update target is the NSIS `.exe`, not the MSI.** Both are still built and
+published for manual download, but only the NSIS artifact participates in
+auto-update. **`.deb` and MSI installs are manual-download-only** — Tauri's updater
+doesn't support `.deb` at all.
+
+The frontend calls the plugin directly (`src/lib/updater.ts`), the same way
+`src/lib/dialog.ts` bypasses the `cmd` invoke wrapper for other Tauri plugins. A
+background check runs once per launch (`App.tsx`, gated on `Config.autoCheckUpdates`)
+and a manual one lives in Settings → General; both funnel a found update through
+`updateStore` into `UpdateAvailableDialog`, which prompts before downloading or
+relaunching — never silent.
