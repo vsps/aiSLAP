@@ -1,7 +1,7 @@
 {
     "name": "aiSLAP",
     "private": true,
-    "version": "0.4.4",
+    "version": "0.4.5",
     "description": "Desktop GUI for generative image and video APIs (fal.ai, replicate, BytePlus), organised around a project/sequence/shot file layout.",
     "type": "module",
     "scripts": {
