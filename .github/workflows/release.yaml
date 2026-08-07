@@ -149,6 +149,14 @@ jobs:
     if: needs.check-version.outputs.changed == 'true'
     strategy:
       fail-fast: false
+      # Serialized deliberately: every platform leg uploads to the SAME draft
+      # release, and with createUpdaterArtifacts on, each also writes the
+      # shared latest.json asset. Running them concurrently races — one job's
+      # delete-then-recreate of latest.json can land between another job's
+      # read and its own delete, which 404s ("Not Found" on
+      # delete-a-release-asset) and can fail that leg, leaving the release
+      # stuck in draft. One platform at a time avoids the race.
+      max-parallel: 1
       matrix:
         include:
           - os: macos-latest

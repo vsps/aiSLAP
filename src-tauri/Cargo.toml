@@ -1,6 +1,6 @@
 [package]
 name = "aislap"
-version = "0.4.5"
+version = "0.4.6"
 description = "aiSLAP - AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
