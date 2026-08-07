@@ -127,10 +127,21 @@ pub struct Config {
     /// `pricing::per_item_price`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub price_overrides: Option<HashMap<String, f64>>,
+    #[serde(default = "default_auto_check_updates")]
+    pub auto_check_updates: bool,
+    /// Version the user dismissed via the background auto-check's "Later" —
+    /// suppresses re-prompting for that same version on the next launch.
+    /// The manual "Check for updates" button in Settings ignores this.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_dismissed_update_version: Option<String>,
 }
 
 fn default_max_concurrent_jobs() -> u32 {
     3
+}
+
+fn default_auto_check_updates() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -154,6 +165,8 @@ impl Default for Config {
             fal_prices: None,
             fal_prices_fetched_at: None,
             price_overrides: None,
+            auto_check_updates: default_auto_check_updates(),
+            last_dismissed_update_version: None,
         }
     }
 }

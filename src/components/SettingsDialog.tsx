@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
 import { recoverOrphans } from "../lib/recovery";
 import { fetchFalPrices, formatCost } from "../lib/falPrices";
+import { checkForUpdate } from "../lib/updater";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { useUpdateStore } from "../stores/updateStore";
 import { invalidateConfigCache } from "../lib/metadataCache";
 import { ensureRefLifecycleRule, TOS_DEFAULTS } from "../lib/providers/tos";
 import { ModalDialog } from "./ModalDialog";
@@ -81,6 +84,10 @@ export function SettingsDialog({ onClose }: Props) {
   const [costBusy, setCostBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const setPendingUpdate = useUpdateStore((s) => s.setPendingUpdate);
   const modelEntries = useModelsStore((s) => s.entries);
   const [costProvider, setCostProvider] = useState<string>("fal");
   const [priceTableHeight, setPriceTableHeight] = useState(256);
@@ -216,7 +223,31 @@ export function SettingsDialog({ onClose }: Props) {
       const records = await cmd.pending_load().catch(() => []);
       setPendingCount(records.length);
     })();
+    void getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
   }, []);
+
+  async function checkUpdatesNow() {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateStatus("Checking…");
+    try {
+      const update = await checkForUpdate();
+      if (update) {
+        setUpdateStatus(`Update available: v${update.version}`);
+        setPendingUpdate(update);
+      } else {
+        setUpdateStatus(
+          appVersion ? `You're up to date (v${appVersion}).` : "You're up to date.",
+        );
+      }
+    } catch (e) {
+      setUpdateStatus(`Error: ${String(e)}`);
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
 
   async function checkOrphans() {
     if (orphanBusy) return;
@@ -483,6 +514,37 @@ export function SettingsDialog({ onClose }: Props) {
                 <button className="px-2 bg-bg text-xs" onClick={browseFfmpeg}>
                   browse
                 </button>
+              </div>
+            </Field>
+
+            <Field label="Updates">
+              <div className="flex gap-1 items-center">
+                <button
+                  type="button"
+                  className="px-2 bg-bg text-xs disabled:opacity-50"
+                  onClick={() => void checkUpdatesNow()}
+                  disabled={updateBusy}
+                >
+                  {updateBusy ? "Checking…" : "Check for updates"}
+                </button>
+                <span className="text-xs text-dim">
+                  {appVersion ? `Current: v${appVersion}` : ""}
+                </span>
+              </div>
+              <label className="flex items-center gap-2 text-xs mt-1">
+                <input
+                  type="checkbox"
+                  checked={config.autoCheckUpdates ?? true}
+                  onChange={(e) => {
+                    const checked = e.currentTarget.checked;
+                    setConfig((c) => ({ ...c, autoCheckUpdates: checked }));
+                  }}
+                />
+                Automatically check for updates on launch
+              </label>
+              <div className="text-xs text-dim mt-1">
+                {updateStatus ??
+                  "Checks GitHub Releases for a newer signed build."}
               </div>
             </Field>
           </>

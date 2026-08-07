@@ -1,7 +1,7 @@
 {
     "name": "aiSLAP",
     "private": true,
-    "version": "0.4.3",
+    "version": "0.4.4",
     "description": "Desktop GUI for generative image and video APIs (fal.ai, replicate, BytePlus), organised around a project/sequence/shot file layout.",
     "type": "module",
     "scripts": {
@@ -21,6 +21,8 @@
         "@tauri-apps/plugin-dialog": "^2",
         "@tauri-apps/plugin-fs": "^2",
         "@tauri-apps/plugin-http": "^2.5.8",
+        "@tauri-apps/plugin-process": "^2",
+        "@tauri-apps/plugin-updater": "^2",
         "@tauri-apps/plugin-window-state": "^2.4.1",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
