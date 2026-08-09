@@ -117,7 +117,7 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 **Video**
 
 - Veo 3 / 3.1 (txt2vid, img2vid, first + last frame)
-- Seedance 2 (fal.ai, replicate, and direct via ByteDance/BytePlus Ark)
+- Seedance 2.5 (fal.ai, replicate, and direct via ByteDance/BytePlus Ark)
 - Kling 3
 - Happy Horse
 - Depth Anything (video depth estimation)
