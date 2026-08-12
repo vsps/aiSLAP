@@ -77,6 +77,15 @@ export function Gallery() {
     [columns, activeFilter, filterMode, activeUserFilter],
   );
 
+  // Unfiltered per-version image counts, keyed off `columns` (not `filtered`)
+  // — a tag/user filter can make a non-empty version folder show 0 images in
+  // `filtered`, and delete-button gating must see the real folder contents,
+  // not what the current filter happens to be hiding.
+  const rawImageCounts = useMemo(
+    () => new Map(columns.map((c) => [c.version, c.images.length])),
+    [columns],
+  );
+
   // Merge pending-output placeholders in so the gallery shows skeleton tiles
   // for in-flight generations without touching the filesystem. Added after
   // filtering — an in-flight tile has no tags yet, and hiding it would read
@@ -778,6 +787,7 @@ export function Gallery() {
                       collapsed={collapsedVersions.has(c.version)}
                       onToggleCollapsed={() => toggleCollapsed(c.version)}
                       onFolderDelete={() => onFolderDelete(c.version)}
+                      hasFiles={(rawImageCounts.get(c.version) ?? 0) > 0}
                       onImageAction={onImageAction}
                       onRefresh={c.isSrc ? () => rescanShot() : undefined}
                       onDragStart={onDragStart}

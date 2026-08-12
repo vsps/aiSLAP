@@ -4,12 +4,11 @@ import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
 import { recoverOrphans } from "../lib/recovery";
-import { fetchFalPrices, formatCost } from "../lib/falPrices";
+import { fetchFalPrices } from "../lib/falPrices";
 import { checkForUpdate } from "../lib/updater";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
-import { useSessionStore } from "../stores/sessionStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { invalidateConfigCache } from "../lib/metadataCache";
 import { ensureRefLifecycleRule, TOS_DEFAULTS } from "../lib/providers/tos";
@@ -21,7 +20,6 @@ import {
   type Config,
   type EnumParam,
   type FalLifecycle,
-  type ProjectCostScan,
 } from "../lib/types";
 
 const TABS = ["General", "Appearance", "APIs", "Costs"] as const;
@@ -52,7 +50,6 @@ type Props = {
 };
 
 export function SettingsDialog({ onClose }: Props) {
-  const projectPath = useSessionStore((s) => s.projectPath);
   const [tab, setTab] = useState<Tab>("General");
   const [falKey, setFalKey] = useState("");
   const [replicateKey, setReplicateKey] = useState("");
@@ -80,8 +77,6 @@ export function SettingsDialog({ onClose }: Props) {
   const pricesFetchedAt = usePricesStore((s) => s.fetchedAt);
   const prices = usePricesStore((s) => s.prices);
   const pricesCount = usePricesStore((s) => Object.keys(s.prices).length);
-  const [costScan, setCostScan] = useState<ProjectCostScan | null>(null);
-  const [costBusy, setCostBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -310,18 +305,6 @@ export function SettingsDialog({ onClose }: Props) {
       setPricesStatus(`Error: ${String(e)}`);
     } finally {
       setPricesBusy(false);
-    }
-  }
-
-  async function recalculateCosts() {
-    if (!projectPath) return;
-    setCostBusy(true);
-    try {
-      setCostScan(await cmd.project_cost_scan(projectPath));
-    } catch (e) {
-      await showMessage(String(e), { kind: "error" });
-    } finally {
-      setCostBusy(false);
     }
   }
 
@@ -913,92 +896,6 @@ export function SettingsDialog({ onClose }: Props) {
                 <div className="w-8 h-1 rounded-full bg-dim/40 group-hover:bg-accent" />
               </div>
             </Field>
-
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-                  Project costs
-                </div>
-                <button
-                  type="button"
-                  className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-                  disabled={costBusy || !projectPath}
-                  onClick={recalculateCosts}
-                >
-                  {costBusy ? "Calculating…" : "Recalculate"}
-                </button>
-              </div>
-
-              {!projectPath ? (
-                <div className="text-xs text-dim">
-                  Open a project to see its cost breakdown.
-                </div>
-              ) : costScan === null ? (
-                <div className="text-xs text-dim">
-                  Not yet calculated. Computed from cached fal prices above;
-                  older images without a stored cost are backfilled
-                  automatically when a price is available.
-                </div>
-              ) : (
-                <>
-                  <div className="text-xs font-mono text-text flex items-center gap-2">
-                    <span className="font-semibold">Project total:</span>
-                    <span>≈ ${formatCost(costScan.totalCostUsd)}</span>
-                    {costScan.unknownImageCount > 0 && (
-                      <span className="text-dim">
-                        ({costScan.unknownImageCount} unpriced)
-                      </span>
-                    )}
-                    {costScan.backfilledCount > 0 && (
-                      <span className="text-dim">
-                        (backfilled {costScan.backfilledCount})
-                      </span>
-                    )}
-                  </div>
-                  <ul className="font-mono text-xs overflow-y-auto thin-scroll max-h-64 flex flex-col gap-0.5 mt-1">
-                    {costScan.sequences.map((seq) => (
-                      <li key={seq.path}>
-                        <div className="flex items-center gap-2">
-                          <span className="text-text">{seq.name}/</span>
-                          {seq.totalCostUsd > 0 && (
-                            <span
-                              className="text-[10px] font-mono text-dim shrink-0"
-                              title={
-                                seq.unknownImageCount > 0
-                                  ? `≈ $${formatCost(seq.totalCostUsd)} (${seq.unknownImageCount} unpriced)`
-                                  : `≈ $${formatCost(seq.totalCostUsd)}`
-                              }
-                            >
-                              ≈ ${formatCost(seq.totalCostUsd)}
-                            </span>
-                          )}
-                        </div>
-                        {seq.shots.map((shot) => (
-                          <div
-                            key={shot.path}
-                            className="pl-4 flex items-center gap-2 text-dim"
-                          >
-                            <span>{shot.name}/</span>
-                            {shot.totalCostUsd > 0 && (
-                              <span
-                                className="text-[10px] font-mono shrink-0"
-                                title={
-                                  shot.unknownImageCount > 0
-                                    ? `≈ $${formatCost(shot.totalCostUsd)} (${shot.unknownImageCount} unpriced)`
-                                    : `≈ $${formatCost(shot.totalCostUsd)}`
-                                }
-                              >
-                                ≈ ${formatCost(shot.totalCostUsd)}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
           </>
         )}
       </div>

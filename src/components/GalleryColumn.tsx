@@ -38,6 +38,11 @@ type Props = {
   collapsed?: boolean;
   onToggleCollapsed: () => void;
   onFolderDelete: () => void;
+  /** Whether this version folder has any files, unaffected by the active
+   *  tag/user filter (which can make `column.images` read empty even when
+   *  the folder isn't) — gates the delete button so it can't fire on a
+   *  folder that only *looks* empty because of the current filter. */
+  hasFiles: boolean;
   onImageAction: (action: ImageAction, imagePath: string) => void;
   onRefresh?: () => void;
   onDragStart: (payload: {
@@ -57,6 +62,7 @@ export function GalleryColumn({
   collapsed,
   onToggleCollapsed,
   onFolderDelete,
+  hasFiles,
   onImageAction,
   onRefresh,
   onDragStart,
@@ -103,16 +109,26 @@ export function GalleryColumn({
       let unknown = 0;
       for (let i = 0; i < metas.length; i++) {
         const m = metas[i];
-        const amount = m
-          ? perItemPrice(m.provider, m.endpoint, prices, priceOverrides, {
-              isVideo: images[i].isVideo,
-              durationSec: parseDurationSeconds(m.settings?.duration),
-              resolution:
-                typeof m.settings?.resolution === "string"
-                  ? m.settings.resolution
-                  : null,
-            })
-          : null;
+        // Trust the cost actually billed at generation time (stored costUsd —
+        // fal's authoritative per-job estimate when available, else the local
+        // per-item computation made with prices as of that generation) over a
+        // fresh recompute: re-deriving from today's cached prices would drift
+        // from the real historical cost whenever prices change, and silently
+        // misses area-billed models (no megapixels available here to price
+        // them). Same priority as the Settings -> Costs project scan.
+        const amount =
+          typeof m?.costUsd === "number" && Number.isFinite(m.costUsd)
+            ? m.costUsd
+            : m
+              ? perItemPrice(m.provider, m.endpoint, prices, priceOverrides, {
+                  isVideo: images[i].isVideo,
+                  durationSec: parseDurationSeconds(m.settings?.duration),
+                  resolution:
+                    typeof m.settings?.resolution === "string"
+                      ? m.settings.resolution
+                      : null,
+                })
+              : null;
         if (amount != null) total += amount;
         else unknown += 1;
       }
@@ -272,7 +288,12 @@ export function GalleryColumn({
               <IconBtn
                 name="delete"
                 size={18}
-                title="Delete version folder"
+                title={
+                  hasFiles
+                    ? "Empty this version folder before deleting it"
+                    : "Delete version folder"
+                }
+                disabled={hasFiles}
                 onClick={(e) => {
                   e.stopPropagation();
                   onFolderDelete();

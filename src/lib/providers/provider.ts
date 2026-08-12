@@ -29,6 +29,11 @@ export type ProviderOutput = {
   files: ProviderFile[];
   /** Original SDK payload, written into image metadata as `providerResponse`. */
   raw: unknown;
+  /** fal's id for this job, when the provider is fal — stamped into image
+   *  metadata as `falRequestId` so a later reconcile pass can look up the
+   *  real billed amount via fal's billing-events API. Undefined for other
+   *  providers (no equivalent lookup exists for them). */
+  requestId?: string;
 };
 
 export interface Provider {
