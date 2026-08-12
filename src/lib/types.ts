@@ -562,6 +562,15 @@ export type ImageMetadata = {
    *  into older sidecars by project_cost_scan when a price becomes known
    *  later — see src-tauri/src/commands/cost.rs. */
   costUsd?: number;
+  /** True once `costUsd` reflects a real charge pulled from fal's
+   *  billing-events API (see reconcile_actual_costs in cost.rs) rather than
+   *  an estimate. Absent/false means `costUsd` is still just fal's
+   *  historical-price estimate or the local unit-price computation. */
+  costUsdActual?: boolean;
+  /** fal's id for the job that produced this output — only present for the
+   *  fal provider (see ProviderOutput.requestId). The join key for looking up
+   *  the real billed amount later via fal's billing-events API. */
+  falRequestId?: string;
   /** Stable identity for this output, minted at write time (crypto.randomUUID).
    *  Embedded into the media file itself (see lib/tauri.ts media_id_embed) so
    *  a file that's moved or unlinked from this sidecar can still be traced
@@ -674,6 +683,40 @@ export type ProjectCostScan = {
    *  this run (subset of knownImageCount). */
   backfilledCount: number;
   sequences: SequenceCost[];
+};
+
+// ---------- Actual-cost reconciliation (reconcile_actual_costs) ----------
+
+export type ReconcileCostResult = {
+  /** Distinct fal request ids looked up against billing-events. */
+  checked: number;
+  /** Sidecars whose costUsd was updated to a real billed amount. */
+  reconciled: number;
+  /** Requests with no billing-events record yet (billing lag) — re-run later. */
+  unavailable: number;
+};
+
+// ---------- Per-image cost report (project_cost_lines) ----------
+
+export type CostReportLine = {
+  /** Sidecar's assetId when present, else a project-relative path — always unique. */
+  id: string;
+  sequence: string;
+  shot: string;
+  /** "<sequence>/<shot>" — collision-free across sequences that share a shot name. */
+  shotKey: string;
+  version: string;
+  provider?: "fal" | "replicate" | "bytedance";
+  modelId?: string;
+  model?: string;
+  generatedBy?: string;
+  /** Absent = no sidecar, or one with no costUsd yet. Never backfilled by this scan. */
+  costUsd?: number;
+};
+
+export type ProjectCostReport = {
+  generatedAt: string;
+  lines: CostReportLine[];
 };
 
 // ---------- Pending submissions (orphan recovery) ----------

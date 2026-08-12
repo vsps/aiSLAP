@@ -366,6 +366,7 @@ function buildMetadataRecord(
     providerResponse: ctx.out.raw,
     chain: ctx.chain,
     costUsd,
+    falRequestId: ctx.out.requestId,
     assetId: identity.assetId,
     contentHash: identity.contentHash,
     generatedBy: currentUsername(),

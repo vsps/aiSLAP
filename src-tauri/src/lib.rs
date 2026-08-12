@@ -94,6 +94,9 @@ pub fn run() {
             commands::session::shot_version_select_set,
             commands::image::version_stack_move,
             commands::cost::project_cost_scan,
+            commands::cost::project_cost_scan_cached,
+            commands::cost::reconcile_actual_costs,
+            commands::cost::project_cost_lines,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -17,6 +17,8 @@ import type {
   TagFilterMode,
   TagMigrationReport,
   ProjectCostScan,
+  ReconcileCostResult,
+  ProjectCostReport,
   SequenceTimeline,
   TimelineInit,
   TimelineExportParams,
@@ -115,6 +117,15 @@ export const cmd = {
 
   project_cost_scan: (projectPath: string): Promise<ProjectCostScan> =>
     rawInvoke("project_cost_scan", { projectPath }),
+
+  project_cost_scan_cached: (projectPath: string): Promise<ProjectCostScan> =>
+    rawInvoke("project_cost_scan_cached", { projectPath }),
+
+  reconcile_actual_costs: (projectPath: string): Promise<ReconcileCostResult> =>
+    rawInvoke("reconcile_actual_costs", { projectPath }),
+
+  project_cost_lines: (projectPath: string): Promise<ProjectCostReport> =>
+    rawInvoke("project_cost_lines", { projectPath }),
 
   // Tags. The sidecar is the source of truth; the SQLite index is a
   // rebuildable cache of it (project_tags_reindex / project_reconcile).

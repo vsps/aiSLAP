@@ -65,7 +65,7 @@ export class FalProvider implements Provider {
         abortSignal: signal,
       });
       const res = await fal.queue.result(endpoint, { requestId, abortSignal: signal });
-      return unwrapFalOutput(res.data);
+      return { ...unwrapFalOutput(res.data), requestId };
     } finally {
       signal.removeEventListener("abort", onAbort);
     }
@@ -90,7 +90,7 @@ export async function falQueueResult(
   requestId: string,
 ): Promise<ProviderOutput> {
   const res = await fal.queue.result(endpoint, { requestId });
-  return unwrapFalOutput(res.data);
+  return { ...unwrapFalOutput(res.data), requestId };
 }
 
 function emitProgress(u: QueueStatus, onProgress: (e: ProviderProgress) => void): void {
