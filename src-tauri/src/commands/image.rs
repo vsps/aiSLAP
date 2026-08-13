@@ -17,9 +17,65 @@ use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{ensure_dir, read_json_or_default, write_json_atomic};
 
 #[derive(Clone, Copy)]
-enum CollisionPolicy {
+pub(crate) enum CollisionPolicy {
     Overwrite,
     Error,
+    /// Append `_1`, `_2`, … to the stem until the destination is free.
+    ///
+    /// Only the trash move wants this: the same filename is regenerated into
+    /// the same version folder routinely, so `Error` would strand the user and
+    /// `Overwrite` would destroy the earlier copy. The suffix is applied to the
+    /// *whole triple*, so media/sidecar/thumb stay named as a set.
+    Uniquify,
+}
+
+/// Free stem in `dest_dir` for a file named `stem.ext`, per the policy. Checks
+/// the companions too — a bare `.json` left behind by a half-finished move
+/// would otherwise be clobbered by the next trash of the same name.
+fn resolve_dest_stem(
+    dest_dir: &Path,
+    stem: &str,
+    ext: Option<&str>,
+    policy: CollisionPolicy,
+) -> AppResult<String> {
+    let taken = |candidate: &str| {
+        let primary = match ext {
+            Some(e) if !e.is_empty() => dest_dir.join(format!("{candidate}.{e}")),
+            _ => dest_dir.join(candidate),
+        };
+        primary.exists()
+            || dest_dir.join(format!("{candidate}.json")).exists()
+            || dest_dir.join(format!("{candidate}.thumb.png")).exists()
+    };
+    match policy {
+        CollisionPolicy::Overwrite => Ok(stem.to_string()),
+        CollisionPolicy::Error => {
+            let primary_exists = match ext {
+                Some(e) if !e.is_empty() => dest_dir.join(format!("{stem}.{e}")).exists(),
+                _ => dest_dir.join(stem).exists(),
+            };
+            if primary_exists {
+                let name = match ext {
+                    Some(e) if !e.is_empty() => format!("{stem}.{e}"),
+                    _ => stem.to_string(),
+                };
+                return Err(AppError::Msg(format!("FILENAME_EXISTS: {name}")));
+            }
+            Ok(stem.to_string())
+        }
+        CollisionPolicy::Uniquify => {
+            if !taken(stem) {
+                return Ok(stem.to_string());
+            }
+            for n in 1u32.. {
+                let candidate = format!("{stem}_{n}");
+                if !taken(&candidate) {
+                    return Ok(candidate);
+                }
+            }
+            unreachable!("1u32.. is unbounded")
+        }
+    }
 }
 
 fn sibling_paths(p: &Path) -> AppResult<(String, String, PathBuf, PathBuf)> {
@@ -67,7 +123,7 @@ fn move_one(src: &Path, dest: &Path) -> std::io::Result<()> {
     }
 }
 
-fn transfer_triple_to_dir(
+pub(crate) fn transfer_triple_to_dir(
     src: &Path,
     dest_dir: &Path,
     mode: TransferMode,
@@ -87,20 +143,25 @@ fn transfer_triple_to_dir(
             "source and destination are the same directory".into(),
         ));
     }
-    let (_stem, filename, src_sidecar, src_thumb) = sibling_paths(src)?;
-    let dest_primary = dest_dir.join(&filename);
-    if dest_primary.exists() && matches!(policy, CollisionPolicy::Error) {
-        return Err(AppError::Msg(format!("FILENAME_EXISTS: {filename}")));
-    }
+    let (stem, _filename, src_sidecar, src_thumb) = sibling_paths(src)?;
+    let ext = src.extension().and_then(|e| e.to_str());
+    // The destination stem may differ from the source's (Uniquify), so the
+    // companion names are derived from the *destination* primary rather than
+    // reused from the source — otherwise the triple would come apart.
+    let dest_stem = resolve_dest_stem(dest_dir, &stem, ext, policy)?;
+    let dest_primary = match ext {
+        Some(e) if !e.is_empty() => dest_dir.join(format!("{dest_stem}.{e}")),
+        _ => dest_dir.join(&dest_stem),
+    };
     transfer_one(mode, src, &dest_primary)?;
-    // Sidecar/thumb are best-effort companions; skip silently if unnamed.
-    if let (true, Some(name)) = (src_sidecar.exists(), src_sidecar.file_name()) {
-        if let Err(e) = transfer_one(mode, &src_sidecar, &dest_dir.join(name)) {
+    // Sidecar/thumb are best-effort companions; a failure is logged, not fatal.
+    if src_sidecar.exists() {
+        if let Err(e) = transfer_one(mode, &src_sidecar, &sidecar_path(&dest_primary)) {
             tracing::warn!("sidecar {} failed: {e}", mode.label());
         }
     }
-    if let (true, Some(name)) = (src_thumb.exists(), src_thumb.file_name()) {
-        if let Err(e) = transfer_one(mode, &src_thumb, &dest_dir.join(name)) {
+    if src_thumb.exists() {
+        if let Err(e) = transfer_one(mode, &src_thumb, &thumb_path(&dest_primary)) {
             tracing::warn!("thumb {} failed: {e}", mode.label());
         }
     }

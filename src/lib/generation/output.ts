@@ -11,6 +11,7 @@ import { negativePromptParam, splitNegativePrompt } from "../args";
 import { pushLog } from "../../stores/logStore";
 import { currentUsername } from "../systemUser";
 import { reportOutboxSync } from "../outboxSync";
+import { randomWordPicker } from "./randomWord";
 import type {
   AssetRecord,
   AssetRefRecord,
@@ -24,7 +25,7 @@ import type {
 import type { ProviderOutput } from "../providers";
 
 export const DEFAULT_FILENAME_TEMPLATE =
-  "<date>_<time>_<sequence>_<shot>_<model>_<version>";
+  "<date>_<time>_<sequence>_<shot>_<rnd>_<rnd>_<version>_<minor>";
 
 export type DownloadCtx = {
   out: ProviderOutput;
@@ -118,11 +119,22 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
   // back to the local perItemPrice() approximation.
   const costPerFile = await estimateCostPerFile(ctx, files.length);
 
+  // The inline-text / 3D / video branches below each write exactly one file;
+  // only the image loop writes one per entry. Resolved up front so the
+  // <minor> ordinals can be reserved in a single call rather than one per file.
+  const firstInline = files.find((f) => f.inlineText !== undefined);
+  const firstModel3d = files.find((f) => f.isModel3d);
+  const firstVideo = files.find((f) => f.isVideo);
+  const writeCount =
+    firstInline || firstModel3d || firstVideo ? 1 : files.length;
+  const minors = await allocateMinors(ctx, writeCount);
+  const rnd = await resolveRandomWords(ctx);
+  const tokensFor = (i: number): NameTokens => ({ minor: minors[i], rnd });
+
   // Inline-text output (e.g. SAM3 image embedding) — no URL to download; write
   // the payload verbatim to a .txt sidecar. Not a viewable gallery tile.
-  const firstInline = files.find((f) => f.inlineText !== undefined);
   if (firstInline) {
-    const filename = resolveFilename(ctx, 1, "txt", false);
+    const filename = resolveFilename(ctx, 1, "txt", false, tokensFor(0));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.write_text_file(target, firstInline.inlineText ?? "");
     const identity = await identifyOutput(ctx, target);
@@ -133,10 +145,9 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     return written;
   }
 
-  const firstModel3d = files.find((f) => f.isModel3d);
   if (firstModel3d) {
     const ext = extFromUrl(firstModel3d.url) ?? "glb";
-    const filename = resolveFilename(ctx, 1, ext, false);
+    const filename = resolveFilename(ctx, 1, ext, false, tokensFor(0));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstModel3d.url, target);
     if (firstModel3d.thumbUrl) {
@@ -151,10 +162,9 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     return written;
   }
 
-  const firstVideo = files.find((f) => f.isVideo);
   if (firstVideo) {
     const ext = extFromUrl(firstVideo.url) ?? "mp4";
-    const filename = resolveFilename(ctx, 1, ext, false);
+    const filename = resolveFilename(ctx, 1, ext, false, tokensFor(0));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstVideo.url, target);
     const identity = await identifyOutput(ctx, target);
@@ -178,7 +188,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       ctx.settings["output_format"] ?? "",
     ).toLowerCase();
     const ext = declaredExt || extFromUrl(f.url) || "png";
-    const filename = resolveFilename(ctx, i + 1, ext, multipleFiles);
+    const filename = resolveFilename(ctx, i + 1, ext, multipleFiles, tokensFor(i));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(f.url, target);
     const megapixels = await readMegapixels(target);
@@ -378,13 +388,58 @@ function safeName(s: string): string {
   return s.replace(/[<>:"/\\|?*\s]+/g, "_").replace(/^_+|_+$/g, "") || "_";
 }
 
+function templateOf(ctx: DownloadCtx): string {
+  return ctx.filenameTemplate || DEFAULT_FILENAME_TEMPLATE;
+}
+
+/** The per-file inputs that can't be derived from `ctx` alone, because they're
+ *  resolved asynchronously once per batch rather than per name. */
+type NameTokens = {
+  /** Column-scoped ordinal for `<minor>`, or null when unavailable. */
+  minor: number | null;
+  /** Fresh word per call for `<rnd>`, or null when the list didn't load. */
+  rnd: (() => string) | null;
+};
+
+/** Reserve `count` `<minor>` ordinals for this generation's target column.
+ *
+ *  Skipped entirely — no IPC, no `shot.json` write — when the template has no
+ *  `<minor>` in it, so removing the token costs nothing. A failed allocation is
+ *  not fatal either: `resolveFilename` falls back to the file index rather than
+ *  losing the output. */
+async function allocateMinors(
+  ctx: DownloadCtx,
+  count: number,
+): Promise<(number | null)[]> {
+  if (!templateOf(ctx).includes("<minor>")) return Array<null>(count).fill(null);
+  const issued = await cmd
+    .shot_version_minor_next(ctx.shotPath, ctx.targetVersion, count)
+    .catch((e) => {
+      pushLog("ERROR", `minor-version allocation failed: ${String(e)}`);
+      return [] as number[];
+    });
+  return Array.from({ length: count }, (_, i) => issued[i] ?? null);
+}
+
+/** Word picker for `<rnd>`, or null when the template doesn't use it — which
+ *  also means the 97KB wordlist chunk is never fetched. */
+async function resolveRandomWords(
+  ctx: DownloadCtx,
+): Promise<(() => string) | null> {
+  if (!templateOf(ctx).includes("<rnd>")) return null;
+  const pick = await randomWordPicker();
+  if (!pick) pushLog("ERROR", "wordlist unavailable — <rnd> fell back to a placeholder.");
+  return pick;
+}
+
 function resolveFilename(
   ctx: DownloadCtx,
   idx: number,
   ext: string,
   appendIter: boolean,
+  tokens: NameTokens,
 ): string {
-  const tpl = ctx.filenameTemplate || DEFAULT_FILENAME_TEMPLATE;
+  const tpl = templateOf(ctx);
   const now = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
   const ms = String(now.getMilliseconds()).padStart(3, "0");
@@ -422,6 +477,20 @@ function resolveFilename(
     .replace(/<iter>/g, String(idx).padStart(3, "0"))
     .replace(/<seed>/g, seedToken)
     .replace(/<provider>/g, ctx.node.provider ?? "fal");
+
+  // Both of these are always substituted — a literal "<minor>"/"<rnd>" reaching
+  // the filesystem would be an invalid path on Windows, so the fallbacks are
+  // not optional.
+
+  // Fallback is the file index, leaving uniqueness resting on <time>'s
+  // millisecond field: no worse than before the token existed.
+  base = base.replace(/<minor>/g, String(tokens.minor ?? idx).padStart(3, "0"));
+
+  // A *function* replacer, so every occurrence rolls on its own — `<rnd>_<rnd>`
+  // yields two different words, and each file in a batch gets a fresh pair.
+  base = base.replace(/<rnd>/g, () =>
+    tokens.rnd ? safeName(tokens.rnd()) : "noword",
+  );
 
   // When template has no <iter> but we have multiple outputs, append index to avoid collisions.
   if (!hasIter && appendIter) {

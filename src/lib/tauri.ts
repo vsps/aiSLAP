@@ -184,6 +184,15 @@ export const cmd = {
   version_create_next: (shotPath: string): Promise<string> =>
     rawInvoke("version_create_next", { shotPath }),
 
+  /** Allocate `count` `<minor>` filename ordinals in `version`. Monotonic per
+   *  (shot, version) — a trashed file never frees its number. */
+  shot_version_minor_next: (
+    shotPath: string,
+    version: string,
+    count: number,
+  ): Promise<number[]> =>
+    rawInvoke("shot_version_minor_next", { shotPath, version, count }),
+
   ref_copy_to_global_src: (
     shotPath: string,
     sourcePath: string,
@@ -209,8 +218,10 @@ export const cmd = {
     metadata: ImageMetadata,
   ): Promise<void> =>
     rawInvoke("image_metadata_write", { imagePath, metadata }),
-  image_delete: (imagePath: string): Promise<void> =>
-    rawInvoke("image_delete", { imagePath }),
+  /** Moves the media triple into `<project>/TRASH/<relative dir>/` and returns
+   *  its new path. There is no hard-delete command; refused inside PRISM. */
+  image_trash: (imagePath: string): Promise<string> =>
+    rawInvoke("image_trash", { imagePath }),
   column_delete: (columnPath: string): Promise<void> =>
     rawInvoke("column_delete", { columnPath }),
 

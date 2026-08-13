@@ -83,9 +83,13 @@ const PANEL_DEFAULTS: Record<PanelKey, number> = {
   queueWidth: 400,
 };
 
+/** Thumbnail-tile width bounds. Shared by the global slider (`thumbColWidth`)
+ *  and the per-gallery-column overrides below, so the two stay comparable. */
+export const THUMB_WIDTH_RANGE: [number, number] = [80, 500];
+
 const PANEL_RANGE: Record<PanelKey, [number, number]> = {
   galleryHeight: [120, 1200],
-  thumbColWidth: [80, 500],
+  thumbColWidth: THUMB_WIDTH_RANGE,
   logHeight: [24, 600],
   timelineHeight: [45, 400],
   queueWidth: [120, 1200],
@@ -113,11 +117,61 @@ function loadPanelSizes(): Record<PanelKey, number> {
   }
 }
 
+// Per-gallery-column tile-width overrides, keyed by column version name
+// ("v003", "SHOT SRC", …) rather than by shot: a column you widened stays
+// that width wherever it turns up, and the map can't grow without bound the
+// way a shot-keyed one would. A column with no entry follows the global
+// `thumbColWidth` slider.
+const GALLERY_COL_STORAGE_KEY = "aislap.galleryColumnWidths";
+
+function clampGalleryColWidth(px: number): number {
+  const [lo, hi] = THUMB_WIDTH_RANGE;
+  return Math.max(lo, Math.min(hi, Math.round(px)));
+}
+
+function loadGalleryColumnWidths(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(GALLERY_COL_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "number" && Number.isFinite(v)) {
+        out[k] = clampGalleryColWidth(v);
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// Gallery display mode: thumbnails (default) or filenames only. A display
+// preference, not a `ViewMode` — it composes with the columns view rather than
+// replacing it, and switching it must not trigger the rescans setViewMode does.
+const GALLERY_LIST_STORAGE_KEY = "aislap.galleryListMode";
+
+function loadGalleryListMode(): boolean {
+  try {
+    return localStorage.getItem(GALLERY_LIST_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 type State = {
   widths: Record<ColumnKey, number>;
   setWidth: (key: ColumnKey, px: number) => void;
   collapsed: Record<CollapsibleKey, boolean>;
   toggleCollapsed: (key: CollapsibleKey) => void;
+
+  galleryColumnWidths: Record<string, number>;
+  setGalleryColumnWidth: (version: string, px: number) => void;
+  /** Drop the override so the column tracks the global slider again. */
+  clearGalleryColumnWidth: (version: string) => void;
+
+  galleryListMode: boolean;
+  toggleGalleryListMode: () => void;
 
   panelSizes: Record<PanelKey, number>;
   setGalleryHeight: (n: number) => void;
@@ -135,6 +189,14 @@ function persistPanelSizes(sizes: Record<PanelKey, number>) {
     localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify(sizes));
   } catch {
     /* swallow — panel-size persistence is best-effort */
+  }
+}
+
+function persistGalleryColumnWidths(widths: Record<string, number>) {
+  try {
+    localStorage.setItem(GALLERY_COL_STORAGE_KEY, JSON.stringify(widths));
+  } catch {
+    /* swallow — column-width persistence is best-effort */
   }
 }
 
@@ -157,6 +219,33 @@ export const useLayoutStore = create<State>((set, get) => ({
       localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
     } catch {
       /* swallow — collapse-state persistence is best-effort */
+    }
+  },
+
+  galleryColumnWidths: loadGalleryColumnWidths(),
+  setGalleryColumnWidth(version, px) {
+    const next = {
+      ...get().galleryColumnWidths,
+      [version]: clampGalleryColWidth(px),
+    };
+    set({ galleryColumnWidths: next });
+    persistGalleryColumnWidths(next);
+  },
+  clearGalleryColumnWidth(version) {
+    const next = { ...get().galleryColumnWidths };
+    delete next[version];
+    set({ galleryColumnWidths: next });
+    persistGalleryColumnWidths(next);
+  },
+
+  galleryListMode: loadGalleryListMode(),
+  toggleGalleryListMode() {
+    const next = !get().galleryListMode;
+    set({ galleryListMode: next });
+    try {
+      localStorage.setItem(GALLERY_LIST_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      /* swallow — list-mode persistence is best-effort */
     }
   },
 

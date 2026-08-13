@@ -75,6 +75,14 @@ from a media path rather than assuming a fixed depth.
 project and the UI greys them out. aiSLAP only ever creates `Renders/AI` and its
 version folders, via `prism_media_root_ensure`, called by `setShot` on first visit.
 
+**PRISM owns removal too — aiSLAP never deletes or trashes inside a pipeline.**
+`image_trash` and `column_delete` both refuse with `PRISM_NO_DELETE` when
+`prism_root_for` finds a pipeline root above the path, and no `TRASH/` folder is ever
+created. The frontend hides every affordance ahead of that (`sessionStore.prism` is
+non-null): the gallery trashcan, the context-menu entry, the zoom-modal buttons and the
+per-column delete. The refusal in Rust is the backstop behind a stale UI, not the
+primary gate. See [storage.md](storage.md) for what trashing does in a native project.
+
 **A corrupt `pipeline.json` is still PRISM.** Detection falls back to the stock folder
 structure rather than treating the project as native — deliberately, since the
 alternative silently relocates where output lands.

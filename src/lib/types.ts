@@ -264,7 +264,7 @@ export type Config = {
   ffmpegPath: string;
   /** Max number of submissions running in parallel; default 3. */
   maxConcurrentJobs?: number;
-  /** Output filename template. Tokens: <date> <time> <sequence> <shot> <model> <version> <prompt> <iter> <seed> <provider> */
+  /** Output filename template. Tokens: <date> <time> <sequence> <shot> <model> <version> <prompt> <iter> <seed> <provider> <minor> <rnd> */
   filenameTemplate?: string;
   colors?: ColorOverrides;
   /** fal.ai object lifecycle: "immediate" | "1h" | "1d" | "7d" | "30d" | "1y" | "never" | seconds. Unset = fal default. */

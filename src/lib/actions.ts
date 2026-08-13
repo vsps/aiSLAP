@@ -9,6 +9,7 @@ import { inFlightJobs } from "./jobs";
 import { rewriteScriptHeading } from "./script";
 import { linkFromPersisted } from "./bootstrap";
 import { inferIncludes, scriptSegmentsFor } from "./generation/prompts";
+import { invalidateImageMetadata } from "./metadataCache";
 import { useGenerationStore } from "../stores/generationStore";
 import { useModelsStore } from "../stores/modelsStore";
 import { findLoadedImage, useSessionStore } from "../stores/sessionStore";
@@ -649,17 +650,30 @@ export async function performImageAction(
       return;
     }
     case "delete": {
+      // Nothing is ever removed: the file, its sidecar and its thumbnail move
+      // to <project>/TRASH/ under a mirror of their relative path. In a PRISM
+      // project even that is refused — the pipeline owns those files. Every
+      // affordance is hidden there, so reaching this is a stale-UI case.
+      if (session.prism) {
+        await showMessage(
+          "aiSLAP does not remove files in a PRISM project.",
+          { kind: "warning" },
+        );
+        return;
+      }
       const img = findLoadedImage(path);
       const ok = await confirmAction(
-        `Delete ${img?.filename ?? basename(path)}?`,
+        `Move ${img?.filename ?? basename(path)} to TRASH?`,
         {
-          title: "Delete image",
+          title: "Move to TRASH",
           kind: "warning",
         },
       );
       if (!ok) return;
       try {
-        await cmd.image_delete(path);
+        await cmd.image_trash(path);
+        // The sidecar left this path — a cached read would outlive the file.
+        invalidateImageMetadata(path);
         await session.rescanShot();
         if (useSessionStore.getState().zoomImagePath === path) {
           useSessionStore.getState().setZoomImage(null);

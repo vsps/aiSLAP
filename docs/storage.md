@@ -41,10 +41,11 @@ project/
   project.json           project id, title, tagDefs, tagsMigrated, version prefix
   script.md              optional
   SRC/                   project-wide inputs
+  TRASH/                 trashed media — see below
   <sequence>/
     sequence.json
     <shot>/
-      shot.json          prompt history, version selects, clip media
+      shot.json          prompt history, version selects, minor counters, clip media
       SRC/               shot inputs
       SEL/               legacy — see below
       v001/ gen001/ …    one folder per generation batch
@@ -66,14 +67,35 @@ clip.json           its sidecar — the durable record
 clip.thumb.png      poster frame, for video and 3D
 ```
 
-These move as a unit through copy, move, rename **and export**. `fsutil.rs` provides
-`sidecar_path`, `thumb_path` and `is_thumb` so no caller has to rebuild those names by
-hand — the export path silently dropped thumbnails for exactly that reason before the
-helpers existed.
+These move as a unit through copy, move, rename, **trash** and **export**. `fsutil.rs`
+provides `sidecar_path`, `thumb_path` and `is_thumb` so no caller has to rebuild those
+names by hand — the export path silently dropped thumbnails for exactly that reason
+before the helpers existed.
 
 The sidecar carries the prompt pieces, the exact `combinedPrompt` sent, the settings,
 a ref snapshot, the provider response, `costUsd`, the chain lineage, `tags`, `assetId`
 and `contentHash`.
+
+## TRASH
+
+**There is no hard delete.** `image_trash` moves the whole triple into `<project>/TRASH/`
+under a mirror of the file's project-relative path — `TRASH/SQ01/sh010/v003/clip.mp4` —
+so where it came from is legible and two shots' identically-named files can't collide.
+A name trashed twice gets `_1`, `_2` … appended, applied to all three companions at once
+so the triple stays a set (`CollisionPolicy::Uniquify` in `image.rs`).
+
+`TRASH` is excluded from every traversal, at **both** gates: `walk.rs::is_content_dir`
+(which covers `project_walk`, `project_reconcile`, `project_cost_scan`, `timeline_init`
+and `project_tag_scan`) and `fsutil.rs::list_dirs` (which fills the SEQUENCE dropdown).
+Miss the second and a native project grows a `TRASH` sequence.
+
+Trashing **purges** the file's index rows rather than relinking them — a row pointing
+inside `TRASH` would never be revisited by reconcile yet would still answer tag queries.
+Restoring is therefore just moving the file back out: `project_reconcile` re-ingests it
+on the next project open and recovers its `assetId` from the embedded media id, and its
+tags never left the sidecar.
+
+**In a PRISM project nothing is trashed or deleted at all** — see [prism.md](prism.md).
 
 ## Asset identity
 

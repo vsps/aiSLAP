@@ -313,6 +313,16 @@ pub struct ShotSidecar {
     /// value = comment shown next to the version label. Folders are not renamed.
     #[serde(default, skip_serializing_if = "map_is_empty")]
     pub version_comments: HashMap<String, String>,
+    /// Highest `<minor>` filename ordinal issued in each version folder. Key =
+    /// version name (e.g. "v003").
+    ///
+    /// Monotonic on purpose: trashing a file does not free its number, so a
+    /// name can never be reused within a column. A counter rather than a scan
+    /// of existing filenames — the token can sit anywhere in a user-authored
+    /// template, and the download path overwrites on collision, so a misparse
+    /// would silently destroy a file.
+    #[serde(default, skip_serializing_if = "map_is_empty")]
+    pub minor_counters: HashMap<String, u32>,
     /// Sum of costUsd across every image in this shot's version folders, from
     /// the most recent project_cost_scan run. None until a scan has run once.
     #[serde(default, skip_serializing_if = "Option::is_none")]

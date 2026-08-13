@@ -158,7 +158,7 @@ Inside `commands/`:
 | `gallery.rs` | version-column and stacked scanning; resolves tags from the index |
 | `image.rs` | media-triple copy/move/rename, version-stack moves, reveal-in-explorer |
 | `tags.rs` | tag writes, vocabulary, rename/delete sweeps, reindex, migrate, export-by-tag |
-| `metadata.rs` | sidecar read/write/delete |
+| `metadata.rs` | sidecar read/write, and the trash move (there is no hard delete) |
 | `media_id.rs` | embedded asset identity (EXIF/PNG text/WebP chunk) and content hashing |
 | `prism.rs` | PRISM layout detection and entity resolution |
 | `cost.rs` | project-wide cost rollup, backfilling `costUsd` into sidecars |
@@ -261,10 +261,13 @@ A checklist to test a change against:
 5. **`lib/tauri.ts` is the sole `invoke` site.**
 6. **Model files never declare `kind`** — every shipped file relies on inference from
    its outputs. See [model-registry.md](model-registry.md).
-7. **`SRC`, `SEL`, and `.`/`$`-prefixed directories are never sequences, entities or
-   version folders.** This is enforced in one place — `commands/walk.rs` — and every
-   scan goes through it. Five traversals used to implement this independently and
-   disagreed; don't add a sixth.
+7. **`SRC`, `SEL`, `TRASH`, and `.`/`$`-prefixed directories are never sequences,
+   entities or version folders.** Scans are enforced in one place —
+   `commands/walk.rs::is_content_dir` — and every traversal goes through it. Five used
+   to implement this independently and disagreed; don't add a sixth. There is a second,
+   separate gate: `fsutil.rs::list_dirs`, which fills the SEQUENCE dropdown rather than
+   walking. A new exclusion has to land in both, or the folder is invisible to every
+   scan and still offered as a sequence.
 8. **Read-modify-write of `project.json` uses the strict read** (`read_json_strict`).
    The lenient read invents a default that the following write would commit, erasing
    the project id and tag vocabulary.
