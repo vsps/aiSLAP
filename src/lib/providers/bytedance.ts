@@ -97,6 +97,7 @@ const TOP_LEVEL_FIELDS = new Set([
   "generate_audio",
   "watermark",
   "seed",
+  "output_format", // Seedance 2.5 only
 ]);
 
 // Ensure the ref-expiry lifecycle rule at most once per session — cheap
