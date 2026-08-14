@@ -23,7 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::commands::fsutil::{is_media_ext, is_thumb, list_dirs, SEL_DIR, SRC_DIR};
+use crate::commands::fsutil::{is_media_ext, is_thumb, list_dirs, SEL_DIR, SRC_DIR, TRASH_DIR};
 use crate::commands::prism;
 use crate::error::AppResult;
 
@@ -43,9 +43,13 @@ pub(crate) struct ShotEntry {
 }
 
 /// Is this directory name a real sequence/entity/version, rather than an input
-/// folder, dead legacy, or something the OS left lying around?
+/// folder, dead legacy, trashed media, or something the OS left lying around?
 fn is_content_dir(name: &str) -> bool {
-    !name.starts_with('.') && !name.starts_with('$') && name != SRC_DIR && name != SEL_DIR
+    !name.starts_with('.')
+        && !name.starts_with('$')
+        && name != SRC_DIR
+        && name != SEL_DIR
+        && name != TRASH_DIR
 }
 
 fn dir_name(p: &Path) -> Option<String> {
@@ -195,6 +199,7 @@ mod tests {
         assert!(is_content_dir("shot_010"));
         assert!(!is_content_dir(SRC_DIR));
         assert!(!is_content_dir(SEL_DIR));
+        assert!(!is_content_dir(TRASH_DIR));
         assert!(!is_content_dir(".git"));
         assert!(!is_content_dir("$RECYCLE.BIN"));
     }

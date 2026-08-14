@@ -115,8 +115,17 @@ a trail. See §11.
 `output.ts` → `downloadAndWrite`:
 
 - **Filename** from the template, default
-  `<date>_<time>_<sequence>_<shot>_<model>_<version>`, with `_1`…`_N` appended for a
-  batch and an iteration suffix when iterating.
+  `<date>_<time>_<sequence>_<shot>_<model>_<version>_<minor>`, with `_1`…`_N` appended
+  for a batch and an iteration suffix when iterating.
+- **`<minor>`** is a 3-digit ordinal that counts up *within one version column*, across
+  generations. It is allocated from a monotonic counter in `shot.json`
+  (`minorCounters`, keyed by version name) via `shot_version_minor_next` — **not** read
+  back off existing filenames. Two reasons: the token can sit anywhere in a
+  user-authored template, so parsing it back is guesswork; and the download path
+  overwrites on collision rather than erroring, so a misparse destroys a file. Being a
+  counter also means trashing a file never frees its number. Allocation is serialised by
+  a mutex, because concurrent jobs can target the same column. Templates without the
+  token skip the IPC entirely.
 - **Version folder** resolved per project shape — `v001` natively, PRISM's configured
   padding otherwise.
 - **Highest-resolution pick** when a response returns more files than were requested:

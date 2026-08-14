@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { GalleryColumn as GalleryColumnData } from "../lib/types";
 import { editTagsAt, type ImageAction } from "../lib/actions";
+import { FileRow } from "./FileRow";
+import { GalleryColumnResizeHandle } from "./GalleryColumnResizeHandle";
 import { IconBtn } from "./IconBtn";
 import { Thumbnail } from "./Thumbnail";
 import { useSessionStore } from "../stores/sessionStore";
@@ -43,6 +45,10 @@ type Props = {
    *  the folder isn't) — gates the delete button so it can't fire on a
    *  folder that only *looks* empty because of the current filter. */
   hasFiles: boolean;
+  /** Render filenames instead of thumbnails. */
+  listMode?: boolean;
+  /** True inside a PRISM project, where aiSLAP never deletes anything. */
+  deleteDisabled?: boolean;
   onImageAction: (action: ImageAction, imagePath: string) => void;
   onRefresh?: () => void;
   onDragStart: (payload: {
@@ -63,6 +69,8 @@ export function GalleryColumn({
   onToggleCollapsed,
   onFolderDelete,
   hasFiles,
+  listMode,
+  deleteDisabled,
   onImageAction,
   onRefresh,
   onDragStart,
@@ -164,9 +172,13 @@ export function GalleryColumn({
     !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
 
   // Stable maxAspect for grid mode — references stay equal between renders.
-  const maxAspect = subCols > 1 ? 1 : undefined;
-  const gridClass =
-    subCols === 3
+  // Irrelevant in list mode, which renders no images.
+  const maxAspect = !listMode && subCols > 1 ? 1 : undefined;
+  // List mode keeps `subCols` driving the column's *width* (so a narrow tile
+  // setting still yields a readable ~240px column) but always stacks its rows.
+  const gridClass = listMode
+    ? "flex flex-col"
+    : subCols === 3
       ? "grid grid-cols-3 gap-gallery-column-gap content-start"
       : subCols === 2
         ? "grid grid-cols-2 gap-gallery-column-gap content-start"
@@ -208,9 +220,16 @@ export function GalleryColumn({
         isDropTarget || osDragTarget
           ? "outline outline-2 outline-accent border-transparent"
           : "border-border"
-      } p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
+      } relative p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
       style={{ width: `${effectiveWidth}px` }}
     >
+      {!collapsed && (
+        <GalleryColumnResizeHandle
+          version={column.version}
+          width={width}
+          subCols={subCols}
+        />
+      )}
       {collapsed ? (
         <div
           className={`flex-1 min-h-0 flex flex-col items-center justify-center text-sm cursor-pointer ${headerClass}`}
@@ -289,11 +308,13 @@ export function GalleryColumn({
                 name="delete"
                 size={18}
                 title={
-                  hasFiles
-                    ? "Empty this version folder before deleting it"
-                    : "Delete version folder"
+                  deleteDisabled
+                    ? "PRISM projects: aiSLAP never deletes"
+                    : hasFiles
+                      ? "Empty this version folder before deleting it"
+                      : "Delete version folder"
                 }
-                disabled={hasFiles}
+                disabled={hasFiles || deleteDisabled}
                 onClick={(e) => {
                   e.stopPropagation();
                   onFolderDelete();
@@ -304,22 +325,34 @@ export function GalleryColumn({
           <div
             className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${gridClass}`}
           >
-            {column.images.map((img) => (
-              <Thumbnail
-                key={img.path}
-                image={img}
-                selected={selectedImagePath === img.path}
-                columnVersion={column.version}
-                isDragSource={dragState?.fromPath === img.path}
-                onSelect={handleSelect}
-                onEditTags={handleEditTags}
-                onDragStart={onDragStart}
-                maxAspect={maxAspect}
-              />
-            ))}
+            {column.images.map((img) =>
+              listMode ? (
+                <FileRow
+                  key={img.path}
+                  image={img}
+                  selected={selectedImagePath === img.path}
+                  columnVersion={column.version}
+                  isDragSource={dragState?.fromPath === img.path}
+                  onSelect={handleSelect}
+                  onDragStart={onDragStart}
+                />
+              ) : (
+                <Thumbnail
+                  key={img.path}
+                  image={img}
+                  selected={selectedImagePath === img.path}
+                  columnVersion={column.version}
+                  isDragSource={dragState?.fromPath === img.path}
+                  onSelect={handleSelect}
+                  onEditTags={handleEditTags}
+                  onDragStart={onDragStart}
+                  maxAspect={maxAspect}
+                />
+              ),
+            )}
             {column.images.length === 0 && (
               <div
-                className={`text-xs text-dim text-center py-2${subCols > 1 ? ` col-span-${subCols}` : ""}`}
+                className={`text-xs text-dim text-center py-2${!listMode && subCols > 1 ? ` col-span-${subCols}` : ""}`}
               >
                 {column.isSrc ? "No refs" : "Empty"}
               </div>

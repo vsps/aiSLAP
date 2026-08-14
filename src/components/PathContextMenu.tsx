@@ -1,6 +1,7 @@
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import { performImageAction, type ImageAction } from "../lib/actions";
 import { usePopupDismiss, useClampedPosition } from "../lib/popup";
+import { useSessionStore } from "../stores/sessionStore";
 
 type AvailableAction = Exclude<ImageAction, "select">;
 type MenuItem = AvailableAction | "---";
@@ -57,7 +58,7 @@ const LABELS: Record<AvailableAction, string> = {
   zoom: "ZOOM",
   refresh: "Refresh",
   open_location: "OPEN LOCATION",
-  delete: "DELETE",
+  delete: "MOVE TO TRASH",
   show_info: "SHOW INFO",
 };
 
@@ -74,6 +75,21 @@ export function PathContextMenu({
   const pos = useClampedPosition(ref, x, y);
   usePopupDismiss(ref, onClose, { dismissOnContextMenu: true });
 
+  // aiSLAP never removes files inside a PRISM project, so the entry doesn't
+  // appear there at all. Filtered here rather than at each of the four call
+  // sites, two of which pass their own explicit item lists. Trailing/adjacent
+  // separators are dropped with it so the menu doesn't grow a stray rule.
+  const prism = useSessionStore((s) => s.prism);
+  const visibleItems = useMemo(() => {
+    if (!prism) return items;
+    const kept = items.filter((a) => a !== "delete");
+    return kept.filter(
+      (a, i) =>
+        a !== "---" ||
+        (i > 0 && kept[i - 1] !== "---" && kept.slice(i + 1).some((b) => b !== "---")),
+    );
+  }, [items, prism]);
+
   const run = (action: AvailableAction) => async (e: React.MouseEvent) => {
     e.stopPropagation();
     onClose();
@@ -87,7 +103,7 @@ export function PathContextMenu({
       style={{ left: pos.left, top: pos.top }}
       onClick={(e) => e.stopPropagation()}
     >
-      {items.map((a, i) =>
+      {visibleItems.map((a, i) =>
         a === "---" ? (
           <div key={`sep-${i}`} className="my-0.5 border-t border-dim" />
         ) : (

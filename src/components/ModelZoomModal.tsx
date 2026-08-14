@@ -9,7 +9,8 @@ import { FullscreenModal } from "./FullscreenModal";
 type Props = {
   image: GalleryImage;
   onClose: () => void;
-  onDelete: () => void;
+  /** Omitted in a PRISM project, where aiSLAP never deletes. */
+  onDelete?: () => void;
 };
 
 function Model({ url }: { url: string }) {
@@ -41,13 +42,15 @@ export function ModelZoomModal({ image, onClose, onDelete }: Props) {
         >
           + ref
         </button>
-        <button
-          className="accent-hover px-2 py-1 text-xs font-mono text-bad"
-          title="Delete"
-          onClick={async () => { await onDelete(); onClose(); }}
-        >
-          delete
-        </button>
+        {onDelete && (
+          <button
+            className="accent-hover px-2 py-1 text-xs font-mono text-bad"
+            title="Move to TRASH"
+            onClick={async () => { await onDelete(); onClose(); }}
+          >
+            trash
+          </button>
+        )}
         <button
           className="accent-hover px-2 py-1 text-xs font-mono"
           title="Close (Esc)"

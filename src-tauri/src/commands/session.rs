@@ -391,6 +391,45 @@ pub fn shot_clip_media_set(shot_path: String, media_path: Option<String>) -> App
     .map(drop)
 }
 
+/// Serializes `<minor>` ordinal allocation.
+///
+/// Up to `DEFAULT_MAX_CONCURRENT_JOBS` generations run at once and two of them
+/// can target the same version folder. Allocation is a read-modify-write of one
+/// `shot.json`; interleaved, two callers would be handed the same ordinal — and
+/// the download path overwrites rather than erroring, so the collision would
+/// destroy a file rather than surface.
+static MINOR_ALLOC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A generation writing `count` files into `version` gets its ordinals here.
+///
+/// The counter is monotonic and lives in `shot.json` beside `version_comments`:
+/// trashing a file never frees its number, which is what "next highest, never
+/// falls into a gap" means. Files that predate the token carry no ordinal at
+/// all, so a counter starting from zero cannot collide with them.
+#[tauri::command]
+pub async fn shot_version_minor_next(
+    shot_path: String,
+    version: String,
+    count: u32,
+) -> AppResult<Vec<u32>> {
+    // Clamped: a bogus count would inflate the counter permanently, and no
+    // real provider response is anywhere near this size.
+    let count = count.min(256);
+    run_blocking(move || {
+        let _guard = MINOR_ALLOC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut issued = Vec::with_capacity(count as usize);
+        with_shot_sidecar(&shot_path, |sidecar| {
+            let next = sidecar.minor_counters.entry(version).or_insert(0);
+            for _ in 0..count {
+                *next += 1;
+                issued.push(*next);
+            }
+        })?;
+        Ok(issued)
+    })
+    .await
+}
+
 /// Set or clear the short comment associated with a version folder. Trimmed
 /// empty input removes the entry; the version folder itself is never renamed.
 #[tauri::command]
@@ -408,4 +447,40 @@ pub fn shot_version_comment_set(
         }
     })
     .map(drop)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TestProject;
+
+    /// Ordinals are handed out in an unbroken run, keep going across calls
+    /// (that's the "never falls into a gap" property), and each version folder
+    /// counts on its own.
+    #[tokio::test]
+    async fn minor_ordinals_are_monotonic_and_per_version() {
+        let project = TestProject::new("minor");
+        let shot = as_str(&project.dir("SQ01/sh010"));
+
+        let first = shot_version_minor_next(shot.clone(), "v003".into(), 4)
+            .await
+            .unwrap();
+        assert_eq!(first, vec![1, 2, 3, 4]);
+
+        let second = shot_version_minor_next(shot.clone(), "v003".into(), 2)
+            .await
+            .unwrap();
+        assert_eq!(second, vec![5, 6], "the counter never restarts");
+
+        let other = shot_version_minor_next(shot.clone(), "v004".into(), 1)
+            .await
+            .unwrap();
+        assert_eq!(other, vec![1], "a different column counts independently");
+
+        // It survives a reload — the counter lives in shot.json, not memory.
+        let sidecar: ShotSidecar =
+            read_json_or_default(&project.root.join("SQ01/sh010").join(SHOT_SIDECAR)).unwrap();
+        assert_eq!(sidecar.minor_counters.get("v003"), Some(&6));
+        assert_eq!(sidecar.minor_counters.get("v004"), Some(&1));
+    }
 }

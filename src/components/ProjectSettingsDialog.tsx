@@ -13,6 +13,7 @@ import { useTagsStore } from "../stores/tagsStore";
 import { useCostReportStore } from "../stores/costReportStore";
 import { normalizeTitle, parseScript } from "../lib/script";
 import { formatCost } from "../lib/falPrices";
+import { DEFAULT_FILENAME_TEMPLATE } from "../lib/generation/output";
 import {
   applyFilter,
   costByModel,
@@ -33,9 +34,6 @@ type Props = {
 
 const TABS = ["General", "Costs"] as const;
 type Tab = (typeof TABS)[number];
-
-const FILENAME_TEMPLATE_DEFAULT =
-  "<date>_<time>_<sequence>_<shot>_<model>_<version>";
 
 const VERSION_PREFIX_DEFAULT = "gen";
 const VERSION_PREFIX_RE = /^[A-Za-z][A-Za-z_-]*$/;
@@ -444,7 +442,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
               }}
               disabled={!config}
               className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
-              placeholder={FILENAME_TEMPLATE_DEFAULT}
+              placeholder={DEFAULT_FILENAME_TEMPLATE}
             />
             <button
               type="button"
@@ -463,7 +461,14 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             <code>&lt;sequence&gt;</code> <code>&lt;shot&gt;</code>{" "}
             <code>&lt;model&gt;</code> <code>&lt;version&gt;</code>{" "}
             <code>&lt;prompt&gt;</code> <code>&lt;iter&gt;</code>{" "}
-            <code>&lt;seed&gt;</code> <code>&lt;provider&gt;</code>
+            <code>&lt;seed&gt;</code> <code>&lt;provider&gt;</code>{" "}
+            <code>&lt;minor&gt;</code> <code>&lt;rnd&gt;</code>
+          </div>
+          <div className="text-xs text-dim">
+            <code>&lt;minor&gt;</code> counts up within one version column and
+            never reuses a number, so it keeps running across generations.{" "}
+            <code>&lt;rnd&gt;</code> is a random five-letter word, rerolled for
+            every occurrence and every file.
           </div>
         </div>
 

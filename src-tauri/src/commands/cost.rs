@@ -439,11 +439,19 @@ fn project_cost_lines_impl(project_path: String) -> AppResult<ProjectCostReport>
                 let sc_path = sidecar_path(&media_path);
                 if let Ok(text) = std::fs::read_to_string(&sc_path) {
                     if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(&text) {
-                        line.provider = obj.get("provider").and_then(|v| v.as_str()).map(String::from);
-                        line.model_id = obj.get("modelId").and_then(|v| v.as_str()).map(String::from);
+                        line.provider = obj
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        line.model_id = obj
+                            .get("modelId")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
                         line.model = obj.get("model").and_then(|v| v.as_str()).map(String::from);
-                        line.generated_by =
-                            obj.get("generatedBy").and_then(|v| v.as_str()).map(String::from);
+                        line.generated_by = obj
+                            .get("generatedBy")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
                         line.cost_usd = obj.get("costUsd").and_then(|v| v.as_f64());
                         if let Some(id) = obj.get("assetId").and_then(|v| v.as_str()) {
                             line.id = id.to_string();
@@ -709,7 +717,11 @@ async fn fetch_billing_costs(
                 out.insert(ev.request_id, ev.cost_total);
             }
 
-            cursor = if page.has_more { page.next_cursor } else { None };
+            cursor = if page.has_more {
+                page.next_cursor
+            } else {
+                None
+            };
             if cursor.is_none() {
                 break;
             }
