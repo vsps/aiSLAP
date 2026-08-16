@@ -128,6 +128,12 @@ export function Gallery() {
   const traceActive = useSessionStore((s) => s.traceActive);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
+  const galleryColumnWidths = useLayoutStore((s) => s.galleryColumnWidths);
+  const listMode = useLayoutStore((s) => s.galleryListMode);
+  const toggleListMode = useLayoutStore((s) => s.toggleGalleryListMode);
+  // PRISM projects belong to a pipeline aiSLAP doesn't own — nothing here
+  // deletes or trashes inside one, so the affordances don't appear at all.
+  const prism = useSessionStore((s) => s.prism);
   const zoomImagePath = useSessionStore((s) => s.zoomImagePath);
   const setZoomImage = useSessionStore((s) => s.setZoomImage);
   const renameImagePath = useSessionStore((s) => s.renameImagePath);
@@ -629,6 +635,7 @@ export function Gallery() {
     const col = columns.find((c) => c.version === version);
     if (!col || col.isSrc) return;
     if (!shotPath) return;
+    if (prism) return; // the button is disabled too; this is the backstop
     const ok = await confirmAction(
       `Delete version folder ${version} and all its images?`,
       {
@@ -677,6 +684,15 @@ export function Gallery() {
           <Icon name="sell" size={22} fill={viewMode === "tagged"} />
         </button>
       )}
+      {viewMode === "columns" && shotPath && (
+        <button
+          className={`${listMode ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
+          title={listMode ? "Show thumbnails" : "Show filenames only"}
+          onClick={toggleListMode}
+        >
+          <Icon name="format_list_bulleted" size={22} fill={listMode} />
+        </button>
+      )}
       {sequencePath && (
         <button
           className={`${
@@ -713,10 +729,10 @@ export function Gallery() {
           <Icon name="conversion_path" size={22} fill={!!traceActive} />
         </button>
       )}
-      {selectedImagePath && (
+      {selectedImagePath && !prism && (
         <button
           className="accent-hover px-3 py-2 flex items-center justify-center"
-          title="Delete selected"
+          title="Move selected to TRASH"
           onClick={() => onImageAction("delete", selectedImagePath)}
         >
           <Icon name="delete" size={22} />
@@ -781,13 +797,15 @@ export function Gallery() {
                     <GalleryColumn
                       key={c.version}
                       column={c}
-                      width={thumbColWidth}
+                      width={galleryColumnWidths[c.version] ?? thumbColWidth}
                       destDir={destDirFor(c)}
                       dragState={dragState}
                       collapsed={collapsedVersions.has(c.version)}
                       onToggleCollapsed={() => toggleCollapsed(c.version)}
                       onFolderDelete={() => onFolderDelete(c.version)}
                       hasFiles={(rawImageCounts.get(c.version) ?? 0) > 0}
+                      listMode={listMode}
+                      deleteDisabled={!!prism}
                       onImageAction={onImageAction}
                       onRefresh={c.isSrc ? () => rescanShot() : undefined}
                       onDragStart={onDragStart}
@@ -860,7 +878,11 @@ export function Gallery() {
             <ModelZoomModal
               image={zoomImage}
               onClose={() => setZoomImage(null)}
-              onDelete={async () => onImageAction("delete", zoomImage.path)}
+              onDelete={
+                prism
+                  ? undefined
+                  : async () => onImageAction("delete", zoomImage.path)
+              }
             />
           </LazyBoundary>
         ) : (
@@ -874,7 +896,11 @@ export function Gallery() {
               onImageAction("copy_settings", zoomImage.path)
             }
             onTrace={async () => onImageAction("trace", zoomImage.path)}
-            onDelete={async () => onImageAction("delete", zoomImage.path)}
+            onDelete={
+              prism
+                ? undefined
+                : async () => onImageAction("delete", zoomImage.path)
+            }
           />
         ))}
 

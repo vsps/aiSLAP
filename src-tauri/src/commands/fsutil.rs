@@ -13,6 +13,11 @@ pub(crate) const SHOT_SIDECAR: &str = "shot.json";
 pub(crate) const TIMELINE_SIDECAR: &str = "timeline.json";
 pub(crate) const SRC_DIR: &str = "SRC";
 pub(crate) const SEL_DIR: &str = "SEL";
+/// Project-level holding folder for trashed media. aiSLAP never deletes a
+/// generated file; `image_trash` moves the whole media triple in here, under a
+/// mirror of the file's project-relative path. Excluded from every traversal —
+/// see `walk::is_content_dir` and [`list_dirs`].
+pub(crate) const TRASH_DIR: &str = "TRASH";
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 const VIDEO_EXTS: &[&str] = &["mp4", "webm"];
@@ -324,10 +329,12 @@ pub(crate) fn list_dirs(root: &Path) -> AppResult<Vec<PathBuf>> {
         .map(|e| e.path())
         .filter(|p| p.is_dir())
         .filter(|p| {
-            // Skip hidden + system dirs.
+            // Skip hidden + system dirs, and TRASH — this is what fills the
+            // SEQUENCE dropdown, so without the last one a native project
+            // grows a "TRASH" sequence the moment anything is trashed.
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| !n.starts_with('.') && !n.starts_with('$'))
+                .map(|n| !n.starts_with('.') && !n.starts_with('$') && n != TRASH_DIR)
                 .unwrap_or(false)
         })
         .collect();
@@ -421,6 +428,24 @@ mod tests {
         );
         std::fs::create_dir_all(base.join("v0002")).unwrap();
         assert_eq!(highest_version_number(&base), Some(2));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `list_dirs` fills the SEQUENCE dropdown, so this is the second gate the
+    /// trash folder has to pass — `walk::is_content_dir` alone would still
+    /// leave a native project showing a "TRASH" sequence.
+    #[test]
+    fn list_dirs_omits_trash_and_hidden_dirs() {
+        let base = std::env::temp_dir().join(format!("aislap-listdirs-{}", uuid::Uuid::new_v4()));
+        for name in [TRASH_DIR, ".hidden", "$sys", "SQ01"] {
+            std::fs::create_dir_all(base.join(name)).unwrap();
+        }
+        let names: Vec<String> = list_dirs(&base)
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .collect();
+        assert_eq!(names, vec!["SQ01".to_string()]);
         let _ = std::fs::remove_dir_all(&base);
     }
 

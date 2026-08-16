@@ -16,7 +16,9 @@ type Props = {
   onAddToRefs: () => void;
   onCopySettings: () => void;
   onTrace: () => void;
-  onDelete: () => void;
+  /** Omitted in a PRISM project, where aiSLAP never deletes — the control is
+   *  then not rendered at all rather than shown and refused. */
+  onDelete?: () => void;
 };
 
 export function ImageZoomModal({
@@ -190,7 +192,9 @@ export function ImageZoomModal({
           {!image.isVideo && (
             <IconBtn name="edit" size={20} title="Draw / paint" onClick={() => setDrawMode(true)} />
           )}
-          <IconBtn name="delete" size={20} title="Delete" onClick={onDelete} />
+          {onDelete && (
+            <IconBtn name="delete" size={20} title="Move to TRASH" onClick={onDelete} />
+          )}
           <div className="w-3" />
           <IconBtn name="close" size={24} title="Close (Esc)" onClick={onClose} />
         </div>
