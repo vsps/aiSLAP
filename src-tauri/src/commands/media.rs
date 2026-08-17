@@ -183,6 +183,12 @@ pub enum ExportSegmentKind {
         path: String,
         #[serde(rename = "sourceOffsetSec", default)]
         source_offset_sec: f64,
+        /// Natural duration of the source file, when the frontend has probed
+        /// it. Consumed only by the interchange writers (`commands::interchange`)
+        /// so a host NLE knows media exists past the trimmed range; the ffmpeg
+        /// render path ignores it.
+        #[serde(rename = "sourceDurationSec", default)]
+        source_duration_sec: Option<f64>,
     },
     Blank,
 }
@@ -251,6 +257,7 @@ fn timeline_export_impl(params: TimelineExportParams) -> AppResult<()> {
             ExportSegmentKind::Video {
                 path,
                 source_offset_sec,
+                ..
             } => {
                 let offset = source_offset_sec.max(0.0);
                 // Bound the input decode at offset+dur so a long source doesn't

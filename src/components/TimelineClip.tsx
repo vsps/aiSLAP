@@ -24,9 +24,12 @@ type Props = {
   ) => void;
   /** Place the playhead at a screen X (clientX) anywhere along the strip. */
   onPlaceHeadAtClientX: (clientX: number) => void;
+  /** Announce slip start (this clip's index) and end (null) so the strip can
+   *  draw the source-extent ghost, which has to overhang this clip's box. */
+  onSlipChange: (clipIdx: number | null) => void;
 };
 
-function videoThumbCandidate(videoPath: string): string {
+export function videoThumbCandidate(videoPath: string): string {
   const dot = videoPath.lastIndexOf(".");
   const stem = dot >= 0 ? videoPath.slice(0, dot) : videoPath;
   return `${stem}.thumb.png`;
@@ -83,6 +86,7 @@ export function TimelineClip({
   getStripWidthPx,
   onReorderStart,
   onPlaceHeadAtClientX,
+  onSlipChange,
 }: Props) {
   const resolved = resolveClipMedia(clip, shotsLatestMedia);
   const toggleClipEnabled = useTimelineStore((s) => s.toggleClipEnabled);
@@ -130,6 +134,7 @@ export function TimelineClip({
         if (Math.abs(dx) < DRAG_THRESHOLD_PX) return;
         mode = slippable ? "slip" : "dead";
         if (mode === "dead") return;
+        onSlipChange(clipIdx);
       }
       if (mode === "slip" && sourceDur != null) {
         const w = getStripWidthPx();
@@ -148,6 +153,7 @@ export function TimelineClip({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      if (mode === "slip") onSlipChange(null);
       if (mode === "pending") {
         onPlaceHeadAtClientX(ev.clientX);
       }
