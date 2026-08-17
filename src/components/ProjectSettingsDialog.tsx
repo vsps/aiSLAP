@@ -400,13 +400,13 @@ export function ProjectSettingsDialog({ onClose }: Props) {
     <ModalDialog
       onClose={onClose}
       padded={false}
-      panelClassName="relative max-w-[980px] w-full max-h-[92vh] shadow-xl"
+      panelClassName="relative w-[980px] h-[88vh] min-w-[560px] min-h-[400px] max-w-[95vw] max-h-[92vh] resize overflow-auto shadow-xl"
     >
-      <div className="px-4 py-2 bg-surface text-text text-sm">
+      <div className="px-4 py-2 bg-surface text-text text-sm shrink-0">
         Project Settings
       </div>
 
-      <div className="flex border-b border-dim px-4">
+      <div className="flex border-b border-dim px-4 shrink-0">
         {TABS.map((t) => (
           <button
             key={t}
@@ -423,7 +423,7 @@ export function ProjectSettingsDialog({ onClose }: Props) {
         ))}
       </div>
 
-      <div className="p-4 flex flex-col gap-4 max-h-[75vh] overflow-y-auto thin-scroll">
+      <div className="p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto thin-scroll">
         {tab === "General" && (
         <>
         <div className="flex flex-col gap-1">

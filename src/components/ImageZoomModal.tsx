@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { IconBtn } from "./IconBtn";
@@ -6,6 +6,7 @@ import { FullscreenModal } from "./FullscreenModal";
 import { PathContextMenu } from "./PathContextMenu";
 import { DrawMode } from "./DrawMode";
 import { CropMode } from "./CropMode";
+import { TrimMode } from "./TrimMode";
 import { useSessionStore } from "../stores/sessionStore";
 import { cmd } from "../lib/tauri";
 import { assemblePromptFromMetadata } from "../lib/actions";
@@ -35,12 +36,15 @@ export function ImageZoomModal({
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [cropMode, setCropMode] = useState(false);
+  const [trimMode, setTrimMode] = useState(false);
+  const subEditorOpen = drawMode || cropMode || trimMode;
+  const videoRef = useRef<HTMLVideoElement>(null);
   const columns = useSessionStore((s) => s.columns);
   const setZoomImage = useSessionStore((s) => s.setZoomImage);
   const zoomInitialMode = useSessionStore((s) => s.zoomInitialMode);
   const setZoomInitialMode = useSessionStore((s) => s.setZoomInitialMode);
 
-  // Consume the one-shot mode flag set by the gallery edit/crop shortcut.
+  // Consume the one-shot mode flag set by the gallery edit/crop/trim shortcut.
   useEffect(() => {
     if (zoomInitialMode === "draw") {
       setDrawMode(true);
@@ -48,8 +52,17 @@ export function ImageZoomModal({
     } else if (zoomInitialMode === "crop") {
       setCropMode(true);
       setZoomInitialMode(null);
+    } else if (zoomInitialMode === "trim") {
+      setTrimMode(true);
+      setZoomInitialMode(null);
     }
   }, [zoomInitialMode, setZoomInitialMode]);
+
+  // A video keeps playing underneath a sub-editor otherwise — audible, and in
+  // trim's case fighting the editor's own transport for the same element.
+  useEffect(() => {
+    if (subEditorOpen) videoRef.current?.pause();
+  }, [subEditorOpen]);
 
   // Flat image list across all columns in display order, for prev/next nav.
   const flatImages = useMemo(
@@ -75,6 +88,10 @@ export function ImageZoomModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // A sub-editor owns the keyboard while it's open — otherwise Escape
+      // closes the zoom out from under it, and Space/arrows fight the trim
+      // editor's own transport and frame stepping.
+      if (subEditorOpen) return;
       if (e.key === "Escape") onClose();
       else if (e.key === " ") {
         e.preventDefault();
@@ -115,9 +132,10 @@ export function ImageZoomModal({
       <div className="flex-1 min-h-0 overflow-auto thin-scroll flex items-center justify-center relative">
         {image.isVideo ? (
           <video
+            ref={videoRef}
             src={src}
             controls
-            autoPlay
+            autoPlay={!subEditorOpen}
             className={fit === "fit" ? "max-h-full max-w-full" : ""}
             onClick={(e) => e.stopPropagation()}
             onContextMenu={onCtx}
@@ -192,6 +210,14 @@ export function ImageZoomModal({
           {!image.isVideo && (
             <IconBtn name="edit" size={20} title="Draw / paint" onClick={() => setDrawMode(true)} />
           )}
+          {image.isVideo && (
+            <IconBtn
+              name="content_cut"
+              size={20}
+              title="Trim video (set in/out points)"
+              onClick={() => setTrimMode(true)}
+            />
+          )}
           {onDelete && (
             <IconBtn name="delete" size={20} title="Move to TRASH" onClick={onDelete} />
           )}
@@ -213,6 +239,13 @@ export function ImageZoomModal({
           onCancel={() => setCropMode(false)}
         />
       )}
+      {trimMode && (
+        <TrimMode
+          image={image}
+          onSave={() => setTrimMode(false)}
+          onCancel={() => setTrimMode(false)}
+        />
+      )}
       {menuPos && (
         <PathContextMenu
           x={menuPos.x}
@@ -224,7 +257,7 @@ export function ImageZoomModal({
               header: "PROMPT",
               items: ["add_to_refs", "copy_prompt", "copy_settings", "trace"],
             },
-            { header: "IMAGE", items: ["zoom", "edit", "crop"] },
+            { header: "IMAGE", items: ["zoom", "edit", "crop", "trim_video"] },
             {
               header: "FILE",
               items: [

@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import { performImageAction, type ImageAction } from "../lib/actions";
 import { usePopupDismiss, useClampedPosition } from "../lib/popup";
+import { isVideoPath } from "../lib/media";
 import { useSessionStore } from "../stores/sessionStore";
 
 type AvailableAction = Exclude<ImageAction, "select">;
@@ -29,7 +30,7 @@ const DEFAULT_SECTIONS: MenuSection[] = [
       "show_info",
     ],
   },
-  { header: "IMAGE", items: ["zoom", "edit", "crop"] },
+  { header: "IMAGE", items: ["zoom", "edit", "crop", "trim_video"] },
   {
     header: "FILE",
     items: [
@@ -57,6 +58,7 @@ const LABELS: Record<AvailableAction, string> = {
   rename: "RENAME",
   edit: "EDIT",
   crop: "CROP",
+  trim_video: "TRIM VIDEO",
   trace: "TRACE ORIGINS",
   zoom: "ZOOM",
   refresh: "Refresh",
@@ -80,17 +82,23 @@ export function PathContextMenu({
   const pos = useClampedPosition(ref, x, y);
   usePopupDismiss(ref, onClose, { dismissOnContextMenu: true });
 
-  // aiSLAP never removes files inside a PRISM project, so the entry doesn't
-  // appear there at all. Filtered here rather than at each of the four call
-  // sites, one of which passes its own explicit sections. Rules the filter
-  // strands — leading, trailing, doubled — go with it, as does a column left
-  // holding nothing but rules.
+  // Entries that don't apply to this file are dropped here rather than at each
+  // of the four call sites, one of which passes its own explicit sections.
+  // aiSLAP never removes files inside a PRISM project; TRIM VIDEO is
+  // meaningless on a still, and EDIT/CROP are meaningless on a video (both
+  // mount an <img>-based editor). Rules the filter strands — leading,
+  // trailing, doubled — go with it, as does a column left holding nothing but
+  // rules.
   const prism = useSessionStore((s) => s.prism);
+  const video = isVideoPath(path);
   const columns = useMemo(() => {
-    if (!prism) return sections;
+    const drop = (a: SectionItem) =>
+      (prism && a === "delete") ||
+      (!video && a === "trim_video") ||
+      (video && (a === "edit" || a === "crop"));
     return sections
       .map((s) => {
-        const kept = s.items.filter((a) => a !== "delete");
+        const kept = s.items.filter((a) => !drop(a));
         return {
           header: s.header,
           items: kept.filter(
@@ -103,7 +111,7 @@ export function PathContextMenu({
         };
       })
       .filter((s) => s.items.length > 0);
-  }, [sections, prism]);
+  }, [sections, prism, video]);
 
   const run = (action: AvailableAction) => async (e: React.MouseEvent) => {
     e.stopPropagation();

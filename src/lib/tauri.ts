@@ -22,6 +22,7 @@ import type {
   SequenceTimeline,
   TimelineInit,
   TimelineExportParams,
+  VideoTrimParams,
   AssetRecord,
   AssetRefRecord,
   SyncReport,
@@ -246,6 +247,12 @@ export const cmd = {
     ffmpegPath: string,
   ): Promise<{ fps: number | null; durationSec: number | null }> =>
     rawInvoke("video_info_probe", { videoPath, ffmpegPath }),
+
+  /** Cut [startSec, endSec) out of a video into `outputPath`, re-encoding so
+   *  the cut lands exactly on the marks. Errors — rather than no-ops — when
+   *  ffmpeg isn't configured; the caller asked for a file. */
+  video_trim: (params: VideoTrimParams): Promise<void> =>
+    rawInvoke("video_trim", { params }),
 
   image_dimensions_read: (
     path: string,

@@ -137,10 +137,10 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, 1, "txt", false, tokensFor(0));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.write_text_file(target, firstInline.inlineText ?? "");
-    const identity = await identifyOutput(ctx, target);
+    const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
     await cmd.image_metadata_write(target, meta);
-    await recordAsset(ctx, target, meta, identity);
+    await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -154,10 +154,10 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       const thumbPath = target.replace(/\.[^.]+$/, ".thumb.png");
       await cmd.download_to_path(firstModel3d.thumbUrl, thumbPath).catch(() => {});
     }
-    const identity = await identifyOutput(ctx, target);
+    const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
     await cmd.image_metadata_write(target, meta);
-    await recordAsset(ctx, target, meta, identity);
+    await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -167,7 +167,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, 1, ext, false, tokensFor(0));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstVideo.url, target);
-    const identity = await identifyOutput(ctx, target);
+    const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
     const thumbPath = target.replace(/\.[^.]+$/, ".thumb.png");
     if (ctx.ffmpegPath) {
       await cmd
@@ -176,7 +176,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     }
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
     await cmd.image_metadata_write(target, meta);
-    await recordAsset(ctx, target, meta, identity);
+    await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
     return written;
   }
@@ -192,13 +192,13 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(f.url, target);
     const megapixels = await readMegapixels(target);
-    const identity = await identifyOutput(ctx, target);
+    const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
     const iterIdx = ctx.expandToIterations
       ? Math.min(ctx.iterationBase + i, ctx.iterationTotal)
       : ctx.iterationBase;
     const meta = buildMetadataRecord(ctx, iterIdx, identity, costPerFile, megapixels);
     await cmd.image_metadata_write(target, meta);
-    await recordAsset(ctx, target, meta, identity);
+    await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
   }
   return written;
@@ -232,20 +232,26 @@ async function estimateCostPerFile(ctx: DownloadCtx, fileCount: number): Promise
   return total / fileCount;
 }
 
-type OutputIdentity = { assetId: string; contentHash?: string };
+export type OutputIdentity = { assetId: string; contentHash?: string };
 
 /** Mint an asset id, best-effort embed it (+ the project id) into the media
  *  file, and hash the final bytes. Embedding is enhancement, not a
  *  requirement — a format we don't embed into (3D/text) or a failed remux
  *  still gets an id + hash, just not a recoverable in-file tag. Runs after
- *  the file is fully on disk so the hash matches what's embedded. */
-async function identifyOutput(
-  ctx: DownloadCtx,
+ *  the file is fully on disk so the hash matches what's embedded.
+ *
+ *  Takes the two primitives it needs rather than a DownloadCtx, so media that
+ *  enters the project without a generation behind it (the video trim) mints
+ *  its identity through this same path — two files must never share an
+ *  assetId, and that rule wants one implementation. */
+export async function identifyMedia(
   target: string,
+  projectId: string,
+  ffmpegPath: string,
 ): Promise<OutputIdentity> {
   const assetId = crypto.randomUUID();
   await cmd
-    .media_id_embed(target, assetId, ctx.projectId, ctx.ffmpegPath)
+    .media_id_embed(target, assetId, projectId, ffmpegPath)
     .catch(() => false);
   const contentHash = await cmd.file_hash(target).catch(() => undefined);
   return { assetId, contentHash };
@@ -260,14 +266,14 @@ function assetKind(path: string): AssetRecord["kind"] {
  *  already the durable commit for this output) and opportunistically flush
  *  the outbox to Turso. The local upsert is awaited (fast, no network); the
  *  remote push is fire-and-forget so a slow/offline Turso never delays a
- *  generation. */
-async function recordAsset(
-  ctx: DownloadCtx,
+ *  generation. Takes `projectPath` rather than a DownloadCtx so the video
+ *  trim can index its output through the same path. */
+export async function recordAsset(
+  projectPath: string,
   target: string,
   meta: ImageMetadata,
   identity: OutputIdentity,
 ): Promise<void> {
-  const projectPath = ctx.projectPath;
   const record: AssetRecord = {
     id: identity.assetId,
     relPath: relativeTo(projectPath, target),

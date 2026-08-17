@@ -76,6 +76,17 @@ The sidecar carries the prompt pieces, the exact `combinedPrompt` sent, the sett
 a ref snapshot, the provider response, `costUsd`, the chain lineage, `tags`, `assetId`
 and `contentHash`.
 
+**Derived media.** The video trim (`video_trim` in `media.rs`, driven by `TrimMode`)
+writes `<stem>_trim.mp4` beside its source and gives it a full triple, so it is the
+first file aiSLAP creates that has one with no generation behind it. Its sidecar is
+cloned from the source's, minus three fields: `tags` (a trimmed copy of the `select`
+take is not itself the selected take), `costUsd` (the trim is local work — inheriting
+it would double-count the clip in `project_cost_scan`), and a fresh `assetId` +
+`contentHash`, because two files must never share an identity. `refs` stays the
+*original generation's* inputs so RESTORE PROMPT still reproduces the generation
+rather than the edit; the link back to the source lives in **`derivedFrom`**
+(`{ op, path, assetId, startSec, endSec }`).
+
 ## TRASH
 
 **There is no hard delete.** `image_trash` moves the whole triple into `<project>/TRASH/`
