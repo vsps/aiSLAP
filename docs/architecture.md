@@ -94,7 +94,7 @@ Rather than an alphabetical inventory (53 files, and they move):
 | **Chain columns** | `ModelSettingsColumn`, `PromptColumn`, `RefImagesColumn`, `LatestImageColumn`, `RunColumn`, `CollapsedLinkColumn`, `ChainAddBar` |
 | **Gallery** | `Gallery`, `GalleryColumn`, `Thumbnail`, `VersionStack`, `StackedView`, `TagView`, `TagFilterBar`, `TagEditorPopup`, `SelectPickerPopup` |
 | **Viewers / editors** | `ImageZoomModal` (hosts `DrawMode`, `CropMode`), `ModelZoomModal` (GLB), `SamPromptModal`, `LlmPromptModal`, `ComparePreview`, `FullscreenModal` |
-| **Timeline** | `Timeline`, `TimelineClip`, `TimelineTransport`, `ClipMediaPicker`, `ExportModal` |
+| **Timeline** | `Timeline`, `TimelineClip`, `TimelineTransport`, `ClipMediaPicker`, `ExportModal` — see [timeline.md](timeline.md) |
 | **Diagnostics** | `LogWindow`, `QueueChecklist`, `TraceView`, `ErrorPopup` |
 | **Settings** | `SettingsDialog` (app-wide) and `ProjectSettingsDialog` (per-project) — **two different dialogs**; the README used to imply one |
 | **Primitives** | `ModalDialog` (centred dialog) vs `FullscreenModal` (full-bleed editor), `IconBtn`, `ToggleGroup`, `InlinePrompt`, `RoleMenu`, `PathContextMenu`, `LazyBoundary` |
@@ -109,7 +109,7 @@ Ten zustand stores. What each owns — and, where it matters, what it must *not*
 | `generationStore` | chain `links`, the active link's model/settings/prompts/refs, `iterations`, job list, `pendingOutputs` |
 | `modelsStore` | the loaded registry and a `loaded` flag (drives `models: N`) |
 | `tagsStore` | vocabulary (`defs`), the derived `colorsByName` map, `activeFilter`, `filterMode` |
-| `timelineStore` | clips, playhead, transport, video durations |
+| `timelineStore` | clips, playhead, transport, video durations, segment flattening — [timeline.md](timeline.md) |
 | `layoutStore` | panel sizes and collapsed columns — persisted to `localStorage` |
 | `pricesStore` | cached fal prices plus manual per-endpoint overrides |
 | `scriptStore` | the parsed `script.md` |

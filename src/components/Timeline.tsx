@@ -6,7 +6,7 @@ import {
 } from "../stores/timelineStore";
 import { useLayoutStore } from "../stores/layoutStore";
 import { fileSrc } from "../lib/assets";
-import { TimelineClip } from "./TimelineClip";
+import { TimelineClip, videoThumbCandidate } from "./TimelineClip";
 import { TimelineTransport } from "./TimelineTransport";
 
 export function Timeline() {
@@ -25,6 +25,7 @@ export function Timeline() {
 
   const stripRef = useRef<HTMLDivElement>(null);
   const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const [slipIdx, setSlipIdx] = useState<number | null>(null);
   const reorderRef = useRef<{ fromIdx: number } | null>(null);
 
   const getStripWidthPx = useCallback(
@@ -117,6 +118,35 @@ export function Timeline() {
       cumulativePcts.push((acc / totalDurationSec) * 100);
     }
   }
+
+  // ---- Slip ghost geometry ----
+  // While slipping, draw the source media's full extent at the strip's scale,
+  // aligned so source-time `offsetSec` lands on the clip's left edge. It
+  // deliberately overhangs the clip on both sides — that overhang *is* the
+  // information (how much unused media is available in each direction), which
+  // is why this lives on the strip and not inside the clip's overflow-hidden box.
+  const slipGhost = (() => {
+    if (slipIdx == null || totalDurationSec <= 0) return null;
+    const c = display[slipIdx];
+    if (!c) return null;
+    const resolved = resolveClipMedia(c, shotsLatestMedia);
+    if (!resolved?.isVideo) return null;
+    const sourceDur = videoDurations.get(resolved.path);
+    if (sourceDur == null || !(sourceDur > 0)) return null;
+
+    const pctPerSec = 100 / totalDurationSec;
+    const offsetSec = c.sourceOffsetSec ?? 0;
+    const clipStartPct = slipIdx === 0 ? 0 : cumulativePcts[slipIdx - 1];
+    return {
+      clipStartPct,
+      clipWidthPct: c.durationSec * pctPerSec,
+      ghostLeftPct: clipStartPct - offsetSec * pctPerSec,
+      ghostWidthPct: sourceDur * pctPerSec,
+      headSlackSec: offsetSec,
+      tailSlackSec: Math.max(0, sourceDur - offsetSec - c.durationSec),
+      thumbSrc: fileSrc(videoThumbCandidate(resolved.path)),
+    };
+  })();
 
   // ---- Edge-resize handlers ----
 
@@ -229,8 +259,52 @@ export function Timeline() {
                 getStripWidthPx={getStripWidthPx}
                 onReorderStart={onReorderStart}
                 onPlaceHeadAtClientX={onPlaceHeadAtClientX}
+                onSlipChange={setSlipIdx}
               />
             ))}
+
+            {/* Slip ghost — the source's full extent, overhanging the clip.
+                Its own overflow-hidden wrapper keeps a long source from
+                painting over the transport to the right of the strip. */}
+            {slipGhost && (
+              <div className="absolute inset-0 overflow-hidden pointer-events-none z-[15]">
+                <div
+                  className="absolute top-0 bottom-0 border border-accent/70 bg-accent/10"
+                  style={{
+                    left: `${slipGhost.ghostLeftPct}%`,
+                    width: `${slipGhost.ghostWidthPct}%`,
+                  }}
+                >
+                  <div
+                    className="absolute inset-0 opacity-20"
+                    style={{
+                      backgroundImage: `url("${slipGhost.thumbSrc.replace(/["\\]/g, "\\$&")}")`,
+                      backgroundRepeat: "repeat-x",
+                      backgroundSize: "auto 100%",
+                      backgroundPosition: "left center",
+                    }}
+                  />
+                  {slipGhost.headSlackSec >= 0.1 && (
+                    <span className="absolute top-0 left-0 px-[2px] bg-bg/80 text-accent text-[9px] font-mono leading-[12px]">
+                      −{slipGhost.headSlackSec.toFixed(1)}s
+                    </span>
+                  )}
+                  {slipGhost.tailSlackSec >= 0.1 && (
+                    <span className="absolute top-0 right-0 px-[2px] bg-bg/80 text-accent text-[9px] font-mono leading-[12px]">
+                      +{slipGhost.tailSlackSec.toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+                {/* The trim window — which slice of the ghost actually plays. */}
+                <div
+                  className="absolute top-0 bottom-0 border-2 border-accent"
+                  style={{
+                    left: `${slipGhost.clipStartPct}%`,
+                    width: `${slipGhost.clipWidthPct}%`,
+                  }}
+                />
+              </div>
+            )}
 
             {/* Resize handles overlaid at each inner boundary. */}
             {cumulativePcts.map((pct, i) => (

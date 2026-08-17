@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  ExportSegment,
   SequenceTimeline,
   ShotLatestMedia,
   TimelineClip,
@@ -570,6 +571,58 @@ export function clipAtPlayhead(
     acc = end;
   }
   return null;
+}
+
+/**
+ * Flatten the timeline into the linear segment list every exporter consumes —
+ * the ffmpeg render, and the OTIO / FCP7 XML writers. Disabled clips, the
+ * auto-pad, and clips with no resolvable media all collapse to `blank`, so the
+ * result is positionally complete: segment N starts where segment N-1 ended.
+ *
+ * `sourceOffsetSec` is clamped here against the probed source duration so an
+ * offset left over from a longer take can't push a clip past its media.
+ */
+export function buildSegments(
+  clips: TimelineClip[],
+  totalDurationSec: number,
+  shotsLatestMedia: Map<string, ShotLatestMedia>,
+  videoDurations: Map<string, number>,
+): ExportSegment[] {
+  const display = getDisplayClips(clips, totalDurationSec);
+  const out: ExportSegment[] = [];
+  for (let i = 0; i < display.length; i++) {
+    const c = display[i];
+    const isPad = i >= clips.length;
+    const resolved = resolveClipMedia(c, shotsLatestMedia);
+    if (!c.enabled || isPad || !resolved) {
+      out.push({ kind: "blank", durationSec: c.durationSec });
+      continue;
+    }
+    if (resolved.isVideo) {
+      const srcDur = videoDurations.get(resolved.path);
+      const rawOffset = c.sourceOffsetSec ?? 0;
+      const effOffset =
+        srcDur != null
+          ? Math.min(rawOffset, Math.max(0, srcDur - c.durationSec))
+          : rawOffset;
+      out.push({
+        kind: "video",
+        path: resolved.path,
+        durationSec: c.durationSec,
+        sourceOffsetSec: effOffset,
+        // Carried for the interchange writers (OTIO `available_range`, xmeml
+        // `<file><duration>`); the ffmpeg render path ignores it.
+        sourceDurationSec: srcDur,
+      });
+    } else {
+      out.push({
+        kind: "image",
+        path: resolved.path,
+        durationSec: c.durationSec,
+      });
+    }
+  }
+  return out;
 }
 
 export type NextVideoClip = {

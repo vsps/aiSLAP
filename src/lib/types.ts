@@ -495,6 +495,13 @@ export type ExportSegment =
       path: string;
       durationSec: number;
       sourceOffsetSec: number;
+      /**
+       * Probed natural duration of the source file. Used only by the
+       * interchange writers (OTIO `available_range`, xmeml `<file><duration>`)
+       * so a host NLE knows the media extends past the trimmed range. Absent
+       * when the duration probe hasn't landed yet; the ffmpeg render ignores it.
+       */
+      sourceDurationSec?: number;
     }
   | { kind: "blank"; durationSec: number };
 
@@ -506,6 +513,23 @@ export type TimelineExportParams = {
   fps: number;
   bitrateKbps: number;
   ffmpegPath: string;
+};
+
+/**
+ * Interchange (edit-list) export formats. No ffmpeg involved — plain text.
+ * `xmeml` is FCP7 XML, not modern Final Cut's `.fcpxml`.
+ */
+export type InterchangeFormat = "otio" | "xmeml";
+
+export type TimelineInterchangeParams = {
+  segments: ExportSegment[];
+  outputPath: string;
+  format: InterchangeFormat;
+  /** Sequence name written into the file. */
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
 };
 
 export type VideoTrimParams = {

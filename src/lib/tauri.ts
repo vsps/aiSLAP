@@ -22,6 +22,7 @@ import type {
   SequenceTimeline,
   TimelineInit,
   TimelineExportParams,
+  TimelineInterchangeParams,
   VideoTrimParams,
   AssetRecord,
   AssetRefRecord,
@@ -334,4 +335,7 @@ export const cmd = {
 
   timeline_export: (params: TimelineExportParams): Promise<void> =>
     rawInvoke("timeline_export", { params }),
+  timeline_export_interchange: (
+    params: TimelineInterchangeParams,
+  ): Promise<void> => rawInvoke("timeline_export_interchange", { params }),
 };
