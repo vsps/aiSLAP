@@ -219,26 +219,24 @@ export function ImageZoomModal({
           y={menuPos.y}
           path={image.path}
           onClose={() => setMenuPos(null)}
-          items={[
-            "add_to_refs",
-            "copy_settings",
-            "---",
-            "zoom",
-            "edit",
-            "crop",
-            "trace",
-            "---",
-            "edit_tags",
-            "set_clip_media",
-            "---",
-            "copy_prompt",
-            "copy_path",
-            "copy_image",
-            "copy_to_global_src",
-            "open_location",
-            "rename",
-            "---",
-            "delete",
+          sections={[
+            {
+              header: "PROMPT",
+              items: ["add_to_refs", "copy_prompt", "copy_settings", "trace"],
+            },
+            { header: "IMAGE", items: ["zoom", "edit", "crop"] },
+            {
+              header: "FILE",
+              items: [
+                "copy_path",
+                "copy_image",
+                "open_location",
+                "rename",
+                "-",
+                "delete",
+              ],
+            },
+            { header: "OTHER", items: ["edit_tags", "set_clip_media"] },
           ]}
         />
       )}

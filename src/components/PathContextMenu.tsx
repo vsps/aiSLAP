@@ -4,40 +4,44 @@ import { usePopupDismiss, useClampedPosition } from "../lib/popup";
 import { useSessionStore } from "../stores/sessionStore";
 
 type AvailableAction = Exclude<ImageAction, "select">;
-type MenuItem = AvailableAction | "---";
+// "-" draws a rule between two runs of items inside one column.
+type SectionItem = AvailableAction | "-";
+export type MenuSection = { header: string; items: SectionItem[] };
 
 type Props = {
   x: number;
   y: number;
   path: string;
   onClose: () => void;
-  // Which items to show, in order. "---" renders a separator. Default: all.
-  items?: MenuItem[];
+  // One column per section, in order. Default: everything.
+  sections?: MenuSection[];
 };
 
-const DEFAULT_ITEMS: MenuItem[] = [
-  "add_to_refs",
-  "copy_prompt",
-  "copy_settings",
-  "restore_chain",
-  "trace",
-  "show_info",
-  "---",
-  "zoom",
-  "edit",
-  "crop",
-  "---",
-  "copy_path",
-  "copy_image",
-  "open_location",
-  "rename",
-  "---",
-  "copy_to_global_src",
-  "---",
-  "edit_tags",
-  "set_clip_media",
-  "---",
-  "delete",
+const DEFAULT_SECTIONS: MenuSection[] = [
+  {
+    header: "PROMPT",
+    items: [
+      "add_to_refs",
+      "copy_prompt",
+      "copy_settings",
+      "restore_chain",
+      "trace",
+      "show_info",
+    ],
+  },
+  { header: "IMAGE", items: ["zoom", "edit", "crop"] },
+  {
+    header: "FILE",
+    items: [
+      "copy_path",
+      "copy_image",
+      "open_location",
+      "rename",
+      "-",
+      "delete",
+    ],
+  },
+  { header: "OTHER", items: ["edit_tags", "set_clip_media"] },
 ];
 
 const LABELS: Record<AvailableAction, string> = {
@@ -47,7 +51,6 @@ const LABELS: Record<AvailableAction, string> = {
   set_clip_media: "TOGGLE CLIP MEDIA",
   copy_path: "COPY PATH",
   copy_image: "COPY IMAGE",
-  copy_to_global_src: "COPY TO GLOBAL SRC",
   copy_prompt: "COPY PROMPT",
   copy_settings: "RESTORE PROMPT",
   restore_chain: "RESTORE CHAIN",
@@ -64,12 +67,14 @@ const LABELS: Record<AvailableAction, string> = {
 
 // Right-click menu for any gallery/preview image. Covers the full image-op
 // surface so keyboard-free workflows don't have to hunt for toolbar icons.
+// Laid out horizontally: each section is a headed column, so the whole surface
+// is one short wide block instead of a long scrolling list.
 export function PathContextMenu({
   x,
   y,
   path,
   onClose,
-  items = DEFAULT_ITEMS,
+  sections = DEFAULT_SECTIONS,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const pos = useClampedPosition(ref, x, y);
@@ -77,18 +82,28 @@ export function PathContextMenu({
 
   // aiSLAP never removes files inside a PRISM project, so the entry doesn't
   // appear there at all. Filtered here rather than at each of the four call
-  // sites, two of which pass their own explicit item lists. Trailing/adjacent
-  // separators are dropped with it so the menu doesn't grow a stray rule.
+  // sites, one of which passes its own explicit sections. Rules the filter
+  // strands — leading, trailing, doubled — go with it, as does a column left
+  // holding nothing but rules.
   const prism = useSessionStore((s) => s.prism);
-  const visibleItems = useMemo(() => {
-    if (!prism) return items;
-    const kept = items.filter((a) => a !== "delete");
-    return kept.filter(
-      (a, i) =>
-        a !== "---" ||
-        (i > 0 && kept[i - 1] !== "---" && kept.slice(i + 1).some((b) => b !== "---")),
-    );
-  }, [items, prism]);
+  const columns = useMemo(() => {
+    if (!prism) return sections;
+    return sections
+      .map((s) => {
+        const kept = s.items.filter((a) => a !== "delete");
+        return {
+          header: s.header,
+          items: kept.filter(
+            (a, i) =>
+              a !== "-" ||
+              (i > 0 &&
+                kept[i - 1] !== "-" &&
+                kept.slice(i + 1).some((b) => b !== "-")),
+          ),
+        };
+      })
+      .filter((s) => s.items.length > 0);
+  }, [sections, prism]);
 
   const run = (action: AvailableAction) => async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -99,25 +114,37 @@ export function PathContextMenu({
   return (
     <div
       ref={ref}
-      className="fixed z-50 bg-panel text-text border border-dim shadow-xl py-0.5 text-xs w-max min-w-[120px]"
+      className="fixed z-50 flex items-stretch bg-panel text-text border border-dim shadow-xl py-0.5 text-xs w-max"
       style={{ left: pos.left, top: pos.top }}
       onClick={(e) => e.stopPropagation()}
     >
-      {visibleItems.map((a, i) =>
-        a === "---" ? (
-          <div key={`sep-${i}`} className="my-0.5 border-t border-dim" />
-        ) : (
-          <button
-            key={a}
-            type="button"
-            onClick={run(a)}
-            title={LABELS[a]}
-            className="w-full text-left px-1.5 py-[2px] hover:bg-accent"
-          >
-            {LABELS[a]}
-          </button>
-        ),
-      )}
+      {columns.map((col, i) => (
+        <div
+          key={col.header}
+          className={`flex flex-col min-w-[110px] ${
+            i > 0 ? "border-l border-dim" : ""
+          }`}
+        >
+          <div className="px-1.5 py-[2px] text-dim border-b border-dim">
+            {col.header}
+          </div>
+          {col.items.map((a, j) =>
+            a === "-" ? (
+              <div key={`sep-${j}`} className="my-0.5 border-t border-dim" />
+            ) : (
+              <button
+                key={a}
+                type="button"
+                onClick={run(a)}
+                title={LABELS[a]}
+                className="text-left whitespace-nowrap px-1.5 py-[2px] hover:bg-accent"
+              >
+                {LABELS[a]}
+              </button>
+            ),
+          )}
+        </div>
+      ))}
     </div>
   );
 }

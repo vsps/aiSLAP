@@ -404,7 +404,6 @@ export type ImageAction =
   | "copy_image"
   | "copy_settings"
   | "copy_prompt"
-  | "copy_to_global_src"
   | "set_clip_media"
   | "trace"
   | "refresh"
@@ -509,20 +508,6 @@ export async function performImageAction(
         await showMessage(String(e), { kind: "error" });
       }
       return;
-    case "copy_to_global_src": {
-      const { shotPath } = session;
-      if (!shotPath) {
-        await showMessage("No shot open", { kind: "warning" });
-        return;
-      }
-      try {
-        await cmd.ref_copy_to_global_src(shotPath, path);
-        await session.rescanShot();
-      } catch (e) {
-        await showMessage(String(e), { kind: "error" });
-      }
-      return;
-    }
     case "edit_tags":
       session.setTagEditor(path);
       return;
