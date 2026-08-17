@@ -39,6 +39,9 @@ const NODE_PADDING = 10;
 const ROW_HEIGHT = 20;
 const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 900;
+// Breathing room on all four sides, as a fraction of the canvas. Labels sit
+// outside their node's rect, so without it the outer columns' text is clipped.
+const MARGIN = 0.05;
 
 export function SankeyChart({ nodes, links, width = 860 }: Props) {
   // Prefixes gradient ids so multiple charts on the same page never collide.
@@ -49,21 +52,26 @@ export function SankeyChart({ nodes, links, width = 860 }: Props) {
 
     // Height scales with the busiest column (version is usually the most
     // numerous level) so rows stay legible instead of being squeezed flat.
+    // The margin is added on top of that plotting height rather than carved
+    // out of it, so rows keep their ROW_HEIGHT either way.
     const maxColumnCount = [0, 1, 2, 3]
       .map((level) => nodes.filter((n) => n.level === level).length)
       .reduce((a, b) => Math.max(a, b), 1);
-    const height = Math.min(
+    const plotHeight = Math.min(
       MAX_HEIGHT,
       Math.max(MIN_HEIGHT, maxColumnCount * ROW_HEIGHT),
     );
+    const height = Math.round(plotHeight / (1 - 2 * MARGIN));
+    const marginX = width * MARGIN;
+    const marginY = height * MARGIN;
 
     const generator = sankey<CostSankeyNode, Record<string, unknown>>()
       .nodeId((d) => d.id)
       .nodeWidth(NODE_WIDTH)
       .nodePadding(NODE_PADDING)
       .extent([
-        [1, 1],
-        [width - 1, height - 1],
+        [marginX, marginY],
+        [width - marginX, height - marginY],
       ]);
 
     // d3-sankey mutates its input in place — clone so costReport.ts's pure
@@ -152,6 +160,9 @@ export function SankeyChart({ nodes, links, width = 860 }: Props) {
                   className="fill-text text-[10px] font-mono pointer-events-none select-none"
                 >
                   {node.label}
+                  <tspan dx="6" className="fill-dim">
+                    ${formatCost(node.value ?? 0)}
+                  </tspan>
                 </text>
               </g>
             );

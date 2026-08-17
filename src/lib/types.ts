@@ -508,6 +508,14 @@ export type TimelineExportParams = {
   ffmpegPath: string;
 };
 
+export type VideoTrimParams = {
+  inputPath: string;
+  outputPath: string;
+  startSec: number;
+  endSec: number;
+  ffmpegPath: string;
+};
+
 // ---------- Image metadata sidecar ----------
 
 export type RefSnapshot = {
@@ -580,6 +588,18 @@ export type ImageMetadata = {
    *  embedding. Fallback identity when embedded tags get stripped by an
    *  external tool (re-encode, re-export, etc). */
   contentHash?: string;
+  /** Lineage for media aiSLAP derived from other media rather than generating
+   *  it — currently only the video trim. Deliberately not folded into `refs`,
+   *  which stays the original generation's inputs so RESTORE PROMPT still
+   *  reproduces the generation rather than the edit. */
+  derivedFrom?: {
+    op: "trim";
+    /** Source path at derivation time — a hint; `assetId` is the durable link. */
+    path: string;
+    assetId?: string;
+    startSec: number;
+    endSec: number;
+  };
   /** User tag names. The sidecar is the source of truth for these — the
    *  SQLite index is a rebuildable cache of them, and they ride along with
    *  the file on copy/move/rename for free. Written by image_tags_set;

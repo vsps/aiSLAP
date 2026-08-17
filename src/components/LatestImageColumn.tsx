@@ -19,7 +19,7 @@ import { editTagsAt, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { showMessage } from "../lib/dialog";
 import { basename, dirname } from "../lib/paths";
-import { syntheticImage } from "../lib/media";
+import { isVideoPath, syntheticImage } from "../lib/media";
 import type {
   GalleryImage,
   GalleryColumn,
@@ -59,6 +59,15 @@ export function LatestImageColumn() {
   const compareA = useSessionStore((s) => s.compareA);
   const compareB = useSessionStore((s) => s.compareB);
   const setCompareMode = useSessionStore((s) => s.setCompareMode);
+  // Compare-view controls. Local rather than session state: they describe how
+  // this surface is displaying the pair, not what the pair is.
+  const [cmpOffsetA, setCmpOffsetA] = useState(0);
+  const [cmpOffsetB, setCmpOffsetB] = useState(0);
+  const [cmpMatchScale, setCmpMatchScale] = useState(false);
+  // Offsetting is only meaningful between two clips, so the nudges appear
+  // only when both slots hold video.
+  const compareBothVideo =
+    !!compareA && !!compareB && isVideoPath(compareA) && isVideoPath(compareB);
 
   const image = useMemo(
     () => pickImage(columns, selectedImagePath, targetVersion, taggedGroups),
@@ -210,7 +219,13 @@ export function LatestImageColumn() {
           </div>
         )}
         {!timelineActive && compareMode && (
-          <ComparePreview pathA={compareA} pathB={compareB} />
+          <ComparePreview
+            pathA={compareA}
+            pathB={compareB}
+            offsetAFrames={cmpOffsetA}
+            offsetBFrames={cmpOffsetB}
+            matchScale={cmpMatchScale}
+          />
         )}
         {!timelineActive && !compareMode && (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -241,7 +256,15 @@ export function LatestImageColumn() {
         )}
       </div>
       {!timelineActive && (
-        <div className="flex items-center justify-center gap-2 py-1">
+        <div className="flex items-center justify-center gap-2 py-1 px-2">
+          {compareMode && compareBothVideo && (
+            <FrameOffset
+              label="A"
+              value={cmpOffsetA}
+              onChange={setCmpOffsetA}
+            />
+          )}
+          <div className="flex-1" />
           <IconBtn
             name="compare"
             size={22}
@@ -249,6 +272,20 @@ export function LatestImageColumn() {
             title={compareMode ? "Exit compare mode" : "Compare mode"}
             onClick={() => setCompareMode(!compareMode)}
           />
+          {compareMode && (
+            <label
+              className="flex items-center gap-1 text-xs text-dim cursor-pointer select-none"
+              title="Scale the right media so it renders the same width as the left — for comparing takes that differ in aspect ratio"
+            >
+              <input
+                type="checkbox"
+                checked={cmpMatchScale}
+                onChange={(e) => setCmpMatchScale(e.currentTarget.checked)}
+                className="accent-accent cursor-pointer"
+              />
+              match scale
+            </label>
+          )}
           {image && (
             <>
               <IconBtn
@@ -318,6 +355,14 @@ export function LatestImageColumn() {
                   onClick={() => void exportCurrentFrame()}
                 />
               )}
+              {image.isVideo && (
+                <IconBtn
+                  name="content_cut"
+                  size={22}
+                  title="Trim video (set in/out points)"
+                  onClick={() => void performImageAction("trim_video", image.path)}
+                />
+              )}
               {!image.isVideo && (
                 <IconBtn
                   name="edit"
@@ -336,6 +381,14 @@ export function LatestImageColumn() {
               )}
             </>
           )}
+          <div className="flex-1" />
+          {compareMode && compareBothVideo && (
+            <FrameOffset
+              label="B"
+              value={cmpOffsetB}
+              onChange={setCmpOffsetB}
+            />
+          )}
         </div>
       )}
       {menuPos && image && !timelineActive && (
@@ -346,6 +399,46 @@ export function LatestImageColumn() {
           onClose={() => setMenuPos(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Frame nudge for one compare slot. Only the difference between the two
+ *  slots' offsets has any effect, so either side can be driven to line the
+ *  clips up — click the readout to zero it. */
+function FrameOffset({
+  label,
+  value,
+  onChange,
+}: {
+  label: "A" | "B";
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const side = label === "A" ? "left" : "right";
+  return (
+    <div className="flex items-center gap-0.5 text-xs font-mono text-dim shrink-0">
+      <span className="mr-0.5">{label}</span>
+      <IconBtn
+        name="remove"
+        size={18}
+        title={`Shift the ${side} clip one frame earlier`}
+        onClick={() => onChange(value - 1)}
+      />
+      <button
+        type="button"
+        title="Reset this offset"
+        onClick={() => onChange(0)}
+        className={`w-8 text-center tabular-nums ${value ? "text-accent" : "text-dim"}`}
+      >
+        {value > 0 ? `+${value}` : value}
+      </button>
+      <IconBtn
+        name="add"
+        size={18}
+        title={`Shift the ${side} clip one frame later`}
+        onClick={() => onChange(value + 1)}
+      />
     </div>
   );
 }
