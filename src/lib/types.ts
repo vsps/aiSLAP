@@ -495,6 +495,13 @@ export type ExportSegment =
       path: string;
       durationSec: number;
       sourceOffsetSec: number;
+      /**
+       * Probed natural duration of the source file. Used only by the
+       * interchange writers (OTIO `available_range`, xmeml `<file><duration>`)
+       * so a host NLE knows the media extends past the trimmed range. Absent
+       * when the duration probe hasn't landed yet; the ffmpeg render ignores it.
+       */
+      sourceDurationSec?: number;
     }
   | { kind: "blank"; durationSec: number };
 
@@ -505,6 +512,31 @@ export type TimelineExportParams = {
   height: number;
   fps: number;
   bitrateKbps: number;
+  ffmpegPath: string;
+};
+
+/**
+ * Interchange (edit-list) export formats. No ffmpeg involved — plain text.
+ * `xmeml` is FCP7 XML, not modern Final Cut's `.fcpxml`.
+ */
+export type InterchangeFormat = "otio" | "xmeml";
+
+export type TimelineInterchangeParams = {
+  segments: ExportSegment[];
+  outputPath: string;
+  format: InterchangeFormat;
+  /** Sequence name written into the file. */
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+};
+
+export type VideoTrimParams = {
+  inputPath: string;
+  outputPath: string;
+  startSec: number;
+  endSec: number;
   ffmpegPath: string;
 };
 
@@ -580,6 +612,18 @@ export type ImageMetadata = {
    *  embedding. Fallback identity when embedded tags get stripped by an
    *  external tool (re-encode, re-export, etc). */
   contentHash?: string;
+  /** Lineage for media aiSLAP derived from other media rather than generating
+   *  it — currently only the video trim. Deliberately not folded into `refs`,
+   *  which stays the original generation's inputs so RESTORE PROMPT still
+   *  reproduces the generation rather than the edit. */
+  derivedFrom?: {
+    op: "trim";
+    /** Source path at derivation time — a hint; `assetId` is the durable link. */
+    path: string;
+    assetId?: string;
+    startSec: number;
+    endSec: number;
+  };
   /** User tag names. The sidecar is the source of truth for these — the
    *  SQLite index is a rebuildable cache of them, and they ride along with
    *  the file on copy/move/rename for free. Written by image_tags_set;

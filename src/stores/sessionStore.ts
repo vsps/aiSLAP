@@ -55,7 +55,7 @@ type State = {
   selectedImagePath: string | null;
   zoomImagePath: string | null;
   infoImagePath: string | null;
-  zoomInitialMode: "draw" | "crop" | null;
+  zoomInitialMode: "draw" | "crop" | "trim" | null;
   renameImagePath: string | null;
   /** Image whose tag editor is open, plus where to anchor the popover
    *  (null anchor = centered, for invocations with no on-screen origin such
@@ -118,7 +118,7 @@ type Actions = {
   setSelectedImage: (path: string | null) => void;
   setZoomImage: (path: string | null) => void;
   setInfoImage: (path: string | null) => void;
-  setZoomInitialMode: (mode: "draw" | "crop" | null) => void;
+  setZoomInitialMode: (mode: "draw" | "crop" | "trim" | null) => void;
   setRenameImage: (path: string | null) => void;
   setTagEditor: (
     path: string | null,

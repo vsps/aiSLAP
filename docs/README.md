@@ -25,6 +25,7 @@ Read in this order:
 | [storage.md](storage.md) | touch paths, sidecars, asset identity, or the SQLite index |
 | [prism.md](prism.md) | touch anything path-shaped in a PRISM project |
 | [tags.md](tags.md) | touch tagging, filtering, or the tag view |
+| [timeline.md](timeline.md) | touch the timeline strip, playback, or either export path |
 | [model.schema.json](model.schema.json) | (not prose — point your editor at it from a model file) |
 
 End-user walkthroughs live in **[guides/](guides/)**.

@@ -404,7 +404,6 @@ export type ImageAction =
   | "copy_image"
   | "copy_settings"
   | "copy_prompt"
-  | "copy_to_global_src"
   | "set_clip_media"
   | "trace"
   | "refresh"
@@ -413,6 +412,7 @@ export type ImageAction =
   | "rename"
   | "edit"
   | "crop"
+  | "trim_video"
   | "edit_tags"
   | "restore_chain"
   | "show_info";
@@ -509,20 +509,6 @@ export async function performImageAction(
         await showMessage(String(e), { kind: "error" });
       }
       return;
-    case "copy_to_global_src": {
-      const { shotPath } = session;
-      if (!shotPath) {
-        await showMessage("No shot open", { kind: "warning" });
-        return;
-      }
-      try {
-        await cmd.ref_copy_to_global_src(shotPath, path);
-        await session.rescanShot();
-      } catch (e) {
-        await showMessage(String(e), { kind: "error" });
-      }
-      return;
-    }
     case "edit_tags":
       session.setTagEditor(path);
       return;
@@ -623,6 +609,19 @@ export async function performImageAction(
     case "crop":
       session.setSelectedImage(path);
       session.setZoomInitialMode("crop");
+      session.setZoomImage(path);
+      return;
+    case "trim_video":
+      // The menu entry and the preview button are both kind-gated already;
+      // this catches a stale surface rather than handing ffmpeg a still.
+      if (classifyMedia(path) !== "video") {
+        await showMessage("Trim is only available for video files", {
+          kind: "warning",
+        });
+        return;
+      }
+      session.setSelectedImage(path);
+      session.setZoomInitialMode("trim");
       session.setZoomImage(path);
       return;
     case "refresh":
