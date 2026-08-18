@@ -15,7 +15,7 @@
         { "name": "video", "data_type": "VIDEO", "api_field": "video" }
       ],
       "parameters": [
-        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p"] },
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p"] },
         { "name": "ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "ratio", "default": "adaptive", "options": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
         { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30 },
         { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
@@ -40,7 +40,7 @@
         { "role": "end", "api_field": "last_frame_url", "max": 1, "exclusive": true }
       ],
       "parameters": [
-        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p"] },
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p"] },
         { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30 },
         { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
         { "name": "output_format", "label": "Output Format", "type": "enum", "api_field": "output_format", "default": "mp4", "options": ["mp4", "mov"] },
@@ -64,7 +64,7 @@
         { "role": "image", "api_field": "reference_image_urls", "max": 30 }
       ],
       "parameters": [
-        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p"] },
+        { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p"] },
         { "name": "ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "ratio", "default": "adaptive", "options": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
         { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30 },
         { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
