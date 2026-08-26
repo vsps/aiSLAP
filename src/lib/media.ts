@@ -32,6 +32,20 @@ export function isVideoPath(path: string): boolean {
   return isVideoExt(fileExt(path));
 }
 
+/** The thumbnail suffix new poster frames are written with, and the one every
+ *  project generated before the switch to JPEG is full of. Mirrors
+ *  `THUMB_SUFFIXES` in `commands/fsutil.rs` — keep the two in step. */
+export const THUMB_SUFFIXES = [".thumb.jpg", ".thumb.png"];
+
+/** Thumbnail sidecars a video may have, in preference order. Only for callers
+ *  that have a bare path and no scanned `GalleryImage`: the gallery already
+ *  resolves the real one into `thumbPath`, so prefer that when it exists. */
+export function videoThumbCandidates(videoPath: string): string[] {
+  const dot = videoPath.lastIndexOf(".");
+  const stem = dot >= 0 ? videoPath.slice(0, dot) : videoPath;
+  return THUMB_SUFFIXES.map((s) => `${stem}${s}`);
+}
+
 /** MIME type for a filename, defaulting to octet-stream. Used when building
  *  File/Blob objects for uploads and clipboard. */
 export function guessContentType(filename: string): string {

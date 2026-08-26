@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::commands::fsutil::{
-    as_str, is_media_ext, is_thumb, project_root_for, relativize, require_dir, sidecar_path,
-    thumb_path, ProjectRoot, PROJECT_SIDECAR, SEL_DIR,
+    as_str, existing_thumb_path, is_media_ext, is_thumb, project_root_for, relativize, require_dir,
+    sidecar_path, thumb_path, thumb_path_like, ProjectRoot, PROJECT_SIDECAR, SEL_DIR,
 };
 use crate::commands::gallery::try_make_gallery_image;
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
@@ -797,9 +797,13 @@ pub async fn export_by_tag(
             // are derived from `dst`, not copied under their source names: the
             // flatten layout renames the media to `{prefix}_{fname}`, and a
             // companion that keeps the old stem would never be found again.
+            // Whichever thumbnail suffix the source actually has; the
+            // `is_file` guard below skips it when there is none.
+            let src_thumb = existing_thumb_path(&src).unwrap_or_else(|| thumb_path(&src));
+            let dst_thumb = thumb_path_like(&dst, &src_thumb);
             for (src_side, dst_side, what) in [
                 (sidecar_path(&src), sidecar_path(&dst), "sidecar"),
-                (thumb_path(&src), thumb_path(&dst), "thumbnail"),
+                (src_thumb, dst_thumb, "thumbnail"),
             ] {
                 if src_side.is_file() {
                     if let Err(e) = std::fs::copy(&src_side, &dst_side) {

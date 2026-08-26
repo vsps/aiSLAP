@@ -144,6 +144,12 @@ fn video_thumbnail_extract_impl(
         std::fs::create_dir_all(parent)?;
     }
     // Grab ~1s frame; `-ss 00:00:01` after -i for accuracy.
+    //
+    // The pixel format is pinned because the source dictates it otherwise, and
+    // a 10-bit source (Seedance 2.5 returns HEVC Main 10 for some outputs) had
+    // ffmpeg writing 16-bit `rgb48be` PNGs at ~8MB each. `yuvj420p` at `-q:v 3`
+    // is ~150KB for the same 1920x1080 frame, which is ample for a poster that
+    // never renders above a few hundred pixels wide.
     let status = Command::new(&exe_path)
         .args([
             "-y",
@@ -153,6 +159,10 @@ fn video_thumbnail_extract_impl(
             "00:00:01",
             "-vframes",
             "1",
+            "-pix_fmt",
+            "yuvj420p",
+            "-q:v",
+            "3",
             &thumb_path,
         ])
         .stdout(std::process::Stdio::null())

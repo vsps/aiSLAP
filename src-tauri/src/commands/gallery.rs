@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, is_image_ext, is_model3d_ext, is_thumb, is_video_ext, project_root_for, require_dir,
-    sidecar_path, thumb_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
+    as_str, existing_thumb_path, is_image_ext, is_model3d_ext, is_thumb, is_video_ext,
+    project_root_for, require_dir, sidecar_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::tags::{generated_by_from_sidecar, tags_from_sidecar};
 use crate::commands::walk;
@@ -135,7 +135,7 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
 }
 
 /// Classify a single file as a `GalleryImage`, or `None` if it's not a
-/// recognized media file (or is a `.thumb.png` adjunct). `tags` are passed in
+/// recognized media file (or is a `.thumb.*` adjunct). `tags` are passed in
 /// rather than resolved here since callers differ on how they know them: a
 /// directory scan looks each file up in the index, while a scan driven by the
 /// index itself already has them in hand.
@@ -156,12 +156,7 @@ pub(crate) fn try_make_gallery_image(
     }
     let meta_path = sidecar_path(path);
     let thumb_path = if is_video || is_model_3d {
-        let t = thumb_path(path);
-        if t.exists() {
-            Some(as_str(&t))
-        } else {
-            None
-        }
+        existing_thumb_path(path).map(|t| as_str(&t))
     } else {
         None
     };
@@ -339,4 +334,50 @@ fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResul
         global_src_images,
         shots,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::fsutil::THUMB_SUFFIXES;
+    use crate::testutil::TestProject;
+
+    /// The gallery has to hand the frontend whichever poster a clip actually
+    /// has: new videos get `.thumb.jpg`, but every project generated before
+    /// the switch is full of `.thumb.png` and must keep showing its tiles.
+    #[test]
+    fn gallery_finds_either_thumbnail_suffix() {
+        let project = TestProject::new("gallery-thumbs");
+        for (rel, suffix) in [
+            ("SQ01/sh010/v001/new.mp4", Some(".thumb.jpg")),
+            ("SQ01/sh010/v001/old.mp4", Some(".thumb.png")),
+            ("SQ01/sh010/v001/bare.mp4", None),
+        ] {
+            let media = project.media(rel, Some(serde_json::json!({})));
+            if let Some(suffix) = suffix {
+                let stem = media.file_stem().unwrap().to_str().unwrap();
+                std::fs::write(media.with_file_name(format!("{stem}{suffix}")), b"t").unwrap();
+            }
+            let img = try_make_gallery_image(&media, Vec::new(), None).unwrap();
+            assert!(img.is_video, "{rel} classified as video");
+            match suffix {
+                Some(suffix) => assert!(
+                    img.thumb_path.as_deref().unwrap().ends_with(suffix),
+                    "{rel} should resolve its {suffix} poster, got {:?}",
+                    img.thumb_path
+                ),
+                None => assert_eq!(img.thumb_path, None, "{rel} has no poster"),
+            }
+        }
+
+        // And a poster is never itself a gallery tile, whichever suffix it has.
+        for suffix in THUMB_SUFFIXES {
+            let thumb = project.root.join(format!("SQ01/sh010/v001/x{suffix}"));
+            std::fs::write(&thumb, b"t").unwrap();
+            assert!(
+                try_make_gallery_image(&thumb, Vec::new(), None).is_none(),
+                "{suffix} must not scan as media"
+            );
+        }
+    }
 }

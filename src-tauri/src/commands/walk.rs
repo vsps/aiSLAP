@@ -247,7 +247,10 @@ mod tests {
     fn thumbnails_are_not_media() {
         let p = TestProject::new("walk-thumbs");
         p.media("seq1/shot1/gen001/clip.mp4", None);
-        std::fs::write(p.root.join("seq1/shot1/gen001/clip.thumb.png"), b"t").unwrap();
+        // Both suffixes: the JPEG a new poster gets, and the PNG every
+        // pre-switch project is full of.
+        std::fs::write(p.root.join("seq1/shot1/gen001/clip.thumb.jpg"), b"t").unwrap();
+        std::fs::write(p.root.join("seq1/shot1/gen001/legacy.thumb.png"), b"t").unwrap();
         std::fs::write(p.root.join("seq1/shot1/gen001/notes.txt"), b"x").unwrap();
 
         let media: Vec<String> = dir_media(&p.root.join("seq1/shot1/gen001"))

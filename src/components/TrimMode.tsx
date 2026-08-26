@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { fileSrc } from "../lib/assets";
+import { THUMB_SUFFIXES } from "../lib/media";
 import { cmd } from "../lib/tauri";
 import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
@@ -78,7 +79,7 @@ async function adoptTrimmedClip(
   await cmd
     .video_thumbnail_extract(
       outPath,
-      outPath.replace(/\.[^.]+$/, ".thumb.png"),
+      outPath.replace(/\.[^.]+$/, THUMB_SUFFIXES[0]),
       ffmpegPath,
     )
     .catch(() => false);
@@ -101,7 +102,7 @@ async function freeTrimPath(src: string): Promise<string> {
     const taken = await Promise.all([
       exists(`${dir}/${s}.mp4`),
       exists(`${dir}/${s}.json`),
-      exists(`${dir}/${s}.thumb.png`),
+      ...THUMB_SUFFIXES.map((suffix) => exists(`${dir}/${s}${suffix}`)),
     ]);
     if (!taken.some(Boolean)) return `${dir}/${s}.mp4`;
   }
