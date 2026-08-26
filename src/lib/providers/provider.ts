@@ -60,7 +60,7 @@ export type ProviderRunHooks = {
   onSubmitted?: (requestId: string) => void | Promise<void>;
 };
 
-export type ProviderName = "fal" | "replicate" | "bytedance";
+export type ProviderName = "fal" | "replicate" | "bytedance" | "beeble";
 
 export function isVideoUrl(url: string): boolean {
   try {

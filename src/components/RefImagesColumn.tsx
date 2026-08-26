@@ -41,6 +41,8 @@ const START_COLOR = "#22c55e";
 const END_COLOR = "#ef4444";
 const SOURCE_COLOR = "#3b82f6";
 const MESH_COLOR = "#f97316";
+const ALPHA_COLOR = "#94a3b8";
+const REFERENCE_COLOR = "#a855f7";
 
 function roleColor(role: RoleAssignment | null): string | null {
   if (!role) return null;
@@ -48,6 +50,8 @@ function roleColor(role: RoleAssignment | null): string | null {
   if (role.kind === "end") return END_COLOR;
   if (role.kind === "source") return SOURCE_COLOR;
   if (role.kind === "mesh") return MESH_COLOR;
+  if (role.kind === "alpha") return ALPHA_COLOR;
+  if (role.kind === "reference") return REFERENCE_COLOR;
   if (role.kind === "element" || role.kind === "image") {
     const n = Number(role.groupName);
     const i = (Number.isFinite(n) ? n : 1) - 1;
@@ -596,6 +600,10 @@ function roleLabel(r: RefImage, num: number): string {
       return "end";
     case "mesh":
       return "mesh";
+    case "alpha":
+      return "alpha";
+    case "reference":
+      return "reference";
     case "element":
       return `@Element${a.groupName}${a.frontal ? " ★" : ""}`;
     case "image":

@@ -112,7 +112,7 @@ export type ModelNode = {
   parameters: Parameter[];
   batch_field?: string;
   /** Defaults to "fal" when omitted. */
-  provider?: "fal" | "replicate" | "bytedance";
+  provider?: "fal" | "replicate" | "bytedance" | "beeble";
 };
 
 export type ModelEntry = {
@@ -128,6 +128,14 @@ export type RoleAssignment =
   | { kind: "start" }
   | { kind: "end" }
   | { kind: "mesh" }
+  // An alpha matte / mask accompanying the source, rather than something to be
+  // generated from. Beeble SwitchX's `custom` and `select` alpha modes take one.
+  | { kind: "alpha" }
+  // A single style/appearance reference, distinct from `image` (which is the
+  // numbered @ImageN group role and sweeps up untagged refs of its media kind).
+  // Explicit-only on purpose: on a model whose source and reference are both
+  // stills, an untagged-sweep would hand the same file to both slots.
+  | { kind: "reference" }
   | { kind: "element"; groupName: string; frontal: boolean }
   | { kind: "image"; groupName: string }
   // Synthetic placeholder for the output of the previous chain link.
@@ -378,6 +386,20 @@ export type PrismInfo = {
   projectName: string;
 };
 
+/** One tab's persisted session: where it points, and the chain on its work
+ *  surface. Tabs are identified by position — ids are minted fresh each launch
+ *  and mean nothing across runs, so `AppState.activeTabIdx` is an index. */
+export type TabPersisted = {
+  projectPath: string;
+  /** Sequence/shot paths relative to their parent — see `AppState` below. */
+  lastSequence: string;
+  lastShot: string;
+  prismEntityType?: PrismEntityType;
+  chainLinks: ChainLinkPersisted[];
+  chainExpandedIdx: number | null;
+  iterations: number;
+};
+
 export type AppState = {
   projectPath: string;
   /** Sequence/shot paths relative to their parent. In a native project that's
@@ -399,6 +421,13 @@ export type AppState = {
    *  fields (those are still written for back-compat with old loaders). */
   chainLinks?: ChainLinkPersisted[];
   chainExpandedIdx?: number | null;
+  /** Every open tab. When present this supersedes *all* of the fields above,
+   *  which are kept as a mirror of the active tab so an older aiSLAP build
+   *  (or a downgrade) still reopens something sensible. A file without `tabs`
+   *  is a pre-tabs state and loads as a single tab. */
+  tabs?: TabPersisted[];
+  /** Index into `tabs` of the tab that was in front. */
+  activeTabIdx?: number;
 };
 
 export type SequenceSidecar = {
@@ -566,7 +595,7 @@ export type ChainMetadataBlock = {
 };
 
 export type ImageMetadata = {
-  provider?: "fal" | "replicate" | "bytedance";
+  provider?: "fal" | "replicate" | "bytedance" | "beeble";
   model: string;
   modelId: string;
   endpoint: string;
@@ -750,7 +779,7 @@ export type CostReportLine = {
   /** "<sequence>/<shot>" — collision-free across sequences that share a shot name. */
   shotKey: string;
   version: string;
-  provider?: "fal" | "replicate" | "bytedance";
+  provider?: "fal" | "replicate" | "bytedance" | "beeble";
   modelId?: string;
   model?: string;
   generatedBy?: string;
@@ -771,7 +800,7 @@ export type ProjectCostReport = {
  *  walks survivors after a crash/restart and re-pulls completed ones. */
 export type PendingSubmission = {
   id: string;
-  provider: "fal" | "replicate" | "bytedance";
+  provider: "fal" | "replicate" | "bytedance" | "beeble";
   endpoint: string;
   requestId: string;
 
@@ -788,7 +817,7 @@ export type PendingSubmission = {
   modelId: string;
   modelName: string;
   modelEndpoint: string;
-  modelProvider?: "fal" | "replicate" | "bytedance";
+  modelProvider?: "fal" | "replicate" | "bytedance" | "beeble";
   batchField?: string;
   sequencePrompt: string;
   shotPrompt: string;
@@ -808,6 +837,11 @@ export type LogEvent = {
   message: string;
   /** Short tag used to disambiguate concurrent jobs (e.g. first 6 chars of the job id). */
   tag?: string;
+  /** Tab this line came from. The log is one shared surface across every tab,
+   *  so a line about a job needs to say whose it was. Rendered as the tab's
+   *  position (`#2`) and only when more than one tab is open — resolved at
+   *  render time, since tabs can be closed or reordered after the fact. */
+  tabId?: string;
 };
 
 // ---------- Uploaded references (used by generate / args) ----------

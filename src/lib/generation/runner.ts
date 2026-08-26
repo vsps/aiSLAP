@@ -1,6 +1,13 @@
 // Job lifecycle: queue dispatch, provider calls, ref upload, progress,
 // cancellation. Owns the private jobSpecs/abortControllers maps; queueing
 // code registers work via registerJob().
+//
+// The queue is app-wide, not per-tab: one concurrency cap and one provider
+// budget, however many tabs are open. Each job is *attributed* to the tab that
+// submitted it via `JobSpec.tabId`, and every store touch below goes through
+// that id rather than through the `useGenerationStore` / `useSessionStore`
+// proxies — a job routinely outlives the tab switch that follows submitting it,
+// and the proxies always report whichever tab is in front.
 
 import { cmd } from "../tauri";
 import { basename, joinPath } from "../paths";
@@ -14,8 +21,13 @@ import type {
   RefImage,
   UploadedRef,
 } from "../types";
-import { useGenerationStore } from "../../stores/generationStore";
-import { useSessionStore } from "../../stores/sessionStore";
+import type { GenerationState } from "../../stores/generationStore";
+import {
+  activeStores,
+  activeTabId,
+  allTabs,
+  storesFor,
+} from "../../stores/tabsStore";
 import { usePricesStore } from "../../stores/pricesStore";
 import { getProvider } from "../providers";
 import type { ProviderProgress } from "../providers";
@@ -29,6 +41,10 @@ import { downloadAndWrite } from "./output";
 export type JobSpec = {
   id: string;
   tag: string; // short id for log lines
+  /** The tab that submitted this job. Every progress/pending write is routed
+   *  through it, so switching tabs mid-generation doesn't land this job's
+   *  status in someone else's queue. */
+  tabId: string;
   node: ModelNode;
   sequencePrompt: string;
   shotPrompts: string[];
@@ -45,6 +61,8 @@ export type JobSpec = {
    *  media root is `<entity>/Renders/AI`), and because the user may navigate
    *  elsewhere while the job runs. */
   projectPath: string;
+  /** Project identity uuid, captured at enqueue for the same reason. */
+  projectId: string;
   targetVersion: string;
   ffmpegPath: string;
   filenameTemplate: string;
@@ -84,10 +102,23 @@ export function setMaxConcurrentJobs(n: number): void {
   cachedMaxConcurrent = Math.max(1, n);
 }
 
+/**
+ * The generation store of the tab that owns `tabId`, or null when that tab has
+ * since been closed.
+ *
+ * A closed tab does not cancel its jobs: the media file and its sidecar are the
+ * durable commit, so the work runs to completion and lands on disk. What is
+ * gone is the UI that was tracking it, hence the null — every caller below uses
+ * `?.` and simply skips the status update.
+ */
+function genFor(tabId: string): GenerationState | null {
+  return storesFor(tabId)?.generation.getState() ?? null;
+}
+
 /** Register a snapshotted spec + its UI job and kick the dispatcher. */
 export function registerJob(spec: JobSpec, job: Job): void {
   jobSpecs.set(spec.id, spec);
-  useGenerationStore.getState().addJob(job);
+  genFor(spec.tabId)?.addJob(job);
 }
 
 /** Build a PendingSubmission record from the JobSpec for the iteration that
@@ -100,12 +131,14 @@ function buildPendingRecord(
   iterationIndex: number,
   requestId: string,
 ): PendingSubmission {
-  const provider: "fal" | "replicate" | "bytedance" =
+  const provider: "fal" | "replicate" | "bytedance" | "beeble" =
     spec.node.provider === "replicate"
       ? "replicate"
       : spec.node.provider === "bytedance"
         ? "bytedance"
-        : "fal";
+        : spec.node.provider === "beeble"
+          ? "beeble"
+          : "fal";
   return {
     id: pendingId,
     provider,
@@ -137,32 +170,48 @@ function buildPendingRecord(
   };
 }
 
+/** Every open tab's jobs, paired with the store that owns each one. The queue
+ *  spans tabs, so the dispatcher has to look at all of them. */
+function allJobs(): { job: Job; gen: GenerationState }[] {
+  const out: { job: Job; gen: GenerationState }[] = [];
+  for (const tab of allTabs()) {
+    const gen = tab.stores.generation.getState();
+    for (const job of gen.jobs) out.push({ job, gen });
+  }
+  return out;
+}
+
 function activeJobCount(): number {
-  return useGenerationStore
-    .getState()
-    .jobs.filter((j) => j.status !== "queued" && !isJobTerminal(j.status))
-    .length;
+  return allJobs().filter(
+    ({ job }) => job.status !== "queued" && !isJobTerminal(job.status),
+  ).length;
 }
 
 /**
  * Dispatcher. Picks the next queued job whenever an in-flight slot is free.
  * Reentrancy-guarded: a single loop drains the queue up to the cap, then
  * exits. Called from the enqueue paths and from each job's finally.
+ *
+ * FIFO across every tab, ordered by `startedAt` (a `performance.now()` reading,
+ * so it is monotonic and comparable between tabs). Two tabs submitting does not
+ * double the number of jobs in flight — that is the point of one shared cap.
  */
 export async function pumpQueue(): Promise<void> {
   if (pumping) return;
   pumping = true;
   try {
     while (true) {
-      const state = useGenerationStore.getState();
-      const queued = state.jobs.find((j) => j.status === "queued");
-      if (!queued) break;
+      const queued = allJobs()
+        .filter(({ job }) => job.status === "queued")
+        .sort((a, b) => a.job.startedAt - b.job.startedAt);
+      const next = queued[0];
+      if (!next) break;
       if (activeJobCount() >= cachedMaxConcurrent) break;
 
-      const spec = jobSpecs.get(queued.id);
+      const spec = jobSpecs.get(next.job.id);
       if (!spec) {
         // Defensive: drop a queued job with no spec rather than spinning.
-        state.removeJob(queued.id);
+        next.gen.removeJob(next.job.id);
         continue;
       }
       // Fire-and-forget. runJob calls pumpQueue itself in finally, which is a
@@ -174,15 +223,22 @@ export async function pumpQueue(): Promise<void> {
   }
 }
 
-/** Cancel every queued and running job, plus best-effort server-side cancel. */
+/**
+ * Cancel every queued and running job in the active tab, plus best-effort
+ * server-side cancel.
+ *
+ * Scoped to the front tab on purpose: this is the RunColumn's "cancel all"
+ * button, and the user means the work they are looking at — a background tab's
+ * generation is not theirs to bin from here.
+ */
 export function cancelAllGenerations(): void {
-  const state = useGenerationStore.getState();
-  for (const j of state.jobs) {
+  const gen = activeStores().generation.getState();
+  for (const j of gen.jobs) {
     if (isJobTerminal(j.status)) continue;
     if (j.status === "queued") {
       const spec = jobSpecs.get(j.id);
       jobSpecs.delete(j.id);
-      state.updateJob(j.id, {
+      gen.updateJob(j.id, {
         status: "cancelled",
         progressMessage: "Cancelled",
       });
@@ -190,7 +246,7 @@ export function cancelAllGenerations(): void {
       spec?.onCancelled?.();
       continue;
     }
-    state.updateJob(j.id, {
+    gen.updateJob(j.id, {
       status: "cancelling",
       progressMessage: "Cancelling…",
     });
@@ -198,19 +254,34 @@ export function cancelAllGenerations(): void {
   }
 }
 
+/** Rescan every tab currently looking at `shotPath`.
+ *
+ *  Replaces a single "is this the open shot?" check. With tabs there can be
+ *  more than one answer — the same shot open in two tabs, or none, if the user
+ *  has navigated away from the job's shot entirely. */
+async function rescanViewersOf(shotPath: string): Promise<void> {
+  await Promise.all(
+    allTabs()
+      .filter((t) => t.stores.session.getState().shotPath === shotPath)
+      .map((t) => t.stores.session.getState().rescanShot()),
+  );
+}
+
 /** Runs one job to completion / cancellation / failure. */
 async function runJob(spec: JobSpec): Promise<void> {
-  const gen = useGenerationStore.getState();
   const tag = spec.tag;
+  // Re-resolved on each use rather than captured: the owning tab can be closed
+  // while this runs, and `genFor` then reports that by returning null.
+  const gen = () => genFor(spec.tabId);
 
   const controller = new AbortController();
   abortControllers.set(spec.id, controller);
 
-  gen.updateJob(spec.id, {
+  gen()?.updateJob(spec.id, {
     status: "uploading",
     progressMessage: "Uploading references…",
   });
-  pushLog("INFO", `Generating with ${spec.node.name}`, tag);
+  pushLog("INFO", `Generating with ${spec.node.name}`, tag, spec.tabId);
 
   try {
     const provider = getProvider(spec.node.provider);
@@ -230,14 +301,14 @@ async function runJob(spec: JobSpec): Promise<void> {
 
     const totalOutputs: string[] = [];
 
-    gen.updateJob(spec.id, { status: "running" });
+    gen()?.updateJob(spec.id, { status: "running" });
 
     // Always loop over iterations. The model's batch_field (if any) flows
     // through baseArgs from buildArgs() — honoring whatever value the user
     // set, rather than overriding it to the iteration count.
     for (let k = 1; k <= spec.iterations; k++) {
       if (controller.signal.aborted) break;
-      gen.updateJob(spec.id, {
+      gen()?.updateJob(spec.id, {
         status: "running",
         currentIteration: k,
         progressMessage: `Generating (${k}/${spec.iterations})…`,
@@ -248,7 +319,7 @@ async function runJob(spec: JobSpec): Promise<void> {
           spec.node.endpoint,
           baseArgs,
           controller.signal,
-          (e) => reportProgress(spec.id, k, spec.iterations, e),
+          (e) => reportProgress(spec, k, spec.iterations, e),
           {
             onSubmitted: async (requestId) => {
               await cmd
@@ -257,7 +328,7 @@ async function runJob(spec: JobSpec): Promise<void> {
             },
           },
         );
-        gen.updateJob(spec.id, {
+        gen()?.updateJob(spec.id, {
           status: "downloading",
           progressMessage: `Downloading (${k}/${spec.iterations})…`,
         });
@@ -283,17 +354,22 @@ async function runJob(spec: JobSpec): Promise<void> {
           ffmpegPath: spec.ffmpegPath,
           filenameTemplate: spec.filenameTemplate,
           chain: spec.chain,
-          projectId: useSessionStore.getState().projectId ?? "",
+          projectId: spec.projectId,
         });
         totalOutputs.push(...outs);
-        gen.updateJob(spec.id, { completedIterations: k });
+        gen()?.updateJob(spec.id, { completedIterations: k });
         // Each completed iteration replaces one placeholder tile.
-        gen.decrementPendingOutputs(spec.shotPath, spec.targetVersion);
-        // Rescan only when the freshly-written shot is what the user is viewing;
-        // otherwise the gallery would briefly flicker to the job's shot.
-        if (useSessionStore.getState().shotPath === spec.shotPath) {
-          await useSessionStore.getState().rescanShot();
+        gen()?.decrementPendingOutputs(spec.shotPath, spec.targetVersion);
+        // Flag results the user cannot currently see, so the tab strip can say
+        // so. Checked per iteration rather than once at the end: a long
+        // multi-iteration run should light the tab up as soon as the first
+        // file lands, not only when the whole job is done.
+        if (activeTabId() !== spec.tabId) {
+          gen()?.noteUnseenOutputs(outs.length);
         }
+        // Rescan wherever the freshly-written shot is on screen; a tab looking
+        // at a different shot is left alone rather than flickering to this one.
+        await rescanViewersOf(spec.shotPath);
       } finally {
         // Whether the iter succeeded, failed, or was aborted, the pending
         // record's job is done. Crash-path is the one case `finally` doesn't
@@ -306,14 +382,12 @@ async function runJob(spec: JobSpec): Promise<void> {
 
     if (!controller.signal.aborted) {
       playSound("bell");
-      gen.updateJob(spec.id, {
+      gen()?.updateJob(spec.id, {
         status: "done",
         progressMessage: `Generated ${totalOutputs.length} file(s)`,
       });
-      pushLog("SUCCESS", `Generated ${totalOutputs.length} file(s)`, tag);
-      if (useSessionStore.getState().shotPath === spec.shotPath) {
-        await useSessionStore.getState().rescanShot();
-      }
+      pushLog("SUCCESS", `Generated ${totalOutputs.length} file(s)`, tag, spec.tabId);
+      await rescanViewersOf(spec.shotPath);
       spec.onComplete?.(totalOutputs);
     } else {
       // Loop exited via abort partway through — surface as cancellation.
@@ -322,12 +396,12 @@ async function runJob(spec: JobSpec): Promise<void> {
   } catch (e: unknown) {
     const err = e as { name?: string };
     if (err.name === "AbortError" || controller.signal.aborted) {
-      gen.updateJob(spec.id, {
+      gen()?.updateJob(spec.id, {
         status: "cancelled",
         progressMessage: "Cancelled",
       });
-      gen.clearPendingOutputs(spec.shotPath, spec.targetVersion);
-      pushLog("INFO", "Cancelled by user", tag);
+      gen()?.clearPendingOutputs(spec.shotPath, spec.targetVersion);
+      pushLog("INFO", "Cancelled by user", tag, spec.tabId);
       spec.onCancelled?.();
     } else {
       // Always dump the raw error so dev tools shows every field — wrappers
@@ -335,14 +409,14 @@ async function runJob(spec: JobSpec): Promise<void> {
       console.error(`[job ${tag}] failed:`, e);
       playSound("buzz");
       const msg = extractErrorMessage(e);
-      gen.updateJob(spec.id, {
+      gen()?.updateJob(spec.id, {
         status: "failed",
         progressMessage: "Failed",
         error: msg,
       });
-      gen.clearPendingOutputs(spec.shotPath, spec.targetVersion);
-      gen.setError(msg);
-      pushLog("ERROR", msg, tag);
+      gen()?.clearPendingOutputs(spec.shotPath, spec.targetVersion);
+      gen()?.setError(msg);
+      pushLog("ERROR", msg, tag, spec.tabId);
       spec.onFailed?.(e);
     }
   } finally {
@@ -353,26 +427,27 @@ async function runJob(spec: JobSpec): Promise<void> {
 }
 
 function reportProgress(
-  jobId: string,
+  spec: JobSpec,
   k: number,
   total: number,
   e: ProviderProgress,
 ) {
-  const gen = useGenerationStore.getState();
+  const gen = genFor(spec.tabId);
+  if (!gen) return;
   const prefix = total > 1 ? `(${k}/${total}) ` : "";
   if (e.kind === "queued") {
     const pos = e.position !== undefined ? ` (pos ${e.position})` : "";
-    gen.updateJob(jobId, {
+    gen.updateJob(spec.id, {
       currentIteration: k,
       progressMessage: `${prefix}Queued at provider${pos}`,
     });
   } else if (e.kind === "running") {
-    gen.updateJob(jobId, {
+    gen.updateJob(spec.id, {
       currentIteration: k,
       progressMessage: `${prefix}Generating…`,
     });
   } else if (e.kind === "completed") {
-    gen.updateJob(jobId, {
+    gen.updateJob(spec.id, {
       currentIteration: k,
       progressMessage: `${prefix}Downloading…`,
     });

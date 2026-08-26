@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { createStore } from "zustand";
 import type {
   GalleryColumn,
   GalleryImage,
@@ -12,9 +12,8 @@ import type {
   SeqTaggedGroup,
 } from "../lib/types";
 import { cmd } from "../lib/tauri";
-import { useTimelineStore } from "./timelineStore";
-import { useScriptStore } from "./scriptStore";
-import { useTagsStore } from "./tagsStore";
+import { tabScoped } from "./tabScoped";
+import type { TabStores } from "./tabStores";
 import { swallow } from "../lib/errors";
 import { basename, normalizeDir } from "../lib/paths";
 import { entityFor } from "../lib/prism";
@@ -100,7 +99,13 @@ type State = {
 
 type Actions = {
   setProject: (projectPath: string) => Promise<void>;
-  setSequence: (sequencePath: string) => Promise<void>;
+  /** `openLastShot` defaults to true — picking a sequence lands you on its
+   *  most recent shot. A newly opened tab passes false: it inherits the
+   *  sequence but deliberately starts with no shot selected. */
+  setSequence: (
+    sequencePath: string,
+    opts?: { openLastShot?: boolean },
+  ) => Promise<void>;
   /** Accepts a PRISM entity folder or an AI media root — either resolves to
    *  the media root, creating it on first visit. */
   setShot: (shotPath: string) => Promise<void>;
@@ -250,7 +255,24 @@ export function findLoadedImage(path: string): GalleryImage | undefined {
   return selectImageByPath(s).get(path) ?? selectTaggedImageByPath(s).get(path);
 }
 
-export const useSessionStore = create<State & Actions>((set, get) => {
+export type SessionState = State & Actions;
+
+/**
+ * Per-tab: this is the tab's identity — which project, sequence and shot it is
+ * pointed at, and everything the gallery loaded for it.
+ *
+ * `tab` is this tab's own bundle, so the cross-store reaches below (timeline
+ * reset on project change, script load, tag vocabulary) hit *this* tab's
+ * siblings. Going through the `useTimelineStore` proxy instead would land on
+ * whichever tab happened to be in front, which breaks the moment bootstrap
+ * restores a background tab or a rename runs while the user is elsewhere.
+ */
+export function createSessionStore(tab: TabStores) {
+  const timeline = () => tab.timeline.getState();
+  const script = () => tab.script.getState();
+  const tags = () => tab.tags.getState();
+
+  return createStore<SessionState>()((set, get) => {
   const coalescedRescanShot = coalesceAsync(async () => {
     const { shotPath } = get();
     if (!shotPath) return;
@@ -346,8 +368,8 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         sequencesInProject: sequences,
         ...clearedSelection(),
       });
-      useTimelineStore.getState().reset();
-      void useScriptStore.getState().loadFor(normalized);
+      timeline().reset();
+      void script().loadFor(normalized);
       // One-shot conversion of the old star list + SEL folders into tags,
       // then load the vocabulary. Awaited (unlike reconcile below) because
       // the gallery renders tags immediately and this is cheap — it only
@@ -364,7 +386,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         } catch (e) {
           swallow("tag migration")(e);
         }
-        await useTagsStore.getState().loadDefs(normalized);
+        await tags().loadDefs(normalized);
         if (get().projectPath === normalized) void get().rescanShot();
       })();
       // Best-effort: a project with no id yet gets one minted and persisted.
@@ -405,7 +427,8 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       })();
     },
 
-    async setSequence(sequencePath) {
+    async setSequence(sequencePath, opts) {
+      const openLastShot = opts?.openLastShot ?? true;
       const { shots, sidecar } = await cmd.sequence_open(sequencePath);
       set({
         sequencePath,
@@ -428,11 +451,10 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         void get().rescanSequenceStacks();
       }
       // Kick the timeline load in parallel with the shot load — they're independent.
-      const timelineLoad = useTimelineStore
-        .getState()
+      const timelineLoad = timeline()
         .loadForSequence(sequencePath)
         .catch(swallow("timeline init"));
-      if (shots.length > 0) {
+      if (openLastShot && shots.length > 0) {
         await get().setShot(shots[shots.length - 1]);
       }
       await timelineLoad;
@@ -447,7 +469,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       if (!projectPath || !prism) return;
       const sequences = await cmd.project_open(projectPath, entityType);
       set({ sequencesInProject: sequences, ...clearedSelection() });
-      useTimelineStore.getState().reset();
+      timeline().reset();
     },
 
     async setShot(shotPath) {
@@ -517,7 +539,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       const shotPath = await cmd.shot_create(sequencePath, name);
       const { shots } = await cmd.sequence_open(sequencePath);
       set({ shotsInSequence: shots });
-      const tl = useTimelineStore.getState();
+      const tl = timeline();
       if (tl.seqPath === sequencePath) tl.appendShotClip(shotPath);
       await get().setShot(shotPath);
     },
@@ -540,7 +562,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
 
     setSelectedImage(path) {
       if (path !== null) {
-        const tl = useTimelineStore.getState();
+        const tl = timeline();
         if (tl.timelineActive) tl.deactivate();
       }
       set({ selectedImagePath: path });
@@ -597,7 +619,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
         set({ taggedGroups: [], taggedLoading: false });
         return;
       }
-      const { activeFilter, filterMode } = useTagsStore.getState();
+      const { activeFilter, filterMode } = tags();
       set({ taggedLoading: true });
       try {
         const groups = await cmd.project_tag_scan(
@@ -690,4 +712,7 @@ export const useSessionStore = create<State & Actions>((set, get) => {
       set({ restoringLastSession: v });
     },
   };
-});
+  });
+}
+
+export const useSessionStore = tabScoped((t) => t.session);

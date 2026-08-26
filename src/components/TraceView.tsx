@@ -41,6 +41,8 @@ const EDGE_COLORS: Record<string, string> = {
   start: "#22c55e",
   end: "#ef4444",
   source: "#3b82f6",
+  alpha: "#94a3b8",
+  reference: "#a855f7",
   element: "#f59e0b",
   image: "#a855f7",
   chain_prev: "#14b8a6",

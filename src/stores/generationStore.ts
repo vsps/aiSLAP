@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { createStore } from "zustand";
 import type {
   ChainLink,
   Job,
@@ -9,6 +9,7 @@ import type {
 } from "../lib/types";
 import { classifyMedia } from "../lib/media";
 import { isJobTerminal } from "../lib/jobs";
+import { tabScoped } from "./tabScoped";
 
 type PendingOutputKey = string; // `<shotPath>|<targetVersion>`
 
@@ -28,6 +29,12 @@ type State = {
   /** Number of placeholder tiles to show per shot+version while generation
    *  is in flight. Key = `<shotPath>|<targetVersion>`. */
   pendingOutputs: Record<PendingOutputKey, number>;
+
+  /** Outputs that landed in this tab while it was in the background, and that
+   *  the user has not come back to look at yet. Drives the tab strip's
+   *  "results waiting" state. Ephemeral — never persisted, since being told
+   *  about a result you saw two launches ago is noise, not news. */
+  unseenOutputs: number;
 
   errorPopup: string | null;
 };
@@ -93,6 +100,13 @@ type Actions = {
   decrementPendingOutputs: (shotPath: string, targetVersion: string) => void;
   /** Clear all placeholders for a shot+version (e.g. on rescan). */
   clearPendingOutputs: (shotPath: string, targetVersion: string) => void;
+
+  /** Record outputs the user hasn't seen. The caller decides whether they
+   *  count — the runner only calls this when the owning tab is *not* the one
+   *  on screen, because a result you watched arrive is not unseen. */
+  noteUnseenOutputs: (count: number) => void;
+  /** Called when the tab comes to the front: being here is seeing them. */
+  markOutputsSeen: () => void;
 };
 
 function defaultsFor(params: Parameter[]): Record<string, unknown> {
@@ -121,11 +135,6 @@ function isCompatibleValue(param: Parameter, v: unknown): boolean {
   }
 }
 
-// Session-only memory of each link's per-model settings, so switching a link's
-// model and back restores what was there (disk persistence already covers the
-// active settings across reloads). Keyed by link id + model id to avoid bleed
-// between chain links.
-const settingsCache = new Map<string, Record<string, unknown>>();
 const cacheKey = (linkId: string, modelId: string) => `${linkId}::${modelId}`;
 
 // Ensure every element group has exactly one frontal. If none is set, the first
@@ -191,7 +200,18 @@ function shotPromptIncludes(link: ChainLink): boolean[] {
   return inc;
 }
 
-export const useGenerationStore = create<State & Actions>((set) => {
+export type GenerationState = State & Actions;
+
+/** Per-tab: the chain, its jobs and its pending-output placeholders are the
+ *  work surface, and the whole point of a tab is to have a second one. */
+export function createGenerationStore() {
+  // Session-only memory of each link's per-model settings, so switching a
+  // link's model and back restores what was there (disk persistence already
+  // covers the active settings across reloads). Keyed by link id + model id to
+  // avoid bleed between chain links; per-tab so it can't bleed between tabs.
+  const settingsCache = new Map<string, Record<string, unknown>>();
+
+  return createStore<GenerationState>()((set) => {
   const initialLink = makeChainLink();
   return {
     links: [initialLink],
@@ -200,6 +220,7 @@ export const useGenerationStore = create<State & Actions>((set) => {
 
     jobs: [],
     pendingOutputs: {},
+    unseenOutputs: 0,
     errorPopup: null,
 
     selectModel(model) {
@@ -657,15 +678,24 @@ export const useGenerationStore = create<State & Actions>((set) => {
         return { pendingOutputs: next };
       });
     },
+
+    noteUnseenOutputs(count) {
+      if (count <= 0) return;
+      set((s) => ({ unseenOutputs: s.unseenOutputs + count }));
+    },
+    markOutputsSeen() {
+      set((s) => (s.unseenOutputs === 0 ? {} : { unseenOutputs: 0 }));
+    },
   };
-});
+  });
+}
+
+export const useGenerationStore = tabScoped((t) => t.generation);
 
 // ---- Active-link selectors -------------------------------------------------
 // The "active" link is what the editor panels read/write: links[expandedIdx],
 // falling back to links[0] in the all-collapsed view. Use these instead of
 // duplicating the fallback logic at call sites.
-
-export type GenerationState = State & Actions;
 
 // Stable reference: selectors must not fabricate a new array per call or
 // useSyncExternalStore's snapshot check loops forever.

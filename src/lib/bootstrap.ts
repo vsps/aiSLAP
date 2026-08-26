@@ -7,19 +7,19 @@ import type {
   ChainLinkPersisted,
   Config,
   ModelEntry,
+  TabPersisted,
 } from "./types";
 import {
   makeChainLink,
   selectActiveLink,
-  useGenerationStore,
 } from "../stores/generationStore";
 import { swallow } from "./errors";
 import { loadSystemUsername } from "./systemUser";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePresetsStore } from "../stores/presetsStore";
 import { usePricesStore } from "../stores/pricesStore";
-import { useSessionStore } from "../stores/sessionStore";
 import { useLayoutStore } from "../stores/layoutStore";
+import { createTab, useTabsStore, type Tab } from "../stores/tabsStore";
 
 function emptyAppState(): AppState {
   return {
@@ -83,33 +83,113 @@ export function linkFromPersisted(
   });
 }
 
-function currentAppState(): AppState {
-  const g = useGenerationStore.getState();
-  const s = useSessionStore.getState();
-  const active = selectActiveLink(g);
+/** One tab's slice of the saved state. Paths are stored parent-relative rather
+ *  than as bare names: in a native project these *are* the folder names, but a
+ *  PRISM project needs the entity-root and `Renders/AI` segments to survive so
+ *  `restoreSessionPaths` can rejoin them. */
+function tabToPersisted(tab: Tab): TabPersisted {
+  const s = tab.stores.session.getState();
+  const g = tab.stores.generation.getState();
   return {
     projectPath: s.projectPath ?? "",
-    // Parent-relative rather than bare names: in a native project these *are*
-    // the folder names, but a PRISM project needs the entity-root and
-    // `Renders/AI` segments to survive so restoreSessionPaths can rejoin them.
     lastSequence: relativeTo(s.projectPath ?? "", s.sequencePath ?? ""),
     lastShot: relativeTo(s.sequencePath ?? "", s.shotPath ?? ""),
     prismEntityType: s.prism ? s.entityType : undefined,
-    lastModel: active.model?.id ?? "",
-    sequencePrompt: active.sequencePrompt,
-    // Keep legacy `shotPrompt` empty — the canonical store is `shotPrompts`.
-    shotPrompt: "",
-    shotPrompts: active.shotPrompts,
-    settings: active.settings,
-    refImages: active.refImages,
-    iterations: g.iterations,
     chainLinks: g.links.map(toPersisted),
     chainExpandedIdx: g.expandedIdx,
+    iterations: g.iterations,
+  };
+}
+
+function currentAppState(): AppState {
+  const { tabs, activeId } = useTabsStore.getState();
+  const activeIdx = Math.max(
+    0,
+    tabs.findIndex((t) => t.id === activeId),
+  );
+  const persisted = tabs.map(tabToPersisted);
+  const active = persisted[activeIdx];
+  const activeGen = tabs[activeIdx].stores.generation.getState();
+  const activeLink = selectActiveLink(activeGen);
+
+  return {
+    // Everything down to `chainExpandedIdx` mirrors the active tab, so an
+    // aiSLAP build predating tabs still reopens the session the user was last
+    // looking at. `tabs` at the bottom is the real record.
+    projectPath: active.projectPath,
+    lastSequence: active.lastSequence,
+    lastShot: active.lastShot,
+    prismEntityType: active.prismEntityType,
+    lastModel: activeLink.model?.id ?? "",
+    sequencePrompt: activeLink.sequencePrompt,
+    // Keep legacy `shotPrompt` empty — the canonical store is `shotPrompts`.
+    shotPrompt: "",
+    shotPrompts: activeLink.shotPrompts,
+    settings: activeLink.settings,
+    refImages: activeLink.refImages,
+    iterations: active.iterations,
+    chainLinks: active.chainLinks,
+    chainExpandedIdx: active.chainExpandedIdx,
+
+    tabs: persisted,
+    activeTabIdx: activeIdx,
   };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Promote a pre-tabs saved state to a one-tab set. */
+function legacyTab(appState: AppState): TabPersisted {
+  return {
+    projectPath: appState.projectPath ?? "",
+    lastSequence: appState.lastSequence ?? "",
+    lastShot: appState.lastShot ?? "",
+    prismEntityType: appState.prismEntityType,
+    chainLinks: Array.isArray(appState.chainLinks) ? appState.chainLinks : [],
+    chainExpandedIdx: appState.chainExpandedIdx ?? 0,
+    iterations: appState.iterations ?? 1,
+  };
+}
+
+/** Rebuild a tab's chain. `chainLinks` is the modern record; a state with none
+ *  falls back to the flat single-link fields. That fallback is not just for
+ *  ancient files — until the Rust side stopped typing `app-state.json`, serde
+ *  dropped `chainLinks` on every save, so every state written before this
+ *  version has only the flat fields. */
+function hydrateChain(
+  tab: Tab,
+  persisted: TabPersisted,
+  legacy: AppState | null,
+  entries: ModelEntry[],
+): void {
+  const gen = tab.stores.generation.getState();
+  if (persisted.chainLinks.length > 0) {
+    gen.setChain(
+      persisted.chainLinks.map((p) => linkFromPersisted(p, entries)),
+      persisted.chainExpandedIdx ?? 0,
+    );
+  } else if (legacy) {
+    const model = legacy.lastModel
+      ? (entries.find((e) => e.node.id === legacy.lastModel)?.node ?? null)
+      : null;
+    if (model) gen.selectModel(model);
+    const settings = (legacy.settings ?? {}) as Record<string, unknown>;
+    if (model) {
+      for (const [k, v] of Object.entries(settings)) gen.setSetting(k, v);
+    }
+    gen.setSequencePrompt(legacy.sequencePrompt ?? "");
+    gen.setShotPrompts(
+      Array.isArray(legacy.shotPrompts) && legacy.shotPrompts.length > 0
+        ? legacy.shotPrompts
+        : legacy.shotPrompt
+          ? [legacy.shotPrompt]
+          : [""],
+    );
+    gen.setRefImages(legacy.refImages ?? []);
+  }
+  gen.setIterations(persisted.iterations ?? 1);
 }
 
 export async function bootstrap(): Promise<() => void> {
@@ -142,39 +222,28 @@ export async function bootstrap(): Promise<() => void> {
   usePricesStore.getState().setOverrides(config?.priceOverrides ?? {});
 
   const entries = useModelsStore.getState().entries;
-  const gen = useGenerationStore.getState();
 
-  if (Array.isArray(appState.chainLinks) && appState.chainLinks.length > 0) {
-    // New-format chain: restore the full link array.
-    const links = appState.chainLinks.map((p) => linkFromPersisted(p, entries));
-    gen.setChain(links, appState.chainExpandedIdx ?? 0);
-  } else {
-    // Legacy single-link state: rebuild a one-link chain from flat fields.
-    const persistedModel = appState.lastModel
-      ? (entries.find((e) => e.node.id === appState.lastModel)?.node ?? null)
-      : null;
-    if (persistedModel) gen.selectModel(persistedModel);
-    const persistedSettings = (appState.settings ?? {}) as Record<string, unknown>;
-    if (
-      persistedModel &&
-      persistedSettings &&
-      typeof persistedSettings === "object"
-    ) {
-      for (const [k, v] of Object.entries(persistedSettings)) {
-        gen.setSetting(k, v);
-      }
-    }
-    gen.setSequencePrompt(appState.sequencePrompt ?? "");
-    const persistedShotPrompts =
-      Array.isArray(appState.shotPrompts) && appState.shotPrompts.length > 0
-        ? appState.shotPrompts
-        : appState.shotPrompt
-          ? [appState.shotPrompt]
-          : [""];
-    gen.setShotPrompts(persistedShotPrompts);
-    gen.setRefImages(appState.refImages ?? []);
-  }
-  gen.setIterations(appState.iterations ?? 1);
+  // ---- Rebuild the tab set -------------------------------------------------
+  const savedTabs = appState.tabs;
+  const hasTabs = Array.isArray(savedTabs) && savedTabs.length > 0;
+  const persistedTabs: TabPersisted[] = hasTabs
+    ? savedTabs
+    : [legacyTab(appState)];
+  // Only the one-tab legacy shape may fall back to the flat fields; a real tab
+  // set carries its chain per tab or not at all.
+  const legacy = hasTabs ? null : appState;
+
+  // Reuse the tab `tabsStore` created at module load as the first one, so the
+  // proxies never see a moment with no tab behind them.
+  const tabs: Tab[] = [useTabsStore.getState().tabs[0]];
+  for (let i = 1; i < persistedTabs.length; i++) tabs.push(createTab());
+  persistedTabs.forEach((p, i) => hydrateChain(tabs[i], p, legacy, entries));
+
+  const activeIdx = Math.min(
+    Math.max(0, appState.activeTabIdx ?? 0),
+    tabs.length - 1,
+  );
+  useTabsStore.getState().setTabs(tabs, tabs[activeIdx].id);
 
   // One-time migration: these used to round-trip through Rust app_state.json;
   // now they live in layoutStore/localStorage. No-ops once localStorage has
@@ -195,9 +264,18 @@ export async function bootstrap(): Promise<() => void> {
   // not block the UI from becoming interactive. Errors are logged, not
   // thrown: a failed restore just leaves the user with an empty session,
   // which they can fix via the project picker in SessionBar.
-  void restoreSessionPaths(appState).catch(
-    swallow("background session restore"),
-  );
+  //
+  // The front tab goes first and the rest follow one at a time: each restore is
+  // a burst of directory walks, and firing N of them at a network drive at once
+  // would make the tab the user is actually waiting on the slowest to arrive.
+  void (async () => {
+    const rest = tabs.map((_, i) => i).filter((i) => i !== activeIdx);
+    for (const i of [activeIdx, ...rest]) {
+      await restoreSessionPaths(tabs[i], persistedTabs[i]).catch(
+        swallow("background session restore"),
+      );
+    }
+  })();
 
   return installPersistence();
 }
@@ -206,36 +284,45 @@ export async function bootstrap(): Promise<() => void> {
 // the project we just restored is still the current one before proceeding.
 const normalizeProjectPath = normalizeDir;
 
-async function restoreSessionPaths(appState: AppState): Promise<void> {
-  if (!appState.projectPath) return;
-  const session = useSessionStore.getState();
-  session.setRestoringLastSession(true);
+async function restoreSessionPaths(
+  tab: Tab,
+  persisted: TabPersisted,
+): Promise<void> {
+  if (!persisted.projectPath) return;
+  // Always this tab's own store, never the `useSessionStore` proxy: the user
+  // can switch tabs while a background restore is still walking directories.
+  const store = tab.stores.session;
+  store.getState().setRestoringLastSession(true);
   try {
     // Record the PRISM tree before opening: setProject lists sequences from
     // whichever tree is active. Harmless when the project turns out native.
-    if (appState.prismEntityType) {
-      await session.setEntityType(appState.prismEntityType);
+    if (persisted.prismEntityType) {
+      await store.getState().setEntityType(persisted.prismEntityType);
     }
-    await session.setProject(appState.projectPath);
+    await store.getState().setProject(persisted.projectPath);
     // Bail if the user has since picked a different project themselves —
     // don't clobber their choice with a stale background restore.
     if (
-      useSessionStore.getState().projectPath !==
-      normalizeProjectPath(appState.projectPath)
+      store.getState().projectPath !==
+      normalizeProjectPath(persisted.projectPath)
     ) {
       return;
     }
 
-    if (!appState.lastSequence) return;
-    const seqPath = joinPath(appState.projectPath, appState.lastSequence);
+    if (!persisted.lastSequence) return;
+    const seqPath = joinPath(persisted.projectPath, persisted.lastSequence);
     try {
-      await useSessionStore.getState().setSequence(seqPath);
-      if (useSessionStore.getState().sequencePath !== seqPath) return;
+      // A tab saved with a sequence but no shot is a deliberate state — that's
+      // exactly what a fresh tab is — so don't auto-open the latest shot for it.
+      await store
+        .getState()
+        .setSequence(seqPath, { openLastShot: !!persisted.lastShot });
+      if (store.getState().sequencePath !== seqPath) return;
 
-      if (!appState.lastShot) return;
-      const shotPath = joinPath(seqPath, appState.lastShot);
+      if (!persisted.lastShot) return;
+      const shotPath = joinPath(seqPath, persisted.lastShot);
       try {
-        await useSessionStore.getState().setShot(shotPath);
+        await store.getState().setShot(shotPath);
       } catch (e) {
         console.warn(`[bootstrap] shot restore failed for ${shotPath}:`, e);
       }
@@ -244,11 +331,11 @@ async function restoreSessionPaths(appState: AppState): Promise<void> {
     }
   } catch (e) {
     console.warn(
-      `[bootstrap] project restore failed for ${appState.projectPath}:`,
+      `[bootstrap] project restore failed for ${persisted.projectPath}:`,
       e,
     );
   } finally {
-    session.setRestoringLastSession(false);
+    store.getState().setRestoringLastSession(false);
   }
 }
 
@@ -268,38 +355,72 @@ function installPersistence(): () => void {
     }, 500);
   };
 
-  // Gate on exactly the fields `currentAppState` reads. Subscribing to the
-  // whole stores meant every job-progress tick — roughly once a second per
-  // in-flight job — and every gallery rescan re-armed the debounce and ended
-  // in a full JSON.stringify of the app state, for data that had not moved.
+  // Gate on exactly the fields `tabToPersisted` reads. Subscribing to the whole
+  // stores meant every job-progress tick — roughly once a second per in-flight
+  // job — and every gallery rescan re-armed the debounce and ended in a full
+  // JSON.stringify of the app state, for data that had not moved.
   //
-  // Keep this list in sync with `currentAppState` above: `lastSerialized`
-  // means a *missing* field here shows up as app-state silently not
-  // persisting, never as a wrong write.
-  const unsubG = useGenerationStore.subscribe((s, prev) => {
-    if (
-      s.links !== prev.links ||
-      s.expandedIdx !== prev.expandedIdx ||
-      s.iterations !== prev.iterations
-    ) {
-      schedule();
+  // Keep this list in sync with `tabToPersisted` above: `lastSerialized` means
+  // a *missing* field here shows up as app-state silently not persisting,
+  // never as a wrong write.
+  //
+  // Subscribed per tab and directly, never through the store proxies: a
+  // background tab finishing its restore, or being renamed, still has to be
+  // written, and a proxy only ever reports the tab in front.
+  const perTab = new Map<string, () => void>();
+
+  const subscribeTab = (tab: Tab) => {
+    if (perTab.has(tab.id)) return;
+    const unsubG = tab.stores.generation.subscribe((s, prev) => {
+      if (
+        s.links !== prev.links ||
+        s.expandedIdx !== prev.expandedIdx ||
+        s.iterations !== prev.iterations
+      ) {
+        schedule();
+      }
+    });
+    const unsubS = tab.stores.session.subscribe((s, prev) => {
+      if (
+        s.projectPath !== prev.projectPath ||
+        s.sequencePath !== prev.sequencePath ||
+        s.shotPath !== prev.shotPath ||
+        s.prism !== prev.prism ||
+        s.entityType !== prev.entityType
+      ) {
+        schedule();
+      }
+    });
+    perTab.set(tab.id, () => {
+      unsubG();
+      unsubS();
+    });
+  };
+
+  const syncSubscriptions = () => {
+    const tabs = useTabsStore.getState().tabs;
+    const live = new Set(tabs.map((t) => t.id));
+    for (const [id, unsub] of perTab) {
+      if (!live.has(id)) {
+        unsub();
+        perTab.delete(id);
+      }
     }
-  });
-  const unsubS = useSessionStore.subscribe((s, prev) => {
-    if (
-      s.projectPath !== prev.projectPath ||
-      s.sequencePath !== prev.sequencePath ||
-      s.shotPath !== prev.shotPath ||
-      s.prism !== prev.prism ||
-      s.entityType !== prev.entityType
-    ) {
-      schedule();
-    }
+    for (const tab of tabs) subscribeTab(tab);
+  };
+  syncSubscriptions();
+
+  // The tab set itself is persisted state: opening, closing, reordering and
+  // switching all change the file.
+  const unsubTabs = useTabsStore.subscribe((s, prev) => {
+    if (s.tabs !== prev.tabs) syncSubscriptions();
+    if (s.tabs !== prev.tabs || s.activeId !== prev.activeId) schedule();
   });
 
   return () => {
-    unsubG();
-    unsubS();
+    unsubTabs();
+    for (const unsub of perTab.values()) unsub();
+    perTab.clear();
     if (timer) clearTimeout(timer);
   };
 }

@@ -1,4 +1,4 @@
-use crate::domain::{AppState, Config};
+use crate::domain::Config;
 use crate::error::AppResult;
 use crate::fsjson::{read_json_or_default, write_json_atomic};
 use crate::paths;
@@ -29,13 +29,16 @@ pub(crate) fn configured_ffmpeg_path() -> String {
 
 // ----- app-state.json -----
 
+/// Passthrough, deliberately untyped — see the note where `AppState` used to
+/// live in `domain.rs`. A missing file reads as `null`; the frontend already
+/// treats any non-object as "no saved state".
 #[tauri::command]
-pub fn app_state_load() -> AppResult<AppState> {
+pub fn app_state_load() -> AppResult<serde_json::Value> {
     read_json_or_default(&paths::app_state_path()?)
 }
 
 #[tauri::command]
-pub fn app_state_save(state: AppState) -> AppResult<()> {
+pub fn app_state_save(state: serde_json::Value) -> AppResult<()> {
     write_json_atomic(&paths::app_state_path()?, &state)
 }
 

@@ -72,6 +72,7 @@ Adding a provider touches no Rust — see [providers.md](providers.md).
 `main.tsx` → `App.tsx`, which mounts, top to bottom:
 
 ```
+TabBar              one chip per open session — see tabs.md
 SessionBar          project / sequence / shot pickers, PRISM SHOT|ASSET toggle
 Workbench           the chain editor — one column set per chain link
 Timeline            built-in NLE strip
@@ -101,23 +102,34 @@ Rather than an alphabetical inventory (53 files, and they move):
 
 ### Store ownership
 
-Ten zustand stores. What each owns — and, where it matters, what it must *not*:
+What each owns — and, where it matters, what it must *not*. **Scope** says whether
+there is one instance app-wide or one per open tab; see [tabs.md](tabs.md).
 
-| Store | Owns |
-|---|---|
-| `sessionStore` | project / sequence / shot paths, loaded gallery `columns`, `taggedGroups`, selection, `traceActive`, view mode, `restoringLastSession` |
-| `generationStore` | chain `links`, the active link's model/settings/prompts/refs, `iterations`, job list, `pendingOutputs` |
-| `modelsStore` | the loaded registry and a `loaded` flag (drives `models: N`) |
-| `tagsStore` | vocabulary (`defs`), the derived `colorsByName` map, `activeFilter`, `filterMode` |
-| `timelineStore` | clips, playhead, transport, video durations, segment flattening — [timeline.md](timeline.md) |
-| `layoutStore` | panel sizes and collapsed columns — persisted to `localStorage` |
-| `pricesStore` | cached fal prices plus manual per-endpoint overrides |
-| `scriptStore` | the parsed `script.md` |
-| `presetsStore` | chain presets |
-| `logStore` | the in-app log ring, fed by `lib/consoleCapture.ts` |
+| Store | Scope | Owns |
+|---|---|---|
+| `sessionStore` | per-tab | project / sequence / shot paths, loaded gallery `columns`, `taggedGroups`, selection, `traceActive`, view mode, `restoringLastSession` |
+| `generationStore` | per-tab | chain `links`, the active link's model/settings/prompts/refs, `iterations`, job list, `pendingOutputs` |
+| `timelineStore` | per-tab | clips, playhead, transport, video durations, segment flattening — [timeline.md](timeline.md) |
+| `scriptStore` | per-tab | the parsed `script.md` |
+| `tagsStore` | per-tab | vocabulary (`defs`), the derived `colorsByName` map, `activeFilter`, `filterMode` |
+| `tabsStore` | global | the tab list, the active tab, and every tab's store bundle |
+| `modelsStore` | global | the loaded registry and a `loaded` flag (drives `models: N`) |
+| `layoutStore` | global | panel sizes and collapsed columns — persisted to `localStorage` |
+| `pricesStore` | global | cached fal prices plus manual per-endpoint overrides |
+| `presetsStore` | global | chain presets |
+| `logStore` | global | the in-app log ring, fed by `lib/consoleCapture.ts` |
+| `updateStore` | global | a found self-update, pending the user's decision |
+| `costReportStore` | global | the last project-wide cost rollup |
+
+A per-tab store is a **factory** (`createSessionStore`, …), not a `create()`
+singleton, and each still exports a module-level `useFooStore` — a proxy from
+`stores/tabScoped.ts` that forwards to the active tab. Call sites are unchanged
+by tabs; the exceptions are listed in [tabs.md](tabs.md) §1.
 
 Cross-store reads go through `getState()`, not subscriptions — `tagsStore` reaching
-into `sessionStore` for the loaded columns is the common case.
+into `sessionStore` for the loaded columns is the common case. Inside a per-tab
+store that read goes to **its own tab's** sibling (the bundle it was built with),
+never through the proxy.
 
 ### `lib/` by concern
 
@@ -130,6 +142,7 @@ into `sessionStore` for the loaded columns is the common case.
 - **Cost** — `falPrices.ts`
 - **UI plumbing** — `popup.ts`, `dialog.ts`, `dragThreshold.ts`, `osDragDrop.ts`, `icon.tsx`, `colors.ts`, `format.ts`
 - **Orchestration** — `actions.ts`, `bootstrap.ts`, `recovery.ts`, `script.ts`, `llm.ts`, `chainValidation.ts`
+- **Tabs** — `stores/tabScoped.ts` (the proxy), `stores/tabStores.ts` (one tab's bundle), `stores/tabsStore.ts` (the list), `tabs.ts` (guarded close)
 - **Caching** — `metadataCache.ts`, `coalesce.ts`
 - **Diagnostics** — `errors.ts`, `consoleCapture.ts`
 
@@ -199,10 +212,12 @@ TypeScript conventions.
 1. Kick off the model registry and presets loads (independent, in parallel).
 2. Await `app_state_load` + `config_load` alongside them.
 3. Apply colours to CSS variables; seed cached fal prices and overrides.
-4. Rebuild the chain from `app-state.json` — the new `chainLinks` array, or a legacy
-   single-link state promoted to a one-link chain.
-5. Restore the last session's project/sequence/shot paths (fire-and-forget, guarded by
-   `restoringLastSession` so the UI can say so).
+4. Rebuild the **tab set** from `app-state.json`'s `tabs` array — a pre-tabs state is
+   promoted to one tab — and each tab's chain from its `chainLinks` (or, for a legacy
+   state, the flat single-link fields). See [tabs.md](tabs.md) §6.
+5. Restore each tab's project/sequence/shot paths (fire-and-forget, guarded by
+   `restoringLastSession` so the UI can say so). Front tab first, then the rest one
+   at a time.
 6. Install the OS drag-drop listener and the app-state persistence subscription.
 7. Run orphan recovery against `pending.json`.
 
@@ -210,9 +225,10 @@ TypeScript conventions.
 boot error.
 
 **Persistence** is a debounced write of `currentAppState()`, subscribed to a specific
-field list on two stores. The gate and `currentAppState` must be kept in step — a
-field missing from the gate shows up as *silent non-persistence*, never as a wrong
-write.
+field list on **each tab's** session and generation stores, plus the tab list itself.
+The gate and `tabToPersisted` must be kept in step — a field missing from the gate
+shows up as *silent non-persistence*, never as a wrong write. The subscriptions are
+direct, not via the store proxies, so a background tab still gets written.
 
 ---
 
@@ -226,7 +242,8 @@ project/                     project.json · script.md · SRC/
       v001/ gen001/ …        version folders — one per generation batch
         <media>              the output
         <media>.json         its sidecar
-        <media>.thumb.png    poster frame, for video and 3D
+        <media>.thumb.jpg    poster frame, for video (8-bit JPEG)
+        <media>.thumb.png    poster frame, for 3D (provider's RGBA preview)
 ```
 
 Under PRISM the shot level is `<entity>/Renders/AI` instead — see [prism.md](prism.md).
@@ -234,6 +251,8 @@ Under PRISM the shot level is `<entity>/Renders/AI` instead — see [prism.md](p
 **The media triple** is the unit of movement: media + sidecar + thumbnail are copied,
 moved, renamed and exported together. Anything that handles one must handle all three,
 which is what `sidecar_path` / `thumb_path` / `is_thumb` in `fsutil.rs` exist for.
+Two thumbnail suffixes are live at once — see [storage.md](storage.md#the-media-triple)
+for which to write and which to read.
 
 **Asset identity** is an id embedded *inside* the media file (EXIF UserComment for
 JPEG, a text chunk for PNG, a private chunk for WebP, ffmpeg metadata for video) plus
@@ -273,6 +292,13 @@ A checklist to test a change against:
    the project id and tag vocabulary.
 9. **Provider knowledge stays in TypeScript.** Rust treats `provider` as an opaque
    string.
+10. **Async work binds to the tab that started it.** A job, a boot restore, or any
+    helper that writes after an `await` captures its tab up front (`activeStores()`,
+    `JobSpec.tabId`) — never `useSessionStore.getState()` on the far side of the
+    await, which reports whichever tab is in front by then. See [tabs.md](tabs.md).
+11. **Only the active tab's React tree is mounted.** `App.tsx` keys the
+    session-scoped panels on the active tab id. A hidden tab's components would read
+    the front tab's stores through the proxies.
 
 ---
 
@@ -289,6 +315,8 @@ Told apart so nobody "fixes" a decision, or lives with a bug thinking it is one:
 | A malformed model file vanishes silently | **known gap** | Guarded by a test, not by a runtime error. See [model-registry.md](model-registry.md). |
 | The README release table lags on `dev` | **known gap** | The release workflow only rewrites it on `main`. |
 | `write_json_atomic` does not `fsync` | **known gap** | Rename-based atomicity without a flush; deliberately unaddressed pending measurement on SMB, where the extra round trip is expensive. |
+| `app-state.json` has no Rust struct | **deliberate** | It is frontend state (rule 3). The typed mirror it replaced silently dropped `chainLinks`, so the prompt chain never survived a restart. See [tabs.md](tabs.md) §6. |
+| N tabs on one project reconcile it N times at boot | **known gap** | Fire-and-forget and idempotent, so it costs time on a slow drive, not correctness. |
 
 ---
 

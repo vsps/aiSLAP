@@ -22,6 +22,7 @@ Read in this order:
 | [generation-pipeline.md](generation-pipeline.md) | touch prompts, refs, dispatch, or output writing |
 | [model-registry.md](model-registry.md) | **add or edit a model** — this is the most common change |
 | [providers.md](providers.md) | add an API provider, or debug key handling |
+| [tabs.md](tabs.md) | touch per-tab state, the job queue, or app-state persistence |
 | [storage.md](storage.md) | touch paths, sidecars, asset identity, or the SQLite index |
 | [prism.md](prism.md) | touch anything path-shaped in a PRISM project |
 | [tags.md](tags.md) | touch tagging, filtering, or the tag view |

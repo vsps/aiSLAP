@@ -2,7 +2,7 @@ import { cmd } from "./tauri";
 import { dirname, joinPath } from "./paths";
 import { pushLog } from "../stores/logStore";
 import { useModelsStore } from "../stores/modelsStore";
-import { useSessionStore } from "../stores/sessionStore";
+import { activeTabId, allTabs } from "../stores/tabsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import {
   FalProvider,
@@ -38,6 +38,11 @@ export async function recoverOrphans(): Promise<RecoveryResult> {
   };
   if (records.length === 0) return result;
 
+  // Shot paths we actually pulled a file down into, one entry per recovered
+  // iteration — so the tab strip can report how many results are waiting, not
+  // just that some are.
+  const recoveredShots: string[] = [];
+
   // Prepare fal client once if we have any fal records.
   const hasFal = records.some((r) => r.provider === "fal");
   if (hasFal) {
@@ -63,6 +68,7 @@ export async function recoverOrphans(): Promise<RecoveryResult> {
         const out = await falQueueResult(rec.endpoint, rec.requestId);
         await pullDown(rec, out);
         await cmd.pending_remove(rec.id).catch(() => {});
+        recoveredShots.push(rec.shotPath);
         result.recovered++;
         result.notes.push(`Recovered ${rec.modelName} (${rec.iterationIndex}/${rec.iterations})`);
       } else if (status === "IN_QUEUE" || status === "IN_PROGRESS") {
@@ -89,11 +95,32 @@ export async function recoverOrphans(): Promise<RecoveryResult> {
     }
   }
 
-  // After we wrote files into a version dir for the currently-open shot,
-  // rescan so the gallery picks them up.
-  const sess = useSessionStore.getState();
-  if (sess.shotPath && result.recovered > 0) {
-    await sess.rescanShot();
+  // We wrote files into version dirs across (potentially) several shots.
+  // Rescan every tab that has one of them open — recovery runs at boot, while
+  // the tabs are still restoring, so "the open shot" is neither single nor
+  // settled.
+  if (recoveredShots.length > 0) {
+    const countByShot = new Map<string, number>();
+    for (const shotPath of recoveredShots) {
+      countByShot.set(shotPath, (countByShot.get(shotPath) ?? 0) + 1);
+    }
+    const front = activeTabId();
+    await Promise.all(
+      allTabs().map(async (tab) => {
+        const session = tab.stores.session.getState();
+        const shotPath = session.shotPath;
+        if (!shotPath) return;
+        const recoveredHere = countByShot.get(shotPath);
+        if (!recoveredHere) return;
+        await session.rescanShot();
+        // A file that arrived while the app wasn't even running is as unseen as
+        // it gets — except in the tab the user is already looking at, where the
+        // rescan above has just put it on screen.
+        if (tab.id !== front) {
+          tab.stores.generation.getState().noteUnseenOutputs(recoveredHere);
+        }
+      }),
+    );
   }
   return result;
 }

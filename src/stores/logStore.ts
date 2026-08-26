@@ -13,7 +13,12 @@ type State = {
 };
 
 type Actions = {
-  push: (level: LogEvent["level"], message: string, tag?: string) => void;
+  push: (
+    level: LogEvent["level"],
+    message: string,
+    tag?: string,
+    tabId?: string,
+  ) => void;
   clear: () => void;
 };
 
@@ -21,12 +26,13 @@ let counter = 0;
 
 export const useLogStore = create<State & Actions>((set) => ({
   lines: [],
-  push(level, message, tag) {
+  push(level, message, tag, tabId) {
     const line: LogLine = {
       id: ++counter,
       level,
       message,
       tag,
+      tabId,
       timestamp: new Date().toISOString(),
     };
     set((s) => {
@@ -40,6 +46,14 @@ export const useLogStore = create<State & Actions>((set) => ({
   },
 }));
 
-export function pushLog(level: LogEvent["level"], message: string, tag?: string): void {
-  useLogStore.getState().push(level, message, tag);
+/** `tabId` is optional and only worth passing from code that can outlive a tab
+ *  switch — the job runner. Everything else logs from a user action in the tab
+ *  that is already on screen, where an unlabelled line reads correctly. */
+export function pushLog(
+  level: LogEvent["level"],
+  message: string,
+  tag?: string,
+  tabId?: string,
+): void {
+  useLogStore.getState().push(level, message, tag, tabId);
 }

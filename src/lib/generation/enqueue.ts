@@ -20,6 +20,7 @@ import {
   useGenerationStore,
 } from "../../stores/generationStore";
 import { useSessionStore } from "../../stores/sessionStore";
+import { activeStores, activeTabId, storesFor } from "../../stores/tabsStore";
 import { getProvider } from "../providers";
 import { swallow } from "../errors";
 import { hasUnsupportedRefs, preflightChain } from "../chainValidation";
@@ -118,12 +119,18 @@ async function loadJobConfig(): Promise<{
 }
 
 /** Resolve target version up front so the job is bound to a concrete (shot,
- *  version) at submit time even if the user navigates away mid-flight. */
+ *  version) at submit time even if the user navigates away mid-flight.
+ *
+ *  Writes the allocated version back into the tab that is submitting, captured
+ *  before the await — the user can switch tabs while `version_create_next` is
+ *  walking a network directory, and the proxy would then hand the new version
+ *  to whichever tab arrived in front. */
 async function resolveTargetVersion(shotPath: string): Promise<string> {
   let targetVersion = useSessionStore.getState().targetVersion;
   if (!targetVersion || targetVersion === "SRC") {
+    const session = activeStores().session;
     targetVersion = await cmd.version_create_next(shotPath);
-    useSessionStore.setState({ targetVersion });
+    session.setState({ targetVersion });
   }
   return targetVersion;
 }
@@ -155,6 +162,9 @@ function makeJob(spec: JobSpec): Job {
 export async function enqueueGeneration(): Promise<void> {
   const gen = useGenerationStore.getState();
   const session = useSessionStore.getState();
+  // Captured now, not read later: everything this job reports goes back to the
+  // tab that pressed Run, however many tab switches happen while it runs.
+  const tabId = activeTabId();
   const activeLink = selectActiveLink(gen);
 
   const node = activeLink.model;
@@ -215,6 +225,7 @@ export async function enqueueGeneration(): Promise<void> {
     const spec: JobSpec = {
       id,
       tag: shortId(id),
+      tabId,
       node,
       sequencePrompt: sequencePromptText,
       shotPrompts: run.shotPrompt ? [run.shotPrompt] : [],
@@ -225,6 +236,7 @@ export async function enqueueGeneration(): Promise<void> {
       iterations,
       shotPath: session.shotPath,
       projectPath: session.projectPath ?? "",
+      projectId: session.projectId ?? "",
       targetVersion,
       ffmpegPath,
       filenameTemplate,
@@ -293,6 +305,7 @@ function chainPrevRole(
 export async function enqueueChain(): Promise<void> {
   const gen = useGenerationStore.getState();
   const session = useSessionStore.getState();
+  const tabId = activeTabId();
 
   const links = gen.links;
   const activeLinks = links.filter((l) => l.active);
@@ -352,6 +365,19 @@ export async function enqueueChain(): Promise<void> {
   const iterations = Math.max(1, gen.iterations | 0);
   const shotPath = session.shotPath;
 
+  // Every link's prompt is assembled now, before the driver goes async.
+  // `buildCombinedForLink` folds in `script.md` via the script store, and the
+  // driver below outlives tab switches — resolving it per link mid-chain would
+  // let link 3 pick up a different tab's script. It is also the more honest
+  // answer: the chain submits the prompts that were on screen when Run was
+  // pressed, not whatever the file says several minutes later.
+  const combinedByLinkId = new Map(
+    activeLinks.map((l) => [
+      l.id,
+      buildCombinedForLink(l, session.sequencePath, shotPath),
+    ]),
+  );
+
   pushLog(
     "INFO",
     `Chain started · ${activeLinks.length} links`,
@@ -379,14 +405,11 @@ export async function enqueueChain(): Promise<void> {
       const id = crypto.randomUUID();
       const combinedShot = nonEmptyTrimmed(link.shotPrompts).join("\n\n");
 
-      const linkCombined = buildCombinedForLink(
-        link,
-        session.sequencePath,
-        shotPath,
-      );
+      const linkCombined = combinedByLinkId.get(link.id) ?? "";
       const spec: JobSpec = {
         id,
         tag: shortId(id),
+        tabId,
         node: link.model,
         sequencePrompt: link.sequencePrompt,
         shotPrompts: link.shotPrompts.slice(),
@@ -398,6 +421,7 @@ export async function enqueueChain(): Promise<void> {
         iterations: isLast ? iterations : 1,
         shotPath,
         projectPath: session.projectPath ?? "",
+        projectId: session.projectId ?? "",
         targetVersion,
         ffmpegPath,
         filenameTemplate,
@@ -436,8 +460,8 @@ function queueAndAwait(spec: JobSpec): Promise<string[] | null> {
     spec.onFailed = () => resolve(null);
     spec.onCancelled = () => resolve(null);
     registerJob(spec, makeJob(spec));
-    useGenerationStore
-      .getState()
+    storesFor(spec.tabId)
+      ?.generation.getState()
       .addPendingOutputs(spec.shotPath, spec.targetVersion, spec.iterations);
     void pumpQueue();
   });

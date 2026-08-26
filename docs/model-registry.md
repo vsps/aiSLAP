@@ -102,7 +102,7 @@ Maps a user-assigned reference role onto a provider field.
 
 | Field | Type | Notes |
 |---|---|---|
-| `role` | string | Free-form. In practice `source`, `start`, `end`, `element`, `image`. |
+| `role` | string | Free-form *to the loader*, but see below. In practice `source`, `start`, `end`, `element`, `image`, `mesh`, `alpha`, `reference`. |
 | `api_field` | string | Where the uploaded URL goes. |
 | `max` | int | How many refs this role accepts. |
 | `exclusive` | bool | Only one ref may hold it. Auto-set for `start`/`end`. |
@@ -112,6 +112,22 @@ Maps a user-assigned reference role onto a provider field.
 claims fall through to `routeRefsByMediaType` in `args.ts`, which places them by
 media type. This is why Seedance's ref2vid node declares only the `image` role and
 lets video and audio route themselves.
+
+**A role name the UI doesn't know is unassignable.** The loader accepts any string,
+but the user can only pick a role that `RoleMenu.tsx`'s `rolesSupportedBy` lists, and
+`RoleAssignment` in `types.ts` is a closed union. Inventing a role name in a model
+file gives you a role nobody can select — which then only fills via the untagged
+fallback, if it has one. Adding a genuinely new role means touching both of those
+plus `roleColor`/`roleLabel` in `RefImagesColumn.tsx` and `EDGE_COLORS` in
+`TraceView.tsx`.
+
+**Only `source` sweeps up untagged refs.** `selectForRole` falls back to unassigned
+refs of the role's media kind for `source` alone; `image`/`element` collect untagged
+refs of their kind through their own group logic. Every other role — `alpha`,
+`reference`, `mesh`, `start`, `end` — is explicit-assignment-only. That is why
+Beeble's SwitchX uses `reference` rather than `image` for its style input: on the
+image node the source and the reference are both stills, and `image`'s untagged sweep
+would hand the same file to both slots.
 
 ---
 

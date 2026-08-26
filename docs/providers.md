@@ -23,7 +23,7 @@ run(input, hooks): Promise<ProviderOutput>
 - `ProviderRunHooks` — notably `onSubmitted(requestId)`, which persists the pending
   record *before* the result is awaited. That is the orphan-recovery hook.
 
-## 2. The three providers
+## 2. The four providers
 
 **fal** (`fal.ts`) — `@fal-ai/client`, queue-based with progress events, and reports a
 live cost estimate that gets stamped into the sidecar on success.
@@ -45,6 +45,28 @@ live cost estimate that gets stamped into the sidecar on success.
 set and request shape. Uploads for both go through TOS (`tos.ts`), because Ark will
 not accept inline data.
 
+**beeble** (`beeble.ts`) — [Beeble](https://developer.beeble.ai/docs)'s SwitchX
+relighting / background replacement. The simplest of the four: `x-api-key` auth, one
+submit endpoint and one status endpoint, and presigned-PUT uploads that need no
+object store of their own (`POST /v1/uploads` → PUT the bytes → pass the returned
+`beeble://` URI).
+
+Two things about it are worth knowing:
+
+- **`generation_type` comes from the node's `endpoint`**, not from a parameter —
+  `switchx-video` and `switchx-image`. A video source cannot produce a still, and the
+  model file's `outputs` already has to agree for `kind` inference to route the result
+  to the right viewer.
+- **It reports no cost.** The generation response carries no price (Beeble bills in
+  credits off-API), so outputs land with `costUsd` absent and the project rollup
+  counts them under `unknownImageCount`. Inventing a dollar figure from a credit
+  count would be worse than saying nothing.
+
+It also only returns `output.render` as a gallery item. The response's `source`
+(preprocessed input) and `alpha` (extracted matte) URLs are diagnostic, so they stay
+in the sidecar's `providerResponse` rather than adding two more tiles per generation
+— note those signed URLs expire after 72h.
+
 ## 3. Key naming
 
 `provider_key_get`/`set` take a logical name; `config.rs::env_var_for` maps it to the
@@ -54,6 +76,7 @@ environment variable written into `%APPDATA%/aiSLAP/.env`:
 |---|---|
 | `fal` | `FAL_KEY` |
 | `replicate` | `REPLICATE_API_TOKEN` |
+| `beeble` | `BEEBLE_API_KEY` (via the fallback row below) |
 | `turso_url` | `TURSO_DATABASE_URL` |
 | `turso_token` | `TURSO_AUTH_TOKEN` |
 | `tos_ak` | `TOS_ACCESS_KEY_ID` |
@@ -80,6 +103,11 @@ Seven steps, all TypeScript:
    **`src/components/ModelPicker.tsx`** — a provider tab.
 7. **`models/<name>/*.json`** — the model definitions. See
    [model-registry.md](model-registry.md).
+
+Plus, if the API needs a ref slot no existing role covers, a new `RoleAssignment`
+member — `types.ts`, `RoleMenu.tsx`, `roleColor`/`roleLabel` in
+`RefImagesColumn.tsx`, `EDGE_COLORS` in `TraceView.tsx`. Beeble needed two (`alpha`,
+`reference`); see [model-registry.md](model-registry.md) §6.
 
 No Rust, no key plumbing: `env_var_for`'s fallback already covers the new name.
 
