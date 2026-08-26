@@ -1,6 +1,7 @@
 import { FalProvider } from "./fal";
 import { ReplicateProvider } from "./replicate";
 import { BytedanceProvider } from "./bytedance";
+import { BeebleProvider } from "./beeble";
 import type { Provider, ProviderName } from "./provider";
 
 export type { Provider, ProviderName, ProviderOutput, ProviderProgress, ProviderFile } from "./provider";
@@ -16,7 +17,9 @@ export function getProvider(name: ProviderName | undefined): Provider {
       ? new ReplicateProvider()
       : key === "bytedance"
         ? new BytedanceProvider()
-        : new FalProvider();
+        : key === "beeble"
+          ? new BeebleProvider()
+          : new FalProvider();
   cache.set(key, p);
   return p;
 }

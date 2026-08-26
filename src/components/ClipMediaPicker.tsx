@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { GalleryColumn, GalleryImage } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { fileSrc } from "../lib/assets";
+import { videoThumbCandidates } from "../lib/media";
 
 type Props = {
   anchor: HTMLElement | null;
@@ -12,11 +13,6 @@ type Props = {
 };
 
 const columnsCache = new Map<string, GalleryColumn[]>();
-
-function videoThumbCandidate(p: string): string {
-  const dot = p.lastIndexOf(".");
-  return (dot >= 0 ? p.slice(0, dot) : p) + ".thumb.png";
-}
 
 export function ClipMediaPicker({
   anchor,
@@ -143,11 +139,16 @@ function ImageTile({
   selected: boolean;
   onClick: () => void;
 }) {
-  const [thumbBroken, setThumbBroken] = useState(false);
+  // The scan resolves the real thumbnail into `thumbPath`; only a path with no
+  // scanned entry falls back to guessing, and then both suffixes are tried.
+  const candidates = img.thumbPath
+    ? [img.thumbPath]
+    : videoThumbCandidates(img.path);
+  const [thumbTry, setThumbTry] = useState(0);
   const src = img.isVideo
-    ? thumbBroken
+    ? thumbTry >= candidates.length
       ? null
-      : fileSrc(img.thumbPath ?? videoThumbCandidate(img.path))
+      : fileSrc(candidates[thumbTry])
     : fileSrc(img.path);
 
   return (
@@ -164,7 +165,7 @@ function ImageTile({
           src={src}
           alt=""
           className="absolute inset-0 w-full h-full object-cover"
-          onError={() => setThumbBroken(true)}
+          onError={() => setThumbTry((t) => t + 1)}
           draggable={false}
         />
       ) : (

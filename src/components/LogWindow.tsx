@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLogStore } from "../stores/logStore";
+import { useTabsStore } from "../stores/tabsStore";
 import { formatTime } from "../lib/format";
 import { usePopupDismiss } from "../lib/popup";
 
@@ -10,8 +11,13 @@ const LEVEL_CLASS: Record<string, string> = {
   ERROR: "text-bad",
 };
 
-function lineText(l: { timestamp: string; level: string; tag?: string; message: string }): string {
-  return `${l.timestamp} ${l.level} ${l.tag ? `[${l.tag}] ` : ""}${l.message}`;
+function lineText(
+  l: { timestamp: string; level: string; tag?: string; message: string },
+  tabLabel: string,
+): string {
+  return `${l.timestamp} ${l.level} ${tabLabel ? `${tabLabel} ` : ""}${
+    l.tag ? `[${l.tag}] ` : ""
+  }${l.message}`;
 }
 
 export function LogWindow({
@@ -22,6 +28,16 @@ export function LogWindow({
   className?: string;
 }) {
   const lines = useLogStore((s) => s.lines);
+  // One log for every tab, so a line from a background job says which tab it
+  // belongs to — as a position, resolved now rather than baked in at push
+  // time, because tabs get closed and reordered. Suppressed entirely with a
+  // single tab open: there would be nothing to disambiguate.
+  const tabs = useTabsStore((s) => s.tabs);
+  const tabLabel = (tabId?: string) => {
+    if (!tabId || tabs.length < 2) return "";
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    return idx < 0 ? "" : `#${idx + 1}`;
+  };
   const ref = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; text: string } | null>(null);
 
@@ -41,21 +57,25 @@ export function LogWindow({
       {lines.length === 0 ? (
         <span className="opacity-40">—</span>
       ) : (
-        lines.map((l) => (
-          <div
-            key={l.id}
-            className={`whitespace-nowrap shrink-0 ${LEVEL_CLASS[l.level] ?? "text-text"}`}
-            title={lineText(l)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setMenu({ x: e.clientX, y: e.clientY, text: lineText(l) });
-            }}
-          >
-            <span className="opacity-60">{formatTime(l.timestamp)}</span>
-            {l.tag && <span className="opacity-60"> [{l.tag}]</span>} {l.message}
-          </div>
-        ))
+        lines.map((l) => {
+          const tab = tabLabel(l.tabId);
+          return (
+            <div
+              key={l.id}
+              className={`whitespace-nowrap shrink-0 ${LEVEL_CLASS[l.level] ?? "text-text"}`}
+              title={lineText(l, tab)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMenu({ x: e.clientX, y: e.clientY, text: lineText(l, tab) });
+              }}
+            >
+              <span className="opacity-60">{formatTime(l.timestamp)}</span>
+              {tab && <span className="text-accent opacity-80"> {tab}</span>}
+              {l.tag && <span className="opacity-60"> [{l.tag}]</span>} {l.message}
+            </div>
+          );
+        })
       )}
 
       {menu && (

@@ -1,9 +1,11 @@
 import { useMemo } from "react";
-import { create } from "zustand";
+import { createStore } from "zustand";
 import type { GalleryColumn, TagDef, TagFilterMode } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { invalidateImageMetadata } from "../lib/metadataCache";
-import { findLoadedImage, useSessionStore } from "./sessionStore";
+import { imageIndexOf, taggedImageIndexOf, useSessionStore } from "./sessionStore";
+import { tabScoped } from "./tabScoped";
+import type { TabStores } from "./tabStores";
 
 type State = {
   /** The open project's vocabulary, in display order (project.json tagDefs). */
@@ -210,24 +212,55 @@ export function matchesFilter(
   return mode === "all" ? filter.every(has) : filter.some(has);
 }
 
-/** Patch one image's tags into the loaded columns in place. Beats a full
- *  rescanShot (a whole-directory disk walk) for what is a one-field edit —
- *  and keeps the thumbnail from flickering on every tag click. */
-function patchColumns(path: string, tags: string[]): void {
-  const session = useSessionStore.getState();
-  let hit = false;
-  const columns: GalleryColumn[] = session.columns.map((col) => {
-    if (!col.images.some((i) => i.path === path)) return col;
-    hit = true;
-    return {
-      ...col,
-      images: col.images.map((i) => (i.path === path ? { ...i, tags } : i)),
-    };
-  });
-  if (hit) useSessionStore.setState({ columns });
-}
+export type TagsState = State & Actions;
 
-export const useTagsStore = create<State & Actions>((set, get) => ({
+/** Per-tab: `defs` is the *open project's* vocabulary, and two tabs can hold
+ *  two different projects. The filter is per-tab for the same reason — it
+ *  narrows that tab's gallery. */
+export function createTagsStore(tab: TabStores) {
+  const session = () => tab.session.getState();
+
+  /** Patch one image's tags into the loaded columns in place. Beats a full
+   *  rescanShot (a whole-directory disk walk) for what is a one-field edit —
+   *  and keeps the thumbnail from flickering on every tag click. */
+  const patchColumns = (path: string, tags: string[]): void => {
+    let hit = false;
+    const columns: GalleryColumn[] = session().columns.map((col) => {
+      if (!col.images.some((i) => i.path === path)) return col;
+      hit = true;
+      return {
+        ...col,
+        images: col.images.map((i) => (i.path === path ? { ...i, tags } : i)),
+      };
+    });
+    if (hit) tab.session.setState({ columns } as never);
+  };
+
+  /** The tag view is server-filtered, so a filter change has to re-query it.
+   *  The columns view filters client-side and needs nothing. */
+  const afterFilterChange = async (): Promise<void> => {
+    const s = session();
+    if (s.viewMode === "tagged") await s.rescanTagged();
+  };
+
+  /** A vocabulary-wide edit rewrites sidecars across the project — reload
+   *  whichever views are showing. */
+  const refreshViews = async (): Promise<void> => {
+    const s = session();
+    if (s.shotPath) await s.rescanShot();
+    if (s.viewMode === "tagged") await s.rescanTagged();
+  };
+
+  /** This tab's loaded views, for reading an image's current tags without a
+   *  disk round-trip. The module-level `findLoadedImage` looks at whichever
+   *  tab is in front, which is the wrong answer for a background write. */
+  const findLoaded = (path: string) => {
+    const s = session();
+    return imageIndexOf(s.columns).get(path) ??
+      taggedImageIndexOf(s.taggedGroups).get(path);
+  };
+
+  return createStore<TagsState>()((set, get) => ({
   defs: [],
   colorsByName: new Map(),
   activeFilter: [],
@@ -259,7 +292,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
     // (hover tooltip, cost totals) has to re-read.
     invalidateImageMetadata(path);
     patchColumns(path, applied);
-    const { projectPath, viewMode, rescanTagged } = useSessionStore.getState();
+    const { projectPath, viewMode, rescanTagged } = session();
     // A new tag may have been minted server-side — pull the vocabulary back.
     await get().loadDefs(projectPath);
     if (viewMode === "tagged") void rescanTagged();
@@ -267,7 +300,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
 
   async toggleImageTag(path, tag) {
     const current =
-      findLoadedImage(path)?.tags ??
+      findLoaded(path)?.tags ??
       // Not in any loaded view (zoom modal on an image from elsewhere) —
       // read the sidecar rather than guessing "untagged" and wiping it.
       (await cmd.image_metadata_read(path).catch(() => null))?.tags ??
@@ -279,7 +312,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
   },
 
   async renameTag(oldName, newName) {
-    const { projectPath } = useSessionStore.getState();
+    const { projectPath } = session();
     if (!projectPath) return;
     set(defsPatch(await cmd.project_tag_rename(projectPath, oldName, newName)));
     set((s) => ({
@@ -289,7 +322,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
   },
 
   async deleteTag(name) {
-    const { projectPath } = useSessionStore.getState();
+    const { projectPath } = session();
     if (!projectPath) return;
     set(defsPatch(await cmd.project_tag_delete(projectPath, name)));
     set((s) => ({ activeFilter: s.activeFilter.filter((t) => !eq(t, name)) }));
@@ -297,7 +330,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
   },
 
   async setDefs(defs) {
-    const { projectPath } = useSessionStore.getState();
+    const { projectPath } = session();
     if (!projectPath) return;
     set(defsPatch(defs));
     set(defsPatch(await cmd.project_tag_defs_set(projectPath, defs)));
@@ -336,19 +369,7 @@ export const useTagsStore = create<State & Actions>((set, get) => ({
     set({ activeFilter: [] });
     void afterFilterChange();
   },
-}));
-
-/** The tag view is server-filtered, so a filter change has to re-query it.
- *  The columns view filters client-side and needs nothing. */
-async function afterFilterChange(): Promise<void> {
-  const session = useSessionStore.getState();
-  if (session.viewMode === "tagged") await session.rescanTagged();
+  }));
 }
 
-/** A vocabulary-wide edit rewrites sidecars across the project — reload
- *  whichever views are showing. */
-async function refreshViews(): Promise<void> {
-  const session = useSessionStore.getState();
-  if (session.shotPath) await session.rescanShot();
-  if (session.viewMode === "tagged") await session.rescanTagged();
-}
+export const useTagsStore = tabScoped((t) => t.tags);

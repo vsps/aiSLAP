@@ -9,8 +9,8 @@ use chrono::Utc;
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, list_dirs, next_version_name, require_dir, sanitize, PROJECT_SIDECAR, SEL_DIR,
-    SEQUENCE_SIDECAR, SHOT_SIDECAR, SRC_DIR,
+    as_str, highest_version_number, list_dirs, next_version_name, require_dir, sanitize,
+    VersionNaming, PROJECT_SIDECAR, SEL_DIR, SEQUENCE_SIDECAR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::gallery::{scan_shot_columns, tag_index_for};
 use crate::commands::prism;
@@ -221,12 +221,35 @@ pub fn shot_create(sequence_path: String, name: String) -> AppResult<String> {
 
 // ---------- Versions ----------
 
+/// Allocate and create the next version folder, atomically enough that two
+/// callers can't be handed the same name.
+///
+/// `create_dir` (not `create_dir_all`) is the mechanism: it fails with
+/// `AlreadyExists` instead of quietly succeeding on a directory that is already
+/// there, which turns this from a guess into a claim. Two tabs generating into
+/// the same shot — now reachable, since each tab holds its own session — each
+/// walk forward until one wins an unused name, rather than both being told
+/// "v004" and writing into one folder.
 #[tauri::command]
 pub fn version_create_next(shot_path: String) -> AppResult<String> {
     let root = PathBuf::from(&shot_path);
-    let next = next_version_name(&root);
-    ensure_dir(&root.join(&next))?;
-    Ok(next)
+    require_dir(&root)?;
+    let naming = VersionNaming::for_path(&root);
+    let start = highest_version_number(&root).unwrap_or(0) + 1;
+    // Bounded so a permission error that reports as AlreadyExists can't spin
+    // forever; 512 past the current high-water mark is far beyond any real
+    // contention (the loop only advances when a folder genuinely exists).
+    for n in start..start.saturating_add(512) {
+        let name = naming.name(n);
+        match std::fs::create_dir(root.join(&name)) {
+            Ok(()) => return Ok(name),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(AppError::Msg(format!(
+        "could not allocate a version folder under {shot_path}"
+    )))
 }
 
 /// Read-modify-write helper for the common shot-sidecar-field-update shape:

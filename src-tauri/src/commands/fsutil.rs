@@ -65,24 +65,61 @@ pub(crate) fn is_media_ext(p: &Path) -> bool {
     is_image_ext(p) || is_video_ext(p) || is_model3d_ext(p)
 }
 
-/// The suffix that marks a generated thumbnail. Every scan has to exclude
-/// these, or a video's poster frame shows up in the gallery as a sibling image.
-pub(crate) const THUMB_SUFFIX: &str = ".thumb.png";
+/// The suffix new thumbnails are written with. JPEG, because the only
+/// thumbnails aiSLAP generates are video poster frames, and a 10-bit source
+/// made ffmpeg emit 16-bit `rgb48be` PNGs — 8MB apiece for a picture that is
+/// never shown above a few hundred pixels wide.
+pub(crate) const THUMB_SUFFIX: &str = ".thumb.jpg";
+/// Written before the JPEG switch, and still written for the 3D previews that
+/// arrive from the provider as RGBA (see `output.ts`) — read, never minted for
+/// video.
+pub(crate) const THUMB_SUFFIX_LEGACY: &str = ".thumb.png";
+/// Every suffix that marks a generated thumbnail, canonical first. Every scan
+/// has to exclude these, or a video's poster frame shows up in the gallery as
+/// a sibling image.
+pub(crate) const THUMB_SUFFIXES: &[&str] = &[THUMB_SUFFIX, THUMB_SUFFIX_LEGACY];
 
 /// Sidecar (`<stem>.json`) sitting next to a media file.
 pub(crate) fn sidecar_path(media: &Path) -> PathBuf {
     media.with_extension("json")
 }
-/// Video thumbnail (`<stem>.thumb.png`) sitting next to a media file.
-pub(crate) fn thumb_path(media: &Path) -> PathBuf {
+fn thumb_path_with(media: &Path, suffix: &str) -> PathBuf {
     let stem = media.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    media.with_file_name(format!("{stem}{THUMB_SUFFIX}"))
+    media.with_file_name(format!("{stem}{suffix}"))
+}
+/// Where a *new* thumbnail for `media` goes: `<stem>.thumb.jpg`. Use
+/// [`existing_thumb_path`] to find the one a file already has, which may
+/// still be a `.thumb.png`.
+pub(crate) fn thumb_path(media: &Path) -> PathBuf {
+    thumb_path_with(media, THUMB_SUFFIX)
+}
+/// The thumbnail `media` actually has on disk, preferring the JPEG when a
+/// file somehow has both. `None` when it has none.
+pub(crate) fn existing_thumb_path(media: &Path) -> Option<PathBuf> {
+    THUMB_SUFFIXES
+        .iter()
+        .map(|s| thumb_path_with(media, s))
+        .find(|p| p.is_file())
+}
+/// Sibling thumbnail for `media` keeping `like`'s suffix — so moving or
+/// renaming a legacy PNG poster doesn't relabel its bytes as JPEG.
+pub(crate) fn thumb_path_like(media: &Path, like: &Path) -> PathBuf {
+    thumb_path_with(media, thumb_suffix_of(like))
+}
+/// The thumbnail suffix on `thumb`, falling back to the canonical one.
+pub(crate) fn thumb_suffix_of(thumb: &Path) -> &'static str {
+    let name = thumb.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    THUMB_SUFFIXES
+        .iter()
+        .copied()
+        .find(|s| name.ends_with(s))
+        .unwrap_or(THUMB_SUFFIX)
 }
 /// Is this path a generated thumbnail rather than real media?
 pub(crate) fn is_thumb(p: &Path) -> bool {
     p.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(THUMB_SUFFIX))
+        .is_some_and(|n| THUMB_SUFFIXES.iter().any(|s| n.ends_with(s)))
 }
 
 /// Guard for every command that takes a directory path over IPC.
@@ -550,5 +587,51 @@ mod tests {
         assert!(validate_filename_stem("bad/slash").is_err());
         assert!(validate_filename_stem("con").is_err()); // reserved (case-insensitive)
         assert!(validate_filename_stem("LPT3").is_err());
+    }
+
+    /// New thumbnails are JPEG, but every project generated before the switch
+    /// is full of `.thumb.png` posters — both have to keep resolving, and a
+    /// PNG carried alongside a move must stay a PNG.
+    #[test]
+    fn both_thumbnail_suffixes_resolve() {
+        let dir = std::env::temp_dir().join(format!("aislap-thumbs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let jpg_clip = dir.join("new.mp4");
+        let png_clip = dir.join("old.mp4");
+        let bare_clip = dir.join("bare.mp4");
+        assert_eq!(thumb_path(&jpg_clip), dir.join("new.thumb.jpg"));
+
+        std::fs::write(dir.join("new.thumb.jpg"), b"j").unwrap();
+        std::fs::write(dir.join("old.thumb.png"), b"p").unwrap();
+
+        assert_eq!(
+            existing_thumb_path(&jpg_clip),
+            Some(dir.join("new.thumb.jpg"))
+        );
+        assert_eq!(
+            existing_thumb_path(&png_clip),
+            Some(dir.join("old.thumb.png")),
+            "a legacy PNG poster is still found"
+        );
+        assert_eq!(existing_thumb_path(&bare_clip), None);
+
+        // A move keeps the source's own suffix rather than relabelling bytes.
+        let moved = dir.join("renamed.mp4");
+        assert_eq!(
+            thumb_path_like(&moved, &dir.join("old.thumb.png")),
+            dir.join("renamed.thumb.png")
+        );
+        assert_eq!(
+            thumb_path_like(&moved, &dir.join("new.thumb.jpg")),
+            dir.join("renamed.thumb.jpg")
+        );
+
+        assert!(is_thumb(&dir.join("a.thumb.jpg")));
+        assert!(is_thumb(&dir.join("a.thumb.png")));
+        assert!(!is_thumb(&dir.join("a.png")), "real media is not a thumb");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

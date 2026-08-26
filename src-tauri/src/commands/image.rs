@@ -1,13 +1,14 @@
 //! Image file operations: copy/move/rename of the media "triple" (primary +
-//! `.json` sidecar + `.thumb.png`), version-stack moves, base64 PNG saves,
+//! `.json` sidecar + `.thumb.jpg`), version-stack moves, base64 PNG saves,
 //! and revealing a path in the OS file manager.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::commands::fsutil::{
-    as_str, is_media_ext, is_thumb, next_version_name, project_root_for, relativize, require_dir,
-    sidecar_path, thumb_path, validate_filename_stem, TransferMode, SHOT_SIDECAR, SRC_DIR,
+    as_str, existing_thumb_path, is_media_ext, is_thumb, next_version_name, project_root_for,
+    relativize, require_dir, sidecar_path, thumb_path_like, thumb_suffix_of,
+    validate_filename_stem, TransferMode, SHOT_SIDECAR, SRC_DIR, THUMB_SUFFIXES,
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
 use crate::commands::tags::tags_from_sidecar;
@@ -45,7 +46,9 @@ fn resolve_dest_stem(
         };
         primary.exists()
             || dest_dir.join(format!("{candidate}.json")).exists()
-            || dest_dir.join(format!("{candidate}.thumb.png")).exists()
+            || THUMB_SUFFIXES
+                .iter()
+                .any(|s| dest_dir.join(format!("{candidate}{s}")).exists())
     };
     match policy {
         CollisionPolicy::Overwrite => Ok(stem.to_string()),
@@ -78,7 +81,10 @@ fn resolve_dest_stem(
     }
 }
 
-fn sibling_paths(p: &Path) -> AppResult<(String, String, PathBuf, PathBuf)> {
+/// `(stem, filename, sidecar, thumbnail)` for a media file. The thumbnail is
+/// the one that exists on disk — `None` when there is none — because it may
+/// still be a legacy `.thumb.png` and the suffix has to survive the move.
+fn sibling_paths(p: &Path) -> AppResult<(String, String, PathBuf, Option<PathBuf>)> {
     let stem = p
         .file_stem()
         .and_then(|s| s.to_str())
@@ -92,7 +98,7 @@ fn sibling_paths(p: &Path) -> AppResult<(String, String, PathBuf, PathBuf)> {
     // Bail if there's no parent — keeps the returned sidecar/thumb paths valid.
     p.parent()
         .ok_or_else(|| AppError::Msg("no parent dir".into()))?;
-    Ok((stem, filename, sidecar_path(p), thumb_path(p)))
+    Ok((stem, filename, sidecar_path(p), existing_thumb_path(p)))
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -160,8 +166,8 @@ pub(crate) fn transfer_triple_to_dir(
             tracing::warn!("sidecar {} failed: {e}", mode.label());
         }
     }
-    if src_thumb.exists() {
-        if let Err(e) = transfer_one(mode, &src_thumb, &thumb_path(&dest_primary)) {
+    if let Some(src_thumb) = &src_thumb {
+        if let Err(e) = transfer_one(mode, src_thumb, &thumb_path_like(&dest_primary, src_thumb)) {
             tracing::warn!("thumb {} failed: {e}", mode.label());
         }
     }
@@ -414,17 +420,24 @@ fn image_rename_impl(
     };
     let new_primary = dir.join(&new_filename);
     let new_sidecar = dir.join(format!("{trimmed}.json"));
-    let new_thumb = dir.join(format!("{trimmed}.thumb.png"));
+    // Keeps the source thumbnail's own suffix, so renaming a legacy PNG poster
+    // doesn't relabel its bytes as JPEG.
+    let new_thumb = old_thumb
+        .as_deref()
+        .map(|t| dir.join(format!("{trimmed}{}", thumb_suffix_of(t))));
     if new_primary.exists() {
         return Err(AppError::Msg(format!("FILENAME_EXISTS: {new_filename}")));
     }
     if old_sidecar.exists() && new_sidecar.exists() {
         return Err(AppError::Msg(format!("FILENAME_EXISTS: {trimmed}.json")));
     }
-    if old_thumb.exists() && new_thumb.exists() {
-        return Err(AppError::Msg(format!(
-            "FILENAME_EXISTS: {trimmed}.thumb.png"
-        )));
+    if let Some(new_thumb) = &new_thumb {
+        if new_thumb.exists() {
+            return Err(AppError::Msg(format!(
+                "FILENAME_EXISTS: {trimmed}{}",
+                thumb_suffix_of(new_thumb)
+            )));
+        }
     }
     std::fs::rename(&src, &new_primary)?;
     if old_sidecar.exists() {
@@ -432,8 +445,8 @@ fn image_rename_impl(
             tracing::warn!("sidecar rename failed: {e}");
         }
     }
-    if old_thumb.exists() {
-        if let Err(e) = std::fs::rename(&old_thumb, &new_thumb) {
+    if let (Some(old_thumb), Some(new_thumb)) = (&old_thumb, &new_thumb) {
+        if let Err(e) = std::fs::rename(old_thumb, new_thumb) {
             tracing::warn!("thumb rename failed: {e}");
         }
     }

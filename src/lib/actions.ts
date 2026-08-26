@@ -10,11 +10,11 @@ import { rewriteScriptHeading } from "./script";
 import { linkFromPersisted } from "./bootstrap";
 import { inferIncludes, scriptSegmentsFor } from "./generation/prompts";
 import { invalidateImageMetadata } from "./metadataCache";
-import { useGenerationStore } from "../stores/generationStore";
+import { activeStores, allTabs } from "../stores/tabsStore";
+import type { TabStores } from "../stores/tabStores";
 import { useModelsStore } from "../stores/modelsStore";
 import { findLoadedImage, useSessionStore } from "../stores/sessionStore";
 import { useTimelineStore } from "../stores/timelineStore";
-import { useScriptStore } from "../stores/scriptStore";
 import type { ChainLink, ImageMetadata, RefImage, RefSnapshot } from "./types";
 
 async function pathExists(path: string): Promise<boolean> {
@@ -86,8 +86,12 @@ export async function copySettingsFromMetadata(meta: ImageMetadata): Promise<{
   missingModel: string | null;
 }> {
   const models = useModelsStore.getState();
-  const gen = useGenerationStore.getState();
-  const session = useSessionStore.getState();
+  // Bound to the tab that asked, not to whichever is in front when the ref
+  // resolution below finishes: this overwrites prompts and settings, and doing
+  // that to a tab the user has since switched to is real data loss.
+  const stores = activeStores();
+  const gen = stores.generation.getState();
+  const session = stores.session.getState();
 
   // A sidecar whose modelId is no longer in the registry leaves the current
   // model in place — report it rather than silently restoring prompts and
@@ -170,7 +174,9 @@ export async function restoreChainFromMetadata(
 ): Promise<{ missingModels: number; skippedRefs: number }> {
   if (!meta.chain) return { missingModels: 0, skippedRefs: 0 };
   const models = useModelsStore.getState();
-  const projectPath = useSessionStore.getState().projectPath;
+  // Same reasoning as copySettingsFromMetadata: this replaces the whole chain.
+  const stores = activeStores();
+  const projectPath = stores.session.getState().projectPath;
   let missingModels = 0;
   let skippedRefs = 0;
   const restored: ChainLink[] = [];
@@ -188,7 +194,7 @@ export async function restoreChainFromMetadata(
     if (p.modelId && !link.model) missingModels++;
     restored.push({ ...link, refImages: refs });
   }
-  useGenerationStore.getState().setChain(restored, null);
+  stores.generation.getState().setChain(restored, null);
   return { missingModels, skippedRefs };
 }
 
@@ -246,14 +252,15 @@ export async function computeTraceSet(imagePath: string): Promise<TraceResult> {
  *  project tree are referenced by path. External imports are copied into
  *  GLOBAL SRC at the project root. */
 export async function replaceImageRef(imagePath: string): Promise<void> {
-  const gen = useGenerationStore.getState();
+  const gen = activeStores().generation.getState();
   gen.removeAllRefs();
   gen.setShotPrompts([""]);
   await addImageToRefs(imagePath);
 }
 
 export async function addImageToRefs(imagePath: string): Promise<string> {
-  const { shotPath, projectPath } = useSessionStore.getState();
+  const stores = activeStores();
+  const { shotPath, projectPath } = stores.session.getState();
   if (!shotPath) throw new Error("no shot open");
   const insideProject = !!projectPath && isChildOf(projectPath, imagePath);
   let finalPath = imagePath;
@@ -262,8 +269,10 @@ export async function addImageToRefs(imagePath: string): Promise<string> {
     await cmd.dir_ensure(destDir);
     finalPath = await cmd.image_copy_to_dir(imagePath, destDir);
   }
-  useGenerationStore.getState().addRefs([finalPath]);
-  void enrichRefIdentity([finalPath]);
+  // The copy above can take a moment on a network drive — the ref belongs to
+  // the tab that dropped it, not to wherever the user has navigated since.
+  stores.generation.getState().addRefs([finalPath]);
+  void enrichRefIdentity([finalPath], stores);
   return finalPath;
 }
 
@@ -272,8 +281,11 @@ export async function addImageToRefs(imagePath: string): Promise<string> {
  *  visible in the UI with just its path; this only matters later, if the
  *  resolver needs to find the file again after it's moved). No-op for refs
  *  whose source has no sidecar (external, unmigrated, or already gone). */
-async function enrichRefIdentity(paths: string[]): Promise<void> {
-  const gen = useGenerationStore.getState();
+async function enrichRefIdentity(
+  paths: string[],
+  stores = activeStores(),
+): Promise<void> {
+  const gen = stores.generation.getState();
   await Promise.all(
     paths.map(async (path) => {
       const meta = await cmd.image_metadata_read(path).catch(() => null);
@@ -284,70 +296,155 @@ async function enrichRefIdentity(paths: string[]): Promise<void> {
   );
 }
 
+// ---------- Rename ----------
+//
+// A rename moves a directory other tabs may be sitting in, which makes both
+// halves below cross-tab concerns: the job guard has to see every tab's queue,
+// and every tab inside the renamed subtree has to be re-pointed or it is left
+// holding a path that no longer exists.
+
+const underPrefix = (p: string | null | undefined, prefix: string): boolean =>
+  !!p && (p === prefix || p.startsWith(prefix + "/"));
+
+const swapPrefix = (p: string, oldPrefix: string, newPrefix: string): string =>
+  p === oldPrefix ? newPrefix : newPrefix + p.slice(oldPrefix.length);
+
+/** Non-terminal jobs under `pathPrefix` in *any* tab. A background tab
+ *  generating into the folder being renamed is exactly as fatal as the front
+ *  one doing it, and it used to be invisible to this check. */
+function inFlightJobsAnywhere(pathPrefix: string) {
+  return allTabs().flatMap((t) =>
+    inFlightJobs(t.stores.generation.getState().jobs, pathPrefix),
+  );
+}
+
+function refuseRenameIfBusy(pathPrefix: string, what: string): void {
+  const inFlight = inFlightJobsAnywhere(pathPrefix);
+  if (inFlight.length === 0) return;
+  throw new Error(
+    `Cannot rename — ${inFlight.length} job${
+      inFlight.length > 1 ? "s are" : " is"
+    } running in this ${what}.`,
+  );
+}
+
+/**
+ * Bring every tab back in line with a rename that has already happened on disk.
+ *
+ * Path mirrors (timeline clips, chain refs) are rewritten in all tabs
+ * unconditionally — they are cheap, and a stale absolute path there shows up
+ * later as a broken clip or a failed upload. Tabs actually *navigated* into the
+ * renamed subtree are then re-opened at the new path; tabs in another project,
+ * or elsewhere in this one, only get their dropdown lists refreshed.
+ */
+async function repointTabsAfterRename(
+  oldPrefix: string,
+  newPrefix: string,
+  projectPath: string,
+): Promise<void> {
+  for (const tab of allTabs()) {
+    tab.stores.timeline.getState().renameShotPathPrefix(oldPrefix, newPrefix);
+    tab.stores.generation.getState().rewriteRefImagePaths(oldPrefix, newPrefix);
+
+    const store = tab.stores.session;
+    const s = store.getState();
+    if (s.projectPath !== projectPath) continue;
+
+    const seqRenamed = underPrefix(s.sequencePath, oldPrefix);
+    const shotRenamed = underPrefix(s.shotPath, oldPrefix);
+
+    const sequences = await cmd.project_open(
+      projectPath,
+      s.prism ? s.entityType : undefined,
+    );
+    store.getState().setSequencesInProject(sequences);
+
+    if (!seqRenamed && !shotRenamed) {
+      // Same project, untouched branch — but a renamed sibling still moves
+      // this tab's shot list.
+      if (s.sequencePath) {
+        const { shots } = await cmd.sequence_open(s.sequencePath);
+        store.getState().setShotsInSequence(shots);
+      }
+      continue;
+    }
+
+    const nextSeq = seqRenamed
+      ? swapPrefix(s.sequencePath as string, oldPrefix, newPrefix)
+      : s.sequencePath;
+    const nextShot = shotRenamed
+      ? swapPrefix(s.shotPath as string, oldPrefix, newPrefix)
+      : s.shotPath;
+
+    try {
+      if (nextSeq) {
+        // Suppress the auto-open when we have a specific shot to restore:
+        // letting setSequence pick would bounce the tab to whatever is last
+        // rather than back to where the user was.
+        await store.getState().setSequence(nextSeq, { openLastShot: !nextShot });
+      }
+      if (nextShot) await store.getState().setShot(nextShot);
+    } catch (e) {
+      console.warn(`[rename] re-opening ${nextShot ?? nextSeq} failed:`, e);
+    }
+  }
+}
+
+/** `script.md` is one file per project but the parsed copy is per tab, so a
+ *  heading rewrite has to be pushed to the other tabs holding that project —
+ *  otherwise their sequence/shot template dropdowns keep offering the old name. */
+async function reloadScriptInOtherTabs(
+  projectPath: string,
+  initiator: TabStores,
+): Promise<void> {
+  await Promise.all(
+    allTabs()
+      .filter(
+        (t) =>
+          t.stores !== initiator &&
+          t.stores.session.getState().projectPath === projectPath,
+      )
+      .map((t) => t.stores.script.getState().loadFor(projectPath)),
+  );
+}
+
 /** Rename the current sequence: renames on disk, keeps the timeline/refs/
- *  script mirrors coherent, and re-navigates to the renamed sequence (and
- *  the shot the user was on, if it survived). */
+ *  script mirrors coherent in every tab, and re-navigates each affected tab to
+ *  the renamed sequence (and the shot it was on, if it survived). */
 export async function renameSequence(newName: string): Promise<void> {
-  const session = useSessionStore.getState();
-  const { projectPath, sequencePath, shotPath } = session;
+  const stores = activeStores();
+  const { projectPath, sequencePath } = stores.session.getState();
   if (!projectPath) throw new Error("no project");
   if (!sequencePath) throw new Error("no sequence to rename");
   const trimmed = newName.trim();
   if (!trimmed) throw new Error("name cannot be empty");
 
   const oldSeqPath = sequencePath;
-  const oldShotPath = shotPath;
   const oldSeqBase = basename(oldSeqPath);
 
-  // Job-safety guard. Refuse if any non-terminal job targets this sequence.
-  const inFlight = inFlightJobs(useGenerationStore.getState().jobs, oldSeqPath);
-  if (inFlight.length > 0) {
-    throw new Error(
-      `Cannot rename — ${inFlight.length} job${
-        inFlight.length > 1 ? "s are" : " is"
-      } running in this sequence.`,
-    );
-  }
+  refuseRenameIfBusy(oldSeqPath, "sequence");
 
   const newSeqPath = await cmd.sequence_rename(oldSeqPath, trimmed);
   if (newSeqPath === oldSeqPath) return;
 
-  // Keep in-memory mirrors coherent before re-rendering.
-  useTimelineStore.getState().renameShotPathPrefix(oldSeqPath, newSeqPath);
-  useGenerationStore.getState().rewriteRefImagePaths(oldSeqPath, newSeqPath);
-
-  const sequences = await cmd.project_open(projectPath);
-  useSessionStore.getState().setSequencesInProject(sequences);
-  await useSessionStore.getState().setSequence(newSeqPath);
-
-  // setSequence auto-opens the last shot. Navigate back to the user's shot
-  // if it survived the rename (same basename, new parent).
-  if (oldShotPath) {
-    const targetShotPath = `${newSeqPath}/${basename(oldShotPath)}`;
-    const after = useSessionStore.getState();
-    if (
-      after.shotsInSequence.includes(targetShotPath) &&
-      after.shotPath !== targetShotPath
-    ) {
-      await after.setShot(targetShotPath);
-    }
-  }
+  await repointTabsAfterRename(oldSeqPath, newSeqPath, projectPath);
 
   // script.md heading rewrite (silent no-op when no matching # heading).
-  const scriptState = useScriptStore.getState();
+  const scriptState = stores.script.getState();
   const nextRaw = rewriteScriptHeading(scriptState.raw, 1, oldSeqBase, trimmed);
   if (nextRaw !== scriptState.raw) {
     await scriptState
       .save(projectPath, nextRaw)
       .catch(swallow("script heading rewrite"));
+    await reloadScriptInOtherTabs(projectPath, stores);
   }
 }
 
 /** Rename the current shot: renames on disk, keeps the timeline/refs/script
- *  mirrors coherent, and re-navigates to the renamed shot. */
+ *  mirrors coherent in every tab, and re-navigates each affected tab. */
 export async function renameShot(newName: string): Promise<void> {
-  const session = useSessionStore.getState();
-  const { projectPath, sequencePath, shotPath } = session;
+  const stores = activeStores();
+  const { projectPath, sequencePath, shotPath } = stores.session.getState();
   if (!projectPath) throw new Error("no project");
   if (!sequencePath) throw new Error("no sequence");
   if (!shotPath) throw new Error("no shot to rename");
@@ -357,29 +454,14 @@ export async function renameShot(newName: string): Promise<void> {
   const oldShotPath = shotPath;
   const oldShotBase = basename(oldShotPath);
 
-  const inFlight = inFlightJobs(
-    useGenerationStore.getState().jobs,
-    oldShotPath,
-  );
-  if (inFlight.length > 0) {
-    throw new Error(
-      `Cannot rename — ${inFlight.length} job${
-        inFlight.length > 1 ? "s are" : " is"
-      } running in this shot.`,
-    );
-  }
+  refuseRenameIfBusy(oldShotPath, "shot");
 
   const newShotPath = await cmd.shot_rename(oldShotPath, trimmed);
   if (newShotPath === oldShotPath) return;
 
-  useTimelineStore.getState().renameShotPathPrefix(oldShotPath, newShotPath);
-  useGenerationStore.getState().rewriteRefImagePaths(oldShotPath, newShotPath);
+  await repointTabsAfterRename(oldShotPath, newShotPath, projectPath);
 
-  const { shots } = await cmd.sequence_open(sequencePath);
-  useSessionStore.getState().setShotsInSequence(shots);
-  await useSessionStore.getState().setShot(newShotPath);
-
-  const scriptState = useScriptStore.getState();
+  const scriptState = stores.script.getState();
   const nextRaw = rewriteScriptHeading(
     scriptState.raw,
     2,
@@ -390,6 +472,7 @@ export async function renameShot(newName: string): Promise<void> {
     await scriptState
       .save(projectPath, nextRaw)
       .catch(swallow("script heading rewrite"));
+    await reloadScriptInOtherTabs(projectPath, stores);
   }
 }
 

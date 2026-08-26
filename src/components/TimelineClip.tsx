@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   TimelineClip as TimelineClipT,
   ShotLatestMedia,
 } from "../lib/types";
 import { fileSrc } from "../lib/assets";
+import { videoThumbCandidates } from "../lib/media";
 import { resolveClipMedia, useTimelineStore } from "../stores/timelineStore";
 import { Icon } from "../lib/icon";
 import { ClipMediaPicker } from "./ClipMediaPicker";
@@ -29,11 +30,6 @@ type Props = {
   onSlipChange: (clipIdx: number | null) => void;
 };
 
-export function videoThumbCandidate(videoPath: string): string {
-  const dot = videoPath.lastIndexOf(".");
-  const stem = dot >= 0 ? videoPath.slice(0, dot) : videoPath;
-  return `${stem}.thumb.png`;
-}
 
 /** Fits the thumbnail to the clip's height and repeats it horizontally
  *  (filmstrip-style) instead of stretching a single frame across the clip.
@@ -94,12 +90,20 @@ export function TimelineClip({
   const setClipSourceOffset = useTimelineStore((s) => s.setClipSourceOffset);
   const videoDurations = useTimelineStore((s) => s.videoDurations);
 
-  const [thumbBroken, setThumbBroken] = useState(false);
+  // Index into videoThumbCandidates: a miss steps to the next suffix, and
+  // running off the end falls back to the icon. Reset when the clip's media
+  // changes, or a thumbless clip would keep showing the icon after a repoint.
+  const [thumbTry, setThumbTry] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const isBlank = clip.shotPath == null;
   const offsetSec = clip.sourceOffsetSec ?? 0;
+  const thumbCandidates = resolved ? videoThumbCandidates(resolved.path) : [];
+
+  useEffect(() => {
+    setThumbTry(0);
+  }, [resolved?.path]);
 
   const sourceDur =
     resolved?.isVideo ? videoDurations.get(resolved.path) ?? null : null;
@@ -218,14 +222,14 @@ export function TimelineClip({
     >
       {resolved ? (
         resolved.isVideo ? (
-          thumbBroken ? (
+          thumbTry >= thumbCandidates.length ? (
             <div className="absolute inset-0 flex items-center justify-center text-dim">
               <Icon name="videocam" size={20} />
             </div>
           ) : (
             <TiledThumb
-              src={fileSrc(videoThumbCandidate(resolved.path))}
-              onError={() => setThumbBroken(true)}
+              src={fileSrc(thumbCandidates[thumbTry])}
+              onError={() => setThumbTry((t) => t + 1)}
             />
           )
         ) : (

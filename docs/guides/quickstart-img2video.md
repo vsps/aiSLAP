@@ -40,7 +40,8 @@ E.g. `slow dolly-in, rain intensifies, neon sign flickers`.
 mp4 with a sidecar.
 
 ffmpeg must be reachable (on PATH, or set in Settings) for thumbnail extraction — the
-`.thumb.png` beside the video is what the gallery and the timeline display.
+`.thumb.jpg` beside the video is what the gallery and the timeline display. (Clips
+generated before the JPEG switch have a `.thumb.png` instead; both still show.)
 
 ---
 

@@ -16,6 +16,8 @@ function rolesSupportedBy(model: ModelNode | null): {
   start: boolean;
   end: boolean;
   mesh: boolean;
+  alpha: boolean;
+  reference: boolean;
   element: boolean;
   image: boolean;
 } {
@@ -26,6 +28,8 @@ function rolesSupportedBy(model: ModelNode | null): {
     start: has("start"),
     end: has("end"),
     mesh: has("mesh"),
+    alpha: has("alpha"),
+    reference: has("reference"),
     element: has("element"),
     image: has("image"),
   };
@@ -36,7 +40,14 @@ export function RoleMenu({ anchor, ref_, model, onAssign, onClose }: Props) {
   const refImages = useGenerationStore(selectRefImages);
   const supported = rolesSupportedBy(model);
   const anyRole =
-    supported.source || supported.start || supported.end || supported.mesh || supported.element || supported.image;
+    supported.source ||
+    supported.start ||
+    supported.end ||
+    supported.mesh ||
+    supported.alpha ||
+    supported.reference ||
+    supported.element ||
+    supported.image;
 
   const current = ref_.roleAssignment;
   const myElement = current?.kind === "element" ? current : null;
@@ -114,6 +125,20 @@ export function RoleMenu({ anchor, ref_, model, onAssign, onClose }: Props) {
           label="mesh"
           active={ref_.roleAssignment?.kind === "mesh"}
           onClick={() => onAssign({ kind: "mesh" })}
+        />
+      )}
+      {supported.reference && (
+        <RoleOption
+          label="reference (style)"
+          active={ref_.roleAssignment?.kind === "reference"}
+          onClick={() => onAssign({ kind: "reference" })}
+        />
+      )}
+      {supported.alpha && (
+        <RoleOption
+          label="alpha matte"
+          active={ref_.roleAssignment?.kind === "alpha"}
+          onClick={() => onAssign({ kind: "alpha" })}
         />
       )}
       {supported.element && (

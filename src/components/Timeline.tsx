@@ -6,7 +6,8 @@ import {
 } from "../stores/timelineStore";
 import { useLayoutStore } from "../stores/layoutStore";
 import { fileSrc } from "../lib/assets";
-import { TimelineClip, videoThumbCandidate } from "./TimelineClip";
+import { videoThumbCandidates } from "../lib/media";
+import { TimelineClip } from "./TimelineClip";
 import { TimelineTransport } from "./TimelineTransport";
 
 export function Timeline() {
@@ -144,7 +145,7 @@ export function Timeline() {
       ghostWidthPct: sourceDur * pctPerSec,
       headSlackSec: offsetSec,
       tailSlackSec: Math.max(0, sourceDur - offsetSec - c.durationSec),
-      thumbSrc: fileSrc(videoThumbCandidate(resolved.path)),
+      thumbSrcs: videoThumbCandidates(resolved.path).map(fileSrc),
     };
   })();
 
@@ -278,7 +279,13 @@ export function Timeline() {
                   <div
                     className="absolute inset-0 opacity-20"
                     style={{
-                      backgroundImage: `url("${slipGhost.thumbSrc.replace(/["\\]/g, "\\$&")}")`,
+                      // Both thumbnail suffixes, JPEG layered over legacy PNG:
+                      // a background-image that 404s is simply skipped, so the
+                      // second entry shows through for pre-JPEG projects. No
+                      // error event to thread through a CSS background.
+                      backgroundImage: slipGhost.thumbSrcs
+                        .map((s) => `url("${s.replace(/["\\]/g, "\\$&")}")`)
+                        .join(", "),
                       backgroundRepeat: "repeat-x",
                       backgroundSize: "auto 100%",
                       backgroundPosition: "left center",

@@ -1,0 +1,57 @@
+{
+  "$schema": "../../docs/model.schema.json",
+  "provider": "beeble",
+  "family": "SwitchX",
+  "category": "Beeble/Relighting",
+  "nodes": [
+    {
+      "id": "beeble_switchx_video",
+      "name": "SwitchX (video)",
+      "endpoint": "switchx-video",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt" },
+        { "name": "source", "data_type": "VIDEO", "api_field": "source_uri", "required": true },
+        { "name": "reference", "data_type": "IMAGE", "api_field": "reference_image_uri" },
+        { "name": "alpha", "data_type": "VIDEO", "api_field": "alpha_uri" }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "render" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "source_uri", "max": 1 },
+        { "role": "reference", "api_field": "reference_image_uri", "max": 1 },
+        { "role": "alpha", "api_field": "alpha_uri", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "alpha_mode", "label": "Alpha", "type": "enum", "api_field": "alpha_mode", "default": "auto", "options": ["auto", "fill", "select", "custom"] },
+        { "name": "alpha_keyframe_index", "label": "Alpha Keyframe (select mode)", "type": "int", "api_field": "alpha_keyframe_index", "default": 0, "min": 0, "max": 100000 },
+        { "name": "max_resolution", "label": "Max Resolution", "type": "enum", "api_field": "max_resolution", "default": "1080", "options": ["720", "1080"] },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 }
+      ]
+    },
+    {
+      "id": "beeble_switchx_image",
+      "name": "SwitchX (image)",
+      "endpoint": "switchx-image",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt" },
+        { "name": "source", "data_type": "IMAGE", "api_field": "source_uri", "required": true },
+        { "name": "reference", "data_type": "IMAGE", "api_field": "reference_image_uri" },
+        { "name": "alpha", "data_type": "IMAGE", "api_field": "alpha_uri" }
+      ],
+      "outputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "render" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "source_uri", "max": 1 },
+        { "role": "reference", "api_field": "reference_image_uri", "max": 1 },
+        { "role": "alpha", "api_field": "alpha_uri", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "alpha_mode", "label": "Alpha", "type": "enum", "api_field": "alpha_mode", "default": "auto", "options": ["auto", "fill", "custom"] },
+        { "name": "max_resolution", "label": "Max Resolution", "type": "enum", "api_field": "max_resolution", "default": "1080", "options": ["720", "1080"] },
+        { "name": "seed", "label": "Seed", "type": "int", "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 }
+      ]
+    }
+  ]
+}

@@ -95,8 +95,8 @@
       "properties": {
         "role": {
           "type": "string",
-          "description": "Deliberately free-form rather than an enum — free-form is the actual contract. In practice: source, start, end, element, image.",
-          "examples": ["source", "start", "end", "element", "image", "mesh"]
+          "description": "Deliberately free-form rather than an enum — free-form is the actual contract. In practice: source, start, end, element, image, mesh, alpha, reference. A role only reaches the ref-role menu if RoleMenu.tsx knows its name.",
+          "examples": ["source", "start", "end", "element", "image", "mesh", "alpha", "reference"]
         },
         "api_field": { "type": "string" },
         "max": { "type": "integer", "minimum": 1 },

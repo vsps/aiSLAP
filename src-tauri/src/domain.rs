@@ -171,99 +171,15 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum RoleAssignment {
-    Source,
-    Start,
-    End,
-    #[serde(rename_all = "camelCase")]
-    Element {
-        group_name: String,
-        frontal: bool,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RefImage {
-    pub path: String,
-    pub role_assignment: Option<RoleAssignment>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppState {
-    #[serde(default)]
-    pub project_path: String,
-    /// Sequence/shot paths relative to their parent — the folder name in a
-    /// native project, but carrying the entity-root and `Renders/AI` segments
-    /// in a PRISM one.
-    #[serde(default)]
-    pub last_sequence: String,
-    #[serde(default)]
-    pub last_shot: String,
-    /// PRISM entity tree the session was last in ("shot" | "asset"). Absent for
-    /// plain aiSLAP projects.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prism_entity_type: Option<String>,
-    #[serde(default)]
-    pub last_model: String,
-    #[serde(default)]
-    pub sequence_prompt: String,
-    /// Legacy single-string shot prompt. Read for back-compat; new code writes
-    /// `shot_prompts` instead. Kept here so older saved AppState still loads.
-    #[serde(default)]
-    pub shot_prompt: String,
-    #[serde(default)]
-    pub shot_prompts: Vec<String>,
-    #[serde(default)]
-    pub settings: Value,
-    #[serde(default)]
-    pub ref_images: Vec<RefImage>,
-    #[serde(default = "one")]
-    pub iterations: u32,
-    #[serde(default = "default_gallery_height")]
-    pub gallery_height: u32,
-    #[serde(default = "default_thumb_col_width")]
-    pub thumb_col_width: u32,
-    #[serde(default = "default_log_height")]
-    pub log_height: u32,
-}
-
-fn one() -> u32 {
-    1
-}
-fn default_gallery_height() -> u32 {
-    400
-}
-fn default_thumb_col_width() -> u32 {
-    120
-}
-fn default_log_height() -> u32 {
-    78
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            project_path: String::new(),
-            last_sequence: String::new(),
-            last_shot: String::new(),
-            prism_entity_type: None,
-            last_model: String::new(),
-            sequence_prompt: String::new(),
-            shot_prompt: String::new(),
-            shot_prompts: vec![],
-            settings: Value::Object(Default::default()),
-            ref_images: vec![],
-            iterations: 1,
-            gallery_height: 400,
-            thumb_col_width: 120,
-            log_height: 78,
-        }
-    }
-}
+// `app-state.json` has no struct here on purpose.
+//
+// It is the frontend's own session state — the open tabs, each with its project
+// paths and its prompt chain — and per rule 3 in `docs/architecture.md` that
+// knowledge lives in TypeScript. A typed mirror here was worse than none: serde
+// dropped every field the struct hadn't been taught about, so `chainLinks` and
+// `chainExpandedIdx` were silently discarded on every save and the chain never
+// actually survived a restart. `app_state_load`/`app_state_save` pass the JSON
+// straight through instead, the way `presets_load` already did.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

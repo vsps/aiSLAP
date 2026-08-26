@@ -6,7 +6,7 @@ import { cmd } from "../tauri";
 import { joinPath, relativeTo } from "../paths";
 import { seqShotNames } from "../prism";
 import { estimateGenerationCost, perItemPrice, parseDurationSeconds } from "../falPrices";
-import { classifyMedia } from "../media";
+import { classifyMedia, THUMB_SUFFIXES } from "../media";
 import { negativePromptParam, splitNegativePrompt } from "../args";
 import { pushLog } from "../../stores/logStore";
 import { currentUsername } from "../systemUser";
@@ -151,6 +151,10 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstModel3d.url, target);
     if (firstModel3d.thumbUrl) {
+      // PNG, unlike the video posters below: the provider's preview render is
+      // RGBA (Meshy ships a transparent background) and already ~130KB, so
+      // there is nothing to gain by flattening it onto black. These bytes are
+      // downloaded verbatim, never re-encoded.
       const thumbPath = target.replace(/\.[^.]+$/, ".thumb.png");
       await cmd.download_to_path(firstModel3d.thumbUrl, thumbPath).catch(() => {});
     }
@@ -168,7 +172,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstVideo.url, target);
     const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
-    const thumbPath = target.replace(/\.[^.]+$/, ".thumb.png");
+    const thumbPath = target.replace(/\.[^.]+$/, THUMB_SUFFIXES[0]);
     if (ctx.ffmpegPath) {
       await cmd
         .video_thumbnail_extract(target, thumbPath, ctx.ffmpegPath)

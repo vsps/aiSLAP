@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { createStore } from "zustand";
 import type {
   ExportSegment,
   SequenceTimeline,
@@ -7,6 +7,7 @@ import type {
 } from "../lib/types";
 import { cmd } from "../lib/tauri";
 import { isVideoPath } from "../lib/media";
+import { tabScoped } from "./tabScoped";
 
 const DEFAULT_CLIP_DURATION_SEC = 5;
 const SAVE_DEBOUNCE_MS = 500;
@@ -80,9 +81,16 @@ type Actions = {
 
 const MIN_CLIP_DURATION_SEC = 0.5;
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
+export type TimelineState = State & Actions;
 
-export const useTimelineStore = create<State & Actions>((set, get) => ({
+/** Per-tab: each tab browses its own sequence, so each needs its own clip
+ *  list, playhead and pending save. `saveTimer` lives in the factory closure
+ *  rather than at module scope — one shared timer would have let one tab's
+ *  edit cancel another tab's queued write to a different `timeline.json`. */
+export function createTimelineStore() {
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  return createStore<TimelineState>()((set, get) => ({
   seqPath: null,
   clips: [],
   totalDurationSec: 0,
@@ -477,7 +485,10 @@ export const useTimelineStore = create<State & Actions>((set, get) => ({
       });
     }, SAVE_DEBOUNCE_MS);
   },
-}));
+  }));
+}
+
+export const useTimelineStore = tabScoped((t) => t.timeline);
 
 export type ResolvedClipMedia = {
   path: string;

@@ -8,6 +8,7 @@ import { swallow } from "./lib/errors";
 import { installOsDragDropListener } from "./lib/osDragDrop";
 import { checkForUpdate } from "./lib/updater";
 import { SessionBar } from "./components/SessionBar";
+import { TabBar } from "./components/TabBar";
 import { Workbench } from "./components/Workbench";
 import { Timeline } from "./components/Timeline";
 import { Gallery } from "./components/Gallery";
@@ -24,8 +25,10 @@ import { useModelsStore } from "./stores/modelsStore";
 import { useSessionStore } from "./stores/sessionStore";
 import { useLayoutStore } from "./stores/layoutStore";
 import { useUpdateStore } from "./stores/updateStore";
+import { useTabsStore } from "./stores/tabsStore";
 
 export default function App() {
+  const activeTabId = useTabsStore((s) => s.activeId);
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -105,12 +108,22 @@ export default function App() {
 
   return (
     <div className="flex h-full w-full flex-col gap-prompt-surface bg-bg p-prompt-surface text-text">
+      <TabBar />
+
+      {/* Every session-scoped panel below is keyed on the active tab. The
+          stores re-point themselves on a switch (see `stores/tabScoped.ts`),
+          but component-local state and DOM do not: a scroll offset, a
+          half-typed inline prompt, a playing <video>. Keying makes a switch a
+          clean slate instead of a set of individually-remembered leaks. The
+          ResizeBars and the log surface are deliberately unkeyed — layout and
+          the log ring are app-wide, not per-tab. */}
       <SessionBar
+        key={`bar-${activeTabId}`}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenProjectSettings={() => setProjectSettingsOpen(true)}
       />
 
-      <Workbench />
+      <Workbench key={`bench-${activeTabId}`} />
 
       <ResizeBar
         orientation="horizontal"
@@ -119,7 +132,7 @@ export default function App() {
         grow="up"
       />
 
-      <Timeline />
+      <Timeline key={`timeline-${activeTabId}`} />
 
       <ResizeBar
         orientation="horizontal"
@@ -132,7 +145,7 @@ export default function App() {
         className="shrink-0 flex min-h-0"
         style={{ height: `${galleryHeight}px` }}
       >
-        <Gallery />
+        <Gallery key={`gallery-${activeTabId}`} />
       </div>
 
       <ResizeBar
@@ -158,6 +171,7 @@ export default function App() {
         style={{ height: `${logHeight}px` }}
       >
         <QueueChecklist
+          key={`queue-${activeTabId}`}
           height={logHeight}
           className="shrink-0"
           style={{ width: `${queueWidth}px` }}

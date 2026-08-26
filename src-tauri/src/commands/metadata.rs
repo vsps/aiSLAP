@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(dest, trash_dir.join("a.png"));
         assert!(dest.is_file());
         assert!(trash_dir.join("a.json").is_file(), "sidecar travels");
-        assert!(trash_dir.join("a.thumb.png").is_file(), "thumb travels");
+        assert!(trash_dir.join("a.thumb.jpg").is_file(), "thumb travels");
         assert!(!media.exists(), "source is gone");
         assert!(!media.with_extension("json").exists());
     }
@@ -167,10 +167,10 @@ mod tests {
         for name in [
             "a.png",
             "a.json",
-            "a.thumb.png",
+            "a.thumb.jpg",
             "a_1.png",
             "a_1.json",
-            "a_1.thumb.png",
+            "a_1.thumb.jpg",
         ] {
             assert!(trash_dir.join(name).is_file(), "missing {name}");
         }

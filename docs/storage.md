@@ -64,13 +64,33 @@ project/
 ```
 clip.mp4            the media
 clip.json           its sidecar — the durable record
-clip.thumb.png      poster frame, for video and 3D
+clip.thumb.jpg      poster frame, for video (8-bit JPEG)
+clip.thumb.png      poster frame, for 3D — the provider's RGBA preview
 ```
 
 These move as a unit through copy, move, rename, **trash** and **export**. `fsutil.rs`
-provides `sidecar_path`, `thumb_path` and `is_thumb` so no caller has to rebuild those
-names by hand — the export path silently dropped thumbnails for exactly that reason
-before the helpers existed.
+provides `sidecar_path`, `thumb_path`, `existing_thumb_path`, `thumb_path_like` and
+`is_thumb` so no caller has to rebuild those names by hand — the export path silently
+dropped thumbnails for exactly that reason before the helpers existed.
+
+Two thumbnail suffixes are live, and the distinction is load-bearing:
+
+- **`.thumb.jpg`** is what a video poster is written as now (`-pix_fmt yuvj420p -q:v 3`).
+  The pixel format is pinned because a 10-bit source — Seedance 2.5 returns HEVC Main 10
+  for some outputs — otherwise had ffmpeg emitting 16-bit `rgb48be` PNGs at ~8MB each,
+  for a picture never shown above a few hundred pixels wide. The same frame is ~150KB
+  as JPEG.
+- **`.thumb.png`** is what every project generated before that switch is full of, and
+  what a 3D preview still gets: those bytes are downloaded from the provider (Meshy
+  ships an RGBA render, already ~130KB), never re-encoded, so flattening them to JPEG
+  would only cost the transparency.
+
+So *write* through `thumb_path` (canonical, always `.jpg`), *read* through
+`existing_thumb_path` (prefers `.jpg`, falls back to `.png`, `None` for neither), and
+when carrying a thumbnail alongside a move or rename use `thumb_path_like` so a legacy
+PNG stays a PNG instead of having its bytes relabelled. `THUMB_SUFFIXES` in
+`src/lib/media.ts` mirrors the Rust list for the frontend's guess-the-sidecar paths —
+keep the two in step.
 
 The sidecar carries the prompt pieces, the exact `combinedPrompt` sent, the settings,
 a ref snapshot, the provider response, `costUsd`, the chain lineage, `tags`, `assetId`

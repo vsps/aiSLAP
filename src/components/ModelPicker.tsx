@@ -138,7 +138,7 @@ export function ModelPicker() {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-1 text-xs font-mono">
-        {(["fal", "replicate", "bytedance"] as Provider[]).map((p) => (
+        {(["fal", "replicate", "bytedance", "beeble"] as Provider[]).map((p) => (
           <button
             key={p}
             type="button"
