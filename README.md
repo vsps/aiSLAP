@@ -45,20 +45,20 @@ Pre-built installers are available on the [Releases page](https://github.com/vsp
 ### Windows
 | | |
 |---|---|
-| MSI installer | [aiSLAP_0.5.0_x64_en-US.msi](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.0/aiSLAP_0.5.0_x64_en-US.msi) |
-| EXE installer | [aiSLAP_0.5.0_x64-setup.exe](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.0/aiSLAP_0.5.0_x64-setup.exe) |
+| MSI installer | [aiSLAP_0.5.1_x64_en-US.msi](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.1/aiSLAP_0.5.1_x64_en-US.msi) |
+| EXE installer | [aiSLAP_0.5.1_x64-setup.exe](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.1/aiSLAP_0.5.1_x64-setup.exe) |
 
 ### macOS
 | | |
 |---|---|
-| Apple Silicon (M-series) | [aiSLAP_0.5.0_aarch64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.0/aiSLAP_0.5.0_aarch64.dmg) |
-| Intel | [aiSLAP_0.5.0_x64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.0/aiSLAP_0.5.0_x64.dmg) |
+| Apple Silicon (M-series) | [aiSLAP_0.5.1_aarch64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.1/aiSLAP_0.5.1_aarch64.dmg) |
+| Intel | [aiSLAP_0.5.1_x64.dmg](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.1/aiSLAP_0.5.1_x64.dmg) |
 
 ### Linux
 | | |
 |---|---|
-| AppImage | [aiSLAP_0.5.0_amd64.AppImage](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.0/aiSLAP_0.5.0_amd64.AppImage) |
-| .deb | [aiSLAP_0.5.0_amd64.deb](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.0/aiSLAP_0.5.0_amd64.deb) |
+| AppImage | [aiSLAP_0.5.1_amd64.AppImage](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.1/aiSLAP_0.5.1_amd64.AppImage) |
+| .deb | [aiSLAP_0.5.1_amd64.deb](https://github.com/vsps/aiSLAP/releases/download/aiSLAP-v0.5.1/aiSLAP_0.5.1_amd64.deb) |
 <!-- release-links:end -->
 
 ---
