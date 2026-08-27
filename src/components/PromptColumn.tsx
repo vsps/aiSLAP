@@ -255,7 +255,7 @@ function ShotPromptColumn({ title }: { title: string }) {
 
   const seqName = sequencePath ? basename(sequencePath) : "";
   // Entity name, so script headings still match in a PRISM project (where the
-  // shot path ends in `Renders/AI`).
+  // shot path ends in `Renders/2dRender/AI`).
   const { shot: shotName } = seqShotNames(shotPath);
   const shotScript = seqName && shotName ? findShotBody(parsed, seqName, shotName) : "";
 

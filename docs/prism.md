@@ -13,8 +13,8 @@ reference.
 
 ## The one idea to hold onto
 
-> **`sessionStore.shotPath` becomes the media root `<entity>/Renders/AI`, not the
-> entity folder.**
+> **`sessionStore.shotPath` becomes the media root `<entity>/Renders/2dRender/AI`,
+> not the entity folder.**
 
 Everything below that path — version columns, `SRC`, `shot.json`, tags, version
 selects, the `<shot>/<version>/<file>` layout that `image.rs` and the gallery rely on
@@ -26,6 +26,15 @@ Every consequence below follows from that one substitution.
 ---
 
 ## Consequences
+
+**Two media roots, one per entity.** `AI` is a render product in the pipeline's 2D
+render tree, so the media root is `<entity>/Renders/2dRender/AI`. Everything generated
+before v0.5.1 sits in `<entity>/Renders/AI` instead. `media_root_for` returns the old
+path when *that entity* already has one and the new path otherwise, and `entity_for`
+strips either suffix — so a pre-v0.5.1 shot keeps its whole history in one column set
+and a fresh one lands where PRISM expects a render product. The choice is per entity,
+not per project: two shots in the same sequence can legitimately disagree. Nothing
+migrates automatically; moving a shot's renders is PRISM's job.
 
 **Names.** `basename(shotPath)` would read `"AI"`. Anything needing the sequence or
 shot name — filename tokens, script-heading matching, thumbnails, timeline and queue
@@ -72,8 +81,8 @@ project root, which is why `project_root_for` has to find `project.json` by walk
 from a media path rather than assuming a fixed depth.
 
 **PRISM owns entity creation.** `sequence_create` / `shot_create` refuse in a PRISM
-project and the UI greys them out. aiSLAP only ever creates `Renders/AI` and its
-version folders, via `prism_media_root_ensure`, called by `setShot` on first visit.
+project and the UI greys them out. aiSLAP only ever creates `Renders/2dRender/AI` and
+its version folders, via `prism_media_root_ensure`, called by `setShot` on first visit.
 
 **PRISM owns removal too — aiSLAP never deletes or trashes inside a pipeline.**
 `image_trash` and `column_delete` both refuse with `PRISM_NO_DELETE` when

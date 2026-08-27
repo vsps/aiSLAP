@@ -829,7 +829,7 @@ mod cost_lines_tests {
     fn resolves_prism_layout_sequence_and_shot() {
         let p = TestProject::prism("cost-lines-prism");
         p.media(
-            "03_Production/Shots/MOD/s0010/Renders/AI/v0001/a.png",
+            "03_Production/Shots/MOD/s0010/Renders/2dRender/AI/v0001/a.png",
             Some(serde_json::json!({ "costUsd": 1.5 })),
         );
 

@@ -34,7 +34,8 @@ export function SessionBar({
   const createSequence = useSessionStore((s) => s.createSequence);
   const createShot = useSessionStore((s) => s.createShot);
 
-  // PRISM owns entity creation — aiSLAP only writes inside Renders/AI.
+  // PRISM owns entity creation — aiSLAP only writes inside the AI render
+  // product.
   const entityLocked = !!prism;
   const lockedTitle = "Managed by PRISM — create it in PRISM first";
   const shotLabel = prism && entityType === "asset" ? "ASSET:" : "SHOT:";

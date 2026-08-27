@@ -404,7 +404,7 @@ export type AppState = {
   projectPath: string;
   /** Sequence/shot paths relative to their parent. In a native project that's
    *  just the folder name; in a PRISM project it carries the entity-root and
-   *  `Renders/AI` segments so the restore can rejoin them. */
+   *  `Renders/2dRender/AI` segments so the restore can rejoin them. */
   lastSequence: string;
   lastShot: string;
   /** Persisted so a PRISM session reopens in the tree it was left in. */

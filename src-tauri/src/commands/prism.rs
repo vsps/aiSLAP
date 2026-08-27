@@ -5,11 +5,17 @@
 //! stock structure, `03_Production/Shots/<SEQ>/<SHOT>` and
 //! `03_Production/Assets/<CATEGORY>/<ASSET>`.
 //!
-//! aiSLAP writes into `<entity>/Renders/AI`, and that media root is what the
-//! session carries as its "shot path" — so version columns, `SRC`, sidecars,
+//! aiSLAP writes into `<entity>/Renders/2dRender/AI` — PRISM's own 2D render
+//! tree, with `AI` as the render product — and that media root is what the
+//! session carries as its "shot path", so version columns, `SRC`, sidecars,
 //! tags and the `<shot>/<version>/<file>` layout every other module assumes all
-//! keep working unchanged. The `Renders/AI` suffix is also what makes entity
-//! naming stateless: a path ending in it has its entity two levels up.
+//! keep working unchanged. The suffix is also what makes entity naming
+//! stateless: a path ending in it has its entity three levels up.
+//!
+//! Projects generated into before v0.5.1 have their versions in
+//! `<entity>/Renders/AI` instead. That layout is still read, and an entity that
+//! already has one keeps being written to there — relocating a shot's render
+//! history is PRISM's job, not aiSLAP's, and a silent split would strand it.
 
 use std::path::{Path, PathBuf};
 
@@ -22,8 +28,18 @@ use crate::fsjson::ensure_dir;
 /// Marker that identifies a PRISM project root.
 pub(crate) const PIPELINE_CONFIG: &str = "00_Pipeline/pipeline.json";
 
-/// Where aiSLAP output lives inside a PRISM entity folder.
-pub(crate) const AI_MEDIA_SUBPATH: &str = "Renders/AI";
+/// Where aiSLAP output lives inside a PRISM entity folder: a render product
+/// named `AI` under the pipeline's 2D render tree.
+pub(crate) const AI_MEDIA_SUBPATH: &str = "Renders/2dRender/AI";
+
+/// The pre-v0.5.1 location, still recognised on read and still preferred for
+/// any entity that already has one — see the module docs.
+pub(crate) const LEGACY_AI_MEDIA_SUBPATH: &str = "Renders/AI";
+
+/// Suffixes `entity_for` accepts, longest-lived first. Order is irrelevant to
+/// correctness (neither is a suffix of the other) but keeps the current layout
+/// the one that matches first.
+const MEDIA_SUBPATHS: &[&str] = &[AI_MEDIA_SUBPATH, LEGACY_AI_MEDIA_SUBPATH];
 
 const DEFAULT_SHOTS_REL: &str = "03_Production/Shots";
 const DEFAULT_ASSETS_REL: &str = "03_Production/Assets";
@@ -249,17 +265,37 @@ pub(crate) fn is_in_asset_tree(layout: &PrismLayout, path: &Path) -> bool {
     p == root || p.starts_with(&format!("{root}/"))
 }
 
-/// `<entity>/Renders/AI` — where aiSLAP media for this entity lives.
+/// Append a `/`-separated relative path one segment at a time, so the result
+/// uses the platform separator throughout rather than a spliced-in `/`.
+fn join_rel(base: &Path, rel: &str) -> PathBuf {
+    rel.split('/')
+        .fold(base.to_path_buf(), |p, seg| p.join(seg))
+}
+
+/// Where aiSLAP media for this entity lives: `<entity>/Renders/2dRender/AI`,
+/// or the legacy `<entity>/Renders/AI` when that folder already exists.
+///
+/// The legacy check is a `is_dir()` per call. Every caller is already walking
+/// the filesystem around it (`shots_in` stats the result immediately after),
+/// and the alternative — deciding by project rather than by entity — gets a
+/// shot's own history wrong the moment two shots disagree.
 pub(crate) fn media_root_for(entity: &Path) -> PathBuf {
-    entity.join("Renders").join("AI")
+    let legacy = join_rel(entity, LEGACY_AI_MEDIA_SUBPATH);
+    if legacy.is_dir() {
+        return legacy;
+    }
+    join_rel(entity, AI_MEDIA_SUBPATH)
 }
 
 /// Inverse of `media_root_for`: the entity folder a media root belongs to, or
-/// None when `path` isn't one.
+/// None when `path` isn't one. Accepts either layout, so a session or a
+/// persisted path from before the move still resolves to its entity.
 pub(crate) fn entity_for(path: &Path) -> Option<PathBuf> {
     let s = as_str(path);
-    let stripped = s.strip_suffix(&format!("/{AI_MEDIA_SUBPATH}"))?;
-    Some(PathBuf::from(stripped))
+    MEDIA_SUBPATHS
+        .iter()
+        .find_map(|sub| s.strip_suffix(&format!("/{sub}")))
+        .map(PathBuf::from)
 }
 
 /// True when `path` already points at an AI media root.
@@ -360,23 +396,60 @@ mod tests {
 
     #[test]
     fn media_root_and_entity_round_trip() {
+        // Nothing on disk under the entity, so this is the current layout.
         let entity = PathBuf::from("Z:/prj/03_Production/Shots/MOD/s0010");
         let media = media_root_for(&entity);
         assert_eq!(
             as_str(&media),
-            "Z:/prj/03_Production/Shots/MOD/s0010/Renders/AI"
+            "Z:/prj/03_Production/Shots/MOD/s0010/Renders/2dRender/AI"
         );
         assert_eq!(
             entity_for(&media).map(|p| as_str(&p)),
             Some(as_str(&entity))
         );
         assert!(is_media_root(&media));
-        // Not a media root: the entity itself, or a version folder inside one.
+        // Not a media root: the entity itself, the render tree above the
+        // product, or a version folder inside one.
         assert!(!is_media_root(&entity));
+        assert!(!is_media_root(&entity.join("Renders/2dRender")));
         assert!(!is_media_root(&media.join("v0001")));
         // Backslashes normalize the same way (as_str does the conversion).
-        let win = PathBuf::from(r"Z:\prj\03_Production\Shots\MOD\s0010\Renders\AI");
+        let win = PathBuf::from(r"Z:\prj\03_Production\Shots\MOD\s0010\Renders\2dRender\AI");
         assert_eq!(entity_for(&win).map(|p| as_str(&p)), Some(as_str(&entity)));
+
+        // A pre-v0.5.1 path still resolves back to its entity.
+        let legacy = PathBuf::from("Z:/prj/03_Production/Shots/MOD/s0010/Renders/AI");
+        assert!(is_media_root(&legacy));
+        assert_eq!(
+            entity_for(&legacy).map(|p| as_str(&p)),
+            Some(as_str(&entity))
+        );
+    }
+
+    /// An entity generated into before the move keeps writing where its
+    /// existing versions are: splitting one shot's history across two render
+    /// products would hide half of it from the gallery.
+    #[test]
+    fn an_existing_legacy_media_root_wins() {
+        let base = make_project();
+        let p = as_str(&base);
+        let legacy_shot = base.join("03_Production/Shots/MOD/s0020"); // has Renders/AI/v0002
+        let fresh_shot = base.join("03_Production/Shots/MOD/s0010");
+
+        assert_eq!(
+            as_str(&media_root_for(&legacy_shot)),
+            format!("{p}/03_Production/Shots/MOD/s0020/Renders/AI")
+        );
+        assert_eq!(
+            as_str(&media_root_for(&fresh_shot)),
+            format!("{p}/03_Production/Shots/MOD/s0010/Renders/2dRender/AI")
+        );
+
+        // And `ensure` doesn't mint the new tree beside the old one.
+        prism_media_root_ensure(as_str(&legacy_shot)).unwrap();
+        assert!(!legacy_shot.join("Renders/2dRender").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A PRISM project shaped like the real one on disk: two entity trees, a
@@ -595,11 +668,12 @@ mod tests {
             "v"
         );
 
-        // Fresh shot: creates Renders/AI with SRC and a padded first version.
+        // Fresh shot: creates Renders/2dRender/AI with SRC and a padded first
+        // version.
         let media = prism_media_root_ensure(format!("{p}/03_Production/Shots/MOD/s0010")).unwrap();
         assert_eq!(
             media,
-            format!("{p}/03_Production/Shots/MOD/s0010/Renders/AI")
+            format!("{p}/03_Production/Shots/MOD/s0010/Renders/2dRender/AI")
         );
         assert!(PathBuf::from(&media).join(SRC_DIR).is_dir());
         assert!(

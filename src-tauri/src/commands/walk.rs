@@ -18,7 +18,7 @@
 //!
 //! PRISM resolution is folded in here too, so callers never branch on it: in a
 //! PRISM project the entity folder holds pipeline directories and aiSLAP's
-//! media lives one hop down in `Renders/AI`, which is what [`ShotEntry`]
+//! media lives down in `Renders/2dRender/AI`, which is what [`ShotEntry`]
 //! separates as `entity_dir` (the name) and `media_root` (the files).
 
 use std::path::{Path, PathBuf};
@@ -35,7 +35,8 @@ use crate::error::AppResult;
 /// (The entity directory itself is recoverable from the media root via
 /// `prism::entity_for`, so it isn't carried here until something needs it.)
 pub(crate) struct ShotEntry {
-    /// Where aiSLAP's media actually lives: `<entity>/Renders/AI` under PRISM,
+    /// Where aiSLAP's media actually lives: `<entity>/Renders/2dRender/AI`
+    /// under PRISM (or the legacy `Renders/AI`),
     /// the entity folder itself otherwise. Guaranteed to be a directory.
     pub media_root: PathBuf,
     /// The entity folder's name.
@@ -136,7 +137,7 @@ fn shots_in(seq_dir: &Path, layout: Option<&prism::PrismLayout>) -> AppResult<Ve
             Some(_) => prism::media_root_for(&entity_dir),
             None => entity_dir.clone(),
         };
-        // A PRISM entity that has never been generated into has no Renders/AI.
+        // A PRISM entity that has never been generated into has no AI root.
         if !media_root.is_dir() {
             continue;
         }
@@ -262,13 +263,18 @@ mod tests {
     }
 
     #[test]
-    fn prism_project_walks_both_trees_and_lands_on_renders_ai() {
+    fn prism_project_walks_both_trees_and_lands_on_the_ai_render_product() {
         let p = TestProject::prism("walk-prism");
-        p.media("03_Production/Shots/MOD/s0010/Renders/AI/v0001/a.png", None);
+        p.media(
+            "03_Production/Shots/MOD/s0010/Renders/2dRender/AI/v0001/a.png",
+            None,
+        );
         p.dir("03_Production/Shots/MOD/s0020/Scenefiles"); // never generated into
         p.dir("03_Production/Shots/MOD/_sequence/Export"); // PRISM pseudo-entity
+                                                           // Generated into before v0.5.1 — still found, at the old location.
+        p.media("03_Production/Shots/MOD/s0030/Renders/AI/v0001/b.png", None);
         p.media(
-            "03_Production/Assets/PROPS/cube/Renders/AI/v0001/c.png",
+            "03_Production/Assets/PROPS/cube/Renders/2dRender/AI/v0001/c.png",
             None,
         );
 
@@ -279,7 +285,7 @@ mod tests {
         assert!(names.contains(&"cube".to_string()), "asset tree walked");
         assert!(
             !names.contains(&"s0020".to_string()),
-            "an entity with no Renders/AI has no media root"
+            "an entity with no AI render product has no media root"
         );
         assert!(
             !names.contains(&"_sequence".to_string()),
@@ -295,6 +301,13 @@ mod tests {
         assert!(
             s0010.media_root.to_string_lossy().contains("s0010"),
             "and it still sits under the entity the name came from"
+        );
+
+        let s0030 = shots.iter().find(|s| s.shot_name == "s0030").unwrap();
+        assert!(
+            s0030.media_root.ends_with("Renders/AI"),
+            "a pre-v0.5.1 shot keeps its media root, got {}",
+            s0030.media_root.display()
         );
     }
 

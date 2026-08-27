@@ -23,7 +23,8 @@ export function scriptSegmentsFor(
   shotPath: string | null,
 ): { sequenceScript: string; shotScript: string } {
   const parsed = useScriptStore.getState().parsed;
-  // Entity names — a PRISM shot path ends in `Renders/AI`, whose last segments
+  // Entity names — a PRISM shot path ends in the AI render product, whose
+  // last segments
   // would never match a script heading.
   const seqName = sequencePath ? basename(sequencePath) : "";
   const { shot: shotName } = seqShotNames(shotPath);

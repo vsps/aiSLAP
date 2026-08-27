@@ -66,7 +66,8 @@ export const cmd = {
   /** Null for a plain aiSLAP project (no 00_Pipeline/pipeline.json). */
   prism_detect: (projectPath: string): Promise<PrismInfo | null> =>
     rawInvoke("prism_detect", { projectPath }),
-  /** Ensures `<entity>/Renders/AI` (+ SRC, + a first version dir) and returns
+  /** Ensures `<entity>/Renders/2dRender/AI` (+ SRC, + a first version dir)
+   *  — or the legacy `Renders/AI` when the entity already has one — and returns
    *  it. Idempotent when handed a media root already. */
   prism_media_root_ensure: (entityPath: string): Promise<string> =>
     rawInvoke("prism_media_root_ensure", { entityPath }),

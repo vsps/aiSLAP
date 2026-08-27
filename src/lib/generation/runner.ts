@@ -58,7 +58,8 @@ export type JobSpec = {
   shotPath: string;
   /** Project root, captured at enqueue. Carried rather than derived from
    *  `shotPath` because the shot isn't a fixed depth below it (a PRISM shot's
-   *  media root is `<entity>/Renders/AI`), and because the user may navigate
+   *  media root is `<entity>/Renders/2dRender/AI`), and because the user may
+   *  navigate
    *  elsewhere while the job runs. */
   projectPath: string;
   /** Project identity uuid, captured at enqueue for the same reason. */

@@ -246,7 +246,8 @@ project/                     project.json · script.md · SRC/
         <media>.thumb.png    poster frame, for 3D (provider's RGBA preview)
 ```
 
-Under PRISM the shot level is `<entity>/Renders/AI` instead — see [prism.md](prism.md).
+Under PRISM the shot level is `<entity>/Renders/2dRender/AI` instead — see
+[prism.md](prism.md).
 
 **The media triple** is the unit of movement: media + sidecar + thumbnail are copied,
 moved, renamed and exported together. Anything that handles one must handle all three,
@@ -273,7 +274,8 @@ A checklist to test a change against:
 2. **Tags live in the sidecar first, the index second.** The index is rebuildable; a
    read may fall back to the sidecar, a write may never skip it.
 3. **`sessionStore.shotPath` is the media root**, which under PRISM is
-   `<entity>/Renders/AI`. Never assume `basename(shotPath)` is the shot name — use
+   `<entity>/Renders/2dRender/AI`. Never assume `basename(shotPath)` is the shot
+   name — use
    `seqShotNames` / `seqShotNamesForMedia`.
 4. **The project root is found by walking up to `project.json`**, never by
    `shotPath/../..`. A PRISM root beats a nearer `project.json`.

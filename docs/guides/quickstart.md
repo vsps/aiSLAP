@@ -56,8 +56,9 @@ Hit **Generate**. Output lands in a new version column in the gallery, with a si
 beside it holding the prompt and settings.
 
 The version folder is `v001/` in a normal project. In a **PRISM** project it's
-`<shot>/Renders/AI/v0001/` instead — PRISM's own version padding, under the entity's
-render folder. See [prism.md](../prism.md).
+`<shot>/Renders/2dRender/AI/v0001/` instead — PRISM's own version padding, under
+`AI` as a render product in the entity's 2D render tree. See
+[prism.md](../prism.md).
 
 ## Troubleshooting
 

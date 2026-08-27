@@ -200,11 +200,11 @@ its native one:
 - A **SHOT / ASSET** toggle appears next to the project path, choosing which tree the
   SEQUENCE dropdown lists: `03_Production/Shots/<SEQ>/<SHOT>` or
   `03_Production/Assets/<CATEGORY>/<ASSET>`.
-- Generations and references go to **`<SHOT>/Renders/AI/`** — version folders (`v0001`,
+- Generations and references go to **`<SHOT>/Renders/2dRender/AI/`** — version folders (`v0001`,
   `v0002`, … padded to the pipeline's `versionPadding`) and a `SRC/` for that shot's refs.
   The folder is created the first time you open a shot.
 - Sequences and shots are **created in PRISM**, not here; those buttons are greyed out.
-  aiSLAP only ever writes inside `Renders/AI`.
+  aiSLAP only ever writes inside `Renders/2dRender/AI`.
 - aiSLAP's own `project.json` (tag vocabulary), `script.md` and GLOBAL `SRC/` live at the
   project root, alongside the pipeline folders.
 
