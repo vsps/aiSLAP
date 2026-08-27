@@ -57,8 +57,8 @@ inclusion flag:
 Pieces are trimmed, empties dropped, and joined with blank lines.
 
 > **PRISM subtlety.** Script headings are matched against *entity* names via
-> `seqShotNames`. A PRISM shot path ends in `Renders/AI`, so matching on the path's
-> last segments would compare against `"AI"` and never hit.
+> `seqShotNames`. A PRISM shot path ends in `Renders/2dRender/AI`, so matching on the
+> path's last segments would compare against `"AI"` and never hit.
 
 ## 4. References
 

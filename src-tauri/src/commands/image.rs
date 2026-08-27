@@ -336,7 +336,8 @@ fn ref_copy_to_global_src_impl(
 ) -> AppResult<(String, Option<NewAssetInfo>)> {
     let src = PathBuf::from(&source_path);
     // Walk up to project.json rather than assuming shot → seq → project: a
-    // PRISM shot's media root is `<entity>/Renders/AI`, two levels deeper.
+    // PRISM shot's media root is `<entity>/Renders/2dRender/AI`, several levels
+    // deeper.
     let project_dir = project_root_for(&PathBuf::from(&shot_path))?.join(SRC_DIR);
     ensure_dir(&project_dir)?;
     let dest = transfer_triple_to_dir(

@@ -85,7 +85,8 @@ export function linkFromPersisted(
 
 /** One tab's slice of the saved state. Paths are stored parent-relative rather
  *  than as bare names: in a native project these *are* the folder names, but a
- *  PRISM project needs the entity-root and `Renders/AI` segments to survive so
+ *  PRISM project needs the entity-root and `Renders/2dRender/AI` segments to
+ *  survive so
  *  `restoreSessionPaths` can rejoin them. */
 function tabToPersisted(tab: Tab): TabPersisted {
   const s = tab.stores.session.getState();

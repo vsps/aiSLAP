@@ -42,9 +42,9 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
     let project_root = ProjectRoot::resolve(root).ok();
 
     // Include the project-level SRC as "GLOBAL SRC". Resolved by walking up to
-    // project.json rather than by depth: a PRISM shot's media root sits two
-    // levels deeper (`<entity>/Renders/AI`), so shot → seq → project doesn't
-    // hold there.
+    // project.json rather than by depth: a PRISM shot's media root sits several
+    // levels deeper (`<entity>/Renders/2dRender/AI`), so shot → seq → project
+    // doesn't hold there.
     if let Some(project) = project_root.as_ref() {
         let global_src = project.path.join(SRC_DIR);
         if global_src.is_dir() {
@@ -288,8 +288,8 @@ fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResul
     };
 
     // Walk shots in this sequence. In a PRISM project the entity folder holds
-    // pipeline dirs (Scenefiles/Export/...) and aiSLAP's versions live one hop
-    // down in `Renders/AI` — the row keeps the entity name, the scan uses the
+    // pipeline dirs (Scenefiles/Export/...) and aiSLAP's versions live down in
+    // `Renders/2dRender/AI` — the row keeps the entity name, the scan uses the
     // media root.
     let mut shots: Vec<ShotStack> = Vec::new();
     for shot in walk::sequence_shots(&seq_root)? {

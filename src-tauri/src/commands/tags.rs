@@ -1074,7 +1074,7 @@ mod tests {
     }
 
     /// In a PRISM project every media path carries the entity root and the
-    /// `Renders/AI` hop, so grouping on the first two segments would file
+    /// `Renders/2dRender/AI` hop, so grouping on the first two segments files
     /// everything under "03_Production / Shots".
     #[tokio::test]
     async fn scan_groups_prism_paths_by_entity() {
@@ -1089,12 +1089,12 @@ mod tests {
 
         let shot = media(
             &root,
-            "03_Production/Shots/MOD/s0010/Renders/AI/v0001/a.png",
+            "03_Production/Shots/MOD/s0010/Renders/2dRender/AI/v0001/a.png",
             None,
         );
         let asset = media(
             &root,
-            "03_Production/Assets/PROPS/cube/Renders/AI/v0001/b.png",
+            "03_Production/Assets/PROPS/cube/Renders/2dRender/AI/v0001/b.png",
             None,
         );
         image_tags_set(as_str(&shot), vec!["fav".into()])
@@ -1116,7 +1116,7 @@ mod tests {
         assert!(
             mod_group.shots[0]
                 .shot_path
-                .ends_with("Shots/MOD/s0010/Renders/AI"),
+                .ends_with("Shots/MOD/s0010/Renders/2dRender/AI"),
             "got {}",
             mod_group.shots[0].shot_path
         );

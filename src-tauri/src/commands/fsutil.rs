@@ -543,7 +543,10 @@ mod tests {
 
         // The stray marker, several levels below the pipeline root.
         let assets = base.join("03_Production").join("Assets");
-        let deep = assets.join("Signs").join("sign_a").join("Renders/AI/v0001");
+        let deep = assets
+            .join("Signs")
+            .join("sign_a")
+            .join("Renders/2dRender/AI/v0001");
         std::fs::create_dir_all(&deep).unwrap();
         std::fs::write(assets.join(PROJECT_SIDECAR), "{}").unwrap();
 

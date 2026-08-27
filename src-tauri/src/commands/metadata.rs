@@ -182,7 +182,7 @@ mod tests {
     fn trash_is_refused_inside_a_prism_project() {
         let project = TestProject::prism("trashprism");
         let media = project.media(
-            "03_Production/Shots/SQ01/sh010/Renders/AI/v0001/a.png",
+            "03_Production/Shots/SQ01/sh010/Renders/2dRender/AI/v0001/a.png",
             Some(serde_json::json!({})),
         );
 

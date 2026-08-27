@@ -51,7 +51,7 @@ project/
       v001/ gen001/ …    one folder per generation batch
 ```
 
-**PRISM:** the same, except the shot level is `<entity>/Renders/AI`. See
+**PRISM:** the same, except the shot level is `<entity>/Renders/2dRender/AI`. See
 [prism.md](prism.md).
 
 > **`SEL/` is deliberate legacy.** It still renders as a gallery column where it

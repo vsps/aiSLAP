@@ -35,7 +35,7 @@ type State = {
   projectTitle: string | null;
   sequencePath: string | null;
   /** Where this shot's media lives. In a PRISM project that's the
-   *  `<entity>/Renders/AI` media root, not the entity folder — everything
+   *  `<entity>/Renders/2dRender/AI` media root, not the entity folder — everything
    *  downstream (version columns, SRC, sidecars, tags) keys off it. */
   shotPath: string | null;
   /** PRISM only: the entity folder `shotPath` belongs to, for the dropdown and
@@ -473,7 +473,7 @@ export function createSessionStore(tab: TabStores) {
     },
 
     async setShot(shotPath) {
-      // PRISM: media lives in `<entity>/Renders/AI`. Accept either the entity
+      // PRISM: media lives in `<entity>/Renders/2dRender/AI`. Accept either the entity
       // folder (from the dropdown) or a media root (from session restore), and
       // create the folder on first visit — it's an output dir inside an entity
       // PRISM already made, not a pipeline entity.

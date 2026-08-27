@@ -142,7 +142,7 @@ pub fn sequence_open(sequence_path: String) -> AppResult<SequenceOpenResult> {
 }
 
 /// PRISM owns entity creation (it writes pipeline metadata aiSLAP knows
-/// nothing about), so aiSLAP only ever creates the `Renders/AI` media root
+/// nothing about), so aiSLAP only ever creates the `Renders/2dRender/AI` root
 /// inside an entity that already exists. The UI greys these out; this is the
 /// backstop.
 fn reject_if_prism(path: &Path) -> AppResult<()> {
