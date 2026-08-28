@@ -181,30 +181,24 @@ export function Gallery() {
     }
   }, []);
 
-  // Per-column collapse state. Ephemeral — reset whenever the shot changes.
-  const [collapsedVersions, setCollapsedVersions] = useState<Set<string>>(
-    () => new Set(),
+  // Per-column collapse lives in the tab's session store, not here: App.tsx
+  // keys the gallery on the active tab, so anything held in component state is
+  // destroyed on every switch — and re-expanding a column remounts every one of
+  // its thumbnails, which means re-reading them off what is usually a network
+  // drive. `setShot` still clears the set on a genuine shot move.
+  const collapsedVersions = useSessionStore((s) => s.collapsedVersions);
+  const toggleCollapsed = useSessionStore((s) => s.toggleVersionCollapsed);
+  const setCollapsedVersions = useSessionStore((s) => s.setCollapsedVersions);
+  const collapsedSet = useMemo(
+    () => new Set(collapsedVersions),
+    [collapsedVersions],
   );
-  useEffect(() => {
-    setCollapsedVersions(new Set());
-  }, [shotPath]);
-  const toggleCollapsed = (version: string) => {
-    setCollapsedVersions((s) => {
-      const next = new Set(s);
-      if (next.has(version)) next.delete(version);
-      else next.add(version);
-      return next;
-    });
-  };
   // Toolbar bulk toggle: collapse every column, or clear all individual
   // collapse state back to fully expanded.
   const allCollapsed =
-    columns.length > 0 &&
-    columns.every((c) => collapsedVersions.has(c.version));
+    columns.length > 0 && columns.every((c) => collapsedSet.has(c.version));
   const toggleAllCollapsed = () => {
-    setCollapsedVersions(
-      allCollapsed ? new Set() : new Set(columns.map((c) => c.version)),
-    );
+    setCollapsedVersions(allCollapsed ? [] : columns.map((c) => c.version));
   };
 
   const destDirFor = useCallback(
@@ -800,7 +794,7 @@ export function Gallery() {
                       width={galleryColumnWidths[c.version] ?? thumbColWidth}
                       destDir={destDirFor(c)}
                       dragState={dragState}
-                      collapsed={collapsedVersions.has(c.version)}
+                      collapsed={collapsedSet.has(c.version)}
                       onToggleCollapsed={() => toggleCollapsed(c.version)}
                       onFolderDelete={() => onFolderDelete(c.version)}
                       hasFiles={(rawImageCounts.get(c.version) ?? 0) > 0}

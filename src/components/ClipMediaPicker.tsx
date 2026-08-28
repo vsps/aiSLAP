@@ -145,11 +145,14 @@ function ImageTile({
     ? [img.thumbPath]
     : videoThumbCandidates(img.path);
   const [thumbTry, setThumbTry] = useState(0);
+  // A still uses its cached thumbnail when the scan found one, and its original
+  // otherwise. The suffix-stepping fallback below is only for videos, where a
+  // guessed sibling poster is the last resort before showing nothing.
   const src = img.isVideo
     ? thumbTry >= candidates.length
       ? null
       : fileSrc(candidates[thumbTry])
-    : fileSrc(img.path);
+    : fileSrc(img.thumbPath ?? img.path);
 
   return (
     <button

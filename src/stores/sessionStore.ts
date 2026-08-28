@@ -18,6 +18,7 @@ import { swallow } from "../lib/errors";
 import { basename, normalizeDir } from "../lib/paths";
 import { entityFor } from "../lib/prism";
 import { coalesceAsync } from "../lib/coalesce";
+import { producedAnything, sweepShotOnce } from "../lib/thumbs";
 import { reportOutboxSync } from "../lib/outboxSync";
 import { pushLog } from "./logStore";
 
@@ -62,6 +63,15 @@ type State = {
   tagEditor: { path: string; anchor: { x: number; y: number } | null } | null;
   imageDrag: { fromPath: string } | null;
   targetVersion: string | null;
+
+  /** Gallery version columns collapsed to a label bar, by version name
+   *  ("v0003", "SHOT SRC"). Here rather than in the Gallery component because
+   *  `App.tsx` keys the gallery on the active tab: component state dies on
+   *  every switch, and re-expanding a column re-reads every one of its
+   *  thumbnails off what is usually a network drive. Belongs to the current
+   *  shot — a version name only means something inside one — so `setShot`
+   *  clears it on a genuine move, exactly as it re-picks `targetVersion`. */
+  collapsedVersions: string[];
 
   /** Preview compare mode — wipe/flicker A vs B. Ephemeral, reset per shot. */
   compareMode: boolean;
@@ -114,6 +124,11 @@ type Actions = {
   setEntityType: (entityType: PrismEntityType) => Promise<void>;
   rescanShot: () => Promise<void>;
   setTargetVersion: (version: string | null) => void;
+  toggleVersionCollapsed: (version: string) => void;
+  /** Replace the whole collapsed set — the toolbar's collapse-all/expand-all. */
+  setCollapsedVersions: (versions: string[]) => void;
+  /** Force one column open. Called when work is about to land in it. */
+  expandVersion: (version: string) => void;
   createSequence: (name: string) => Promise<void>;
   createShot: (name: string) => Promise<void>;
   setSequencesInProject: (paths: string[]) => void;
@@ -179,6 +194,7 @@ function clearedSelection() {
     shotsInSequence: [],
     columns: [],
     targetVersion: null,
+    collapsedVersions: [],
     selectedImagePath: null,
     sequenceHistory: emptyChannel(),
     shotHistory: emptyChannel(),
@@ -292,7 +308,25 @@ export function createSessionStore(tab: TabStores) {
     } else if (get().viewMode === "stacked") {
       void get().rescanSequenceStacks();
     }
+    // Fill in any missing thumbnails for this shot, once per session, without
+    // blocking the columns that just landed.
+    //
+    // Gated on `thumbnailsEnabled` for the same reason the gallery itself is:
+    // that flag means "the user has not asked me to touch this drive yet", and
+    // a sweep is the single heaviest thing we'd do to it — it reads every file
+    // in the shot once. `enableThumbnails` kicks it when they opt in.
+    if (get().thumbnailsEnabled) void sweepThumbs(shotPath);
   });
+
+  /** Sweep, then rescan only if it actually produced something — and only if
+   *  the tab is still on the shot that was swept. `shotPath` is passed in
+   *  rather than re-read so a tab switch mid-sweep can't retarget it. */
+  const sweepThumbs = async (shotPath: string) => {
+    const report = await sweepShotOnce(shotPath, get().projectPath);
+    if (producedAnything(report) && get().shotPath === shotPath) {
+      await coalescedRescanShot();
+    }
+  };
 
   return {
     projectPath: null,
@@ -317,6 +351,7 @@ export function createSessionStore(tab: TabStores) {
     tagEditor: null,
     imageDrag: null,
     targetVersion: null,
+    collapsedVersions: [],
 
     compareMode: false,
     compareA: null,
@@ -436,6 +471,7 @@ export function createSessionStore(tab: TabStores) {
         shotPath: null,
         columns: [],
         targetVersion: null,
+        collapsedVersions: [],
         selectedImagePath: null,
         sequenceHistory: {
           entries: sidecar.promptHistory,
@@ -503,6 +539,12 @@ export function createSessionStore(tab: TabStores) {
         shotEntityPath: entityPath,
         columns,
         targetVersion,
+        // Same rule as `targetVersion` above: re-opening the shot you're
+        // already on keeps your collapse state, a genuine move clears it.
+        // Read through `get()` rather than the destructure at the top — that
+        // happens before two awaits, and this is the one field a user could
+        // plausibly toggle while they run.
+        collapsedVersions: sameShot ? get().collapsedVersions : [],
         selectedImagePath: null,
         compareMode: false,
         compareA: null,
@@ -522,6 +564,33 @@ export function createSessionStore(tab: TabStores) {
 
     setTargetVersion(version) {
       set({ targetVersion: version });
+    },
+
+    toggleVersionCollapsed(version) {
+      set((s) => ({
+        collapsedVersions: s.collapsedVersions.includes(version)
+          ? s.collapsedVersions.filter((v) => v !== version)
+          : [...s.collapsedVersions, version],
+      }));
+    },
+
+    setCollapsedVersions(versions) {
+      set({ collapsedVersions: versions });
+    },
+
+    expandVersion(version) {
+      // No-op when it isn't collapsed, leaving the array reference untouched:
+      // this runs on every Run, and a fresh array would trip the app-state
+      // persistence gate in bootstrap.ts and schedule a pointless write.
+      set((s) =>
+        s.collapsedVersions.includes(version)
+          ? {
+              collapsedVersions: s.collapsedVersions.filter(
+                (v) => v !== version,
+              ),
+            }
+          : ({} as Partial<State>),
+      );
     },
 
     async createSequence(name) {
@@ -707,6 +776,9 @@ export function createSessionStore(tab: TabStores) {
 
     enableThumbnails() {
       set({ thumbnailsEnabled: true });
+      // The opt-in the rescan sweep was waiting for — see coalescedRescanShot.
+      const { shotPath } = get();
+      if (shotPath) void sweepThumbs(shotPath);
     },
     setRestoringLastSession(v) {
       set({ restoringLastSession: v });

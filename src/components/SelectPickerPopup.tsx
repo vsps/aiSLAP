@@ -50,11 +50,13 @@ export function SelectPickerPopup({
       >
         {images.map((img) => {
           const isSelect = img.filename === selectedFilename;
-          const src = img.isVideo
-            ? img.thumbPath
-              ? fileSrc(img.thumbPath)
-              : null
-            : fileSrc(img.path);
+          // Cached thumbnail first for every kind; a still with none yet falls
+          // back to its original, a video with none has nothing to show.
+          const src = img.thumbPath
+            ? fileSrc(img.thumbPath)
+            : img.isVideo
+              ? null
+              : fileSrc(img.path);
           return (
             <button
               key={img.path}

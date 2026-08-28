@@ -26,7 +26,13 @@ import {
 } from "../lib/costReport";
 import { SankeyChart } from "./SankeyChart";
 import { ModalDialog } from "./ModalDialog";
-import type { Config, ProjectCostScan, ReconcileReport } from "../lib/types";
+import { rebuildProjectThumbs } from "../lib/thumbs";
+import type {
+  Config,
+  ProjectCostScan,
+  ReconcileReport,
+  ThumbsReport,
+} from "../lib/types";
 
 type Props = {
   onClose: () => void;
@@ -79,6 +85,26 @@ export function ProjectSettingsDialog({ onClose }: Props) {
       await showMessage(String(e), { kind: "error" });
     } finally {
       setReconcileBusy(false);
+    }
+  }
+
+  // Thumbnail cache
+  const [thumbsBusy, setThumbsBusy] = useState(false);
+  const [thumbsReport, setThumbsReport] = useState<ThumbsReport | null>(null);
+
+  async function rebuildThumbs() {
+    if (!projectPath) return;
+    setThumbsBusy(true);
+    setThumbsReport(null);
+    try {
+      setThumbsReport(await rebuildProjectThumbs(projectPath));
+      // Thumbnails the gallery is already showing don't change, but ones it
+      // was rendering full-size do — pick them up without a navigation.
+      await useSessionStore.getState().rescanShot();
+    } catch (e) {
+      await showMessage(String(e), { kind: "error" });
+    } finally {
+      setThumbsBusy(false);
     }
   }
 
@@ -581,6 +607,39 @@ export function ProjectSettingsDialog({ onClose }: Props) {
               {reconcileReport.sidecarBackfilled} · ingested{" "}
               {reconcileReport.dbIngested} · relinked {reconcileReport.relinked}{" "}
               · tags {reconcileReport.tagsSynced}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+              Thumbnails
+            </div>
+            <button
+              type="button"
+              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+              disabled={thumbsBusy || !projectPath}
+              onClick={rebuildThumbs}
+            >
+              {thumbsBusy ? "Building…" : "Rebuild"}
+            </button>
+          </div>
+          <div className="text-xs text-dim">
+            Gallery tiles render small cached copies from{" "}
+            <code>.aislap/thumbs</code> instead of the full-resolution files.
+            Shots build theirs as you open them; this does the whole project at
+            once and clears out entries whose media is gone. Safe to interrupt.
+          </div>
+          {thumbsReport && (
+            <div className="text-xs font-mono text-text">
+              Images {thumbsReport.imagesEncoded} · posters{" "}
+              {thumbsReport.postersExtracted} · upgraded{" "}
+              {thumbsReport.postersUpgraded} · pruned {thumbsReport.pruned}
+              {thumbsReport.failed > 0 ? ` · failed ${thumbsReport.failed}` : ""}
+              {thumbsReport.skippedNoFfmpeg > 0
+                ? ` — ${thumbsReport.skippedNoFfmpeg} video(s) need an ffmpeg path in Settings`
+                : ""}
             </div>
           )}
         </div>

@@ -6,7 +6,7 @@ import { cmd } from "../tauri";
 import { joinPath, relativeTo } from "../paths";
 import { seqShotNames } from "../prism";
 import { estimateGenerationCost, perItemPrice, parseDurationSeconds } from "../falPrices";
-import { classifyMedia, THUMB_SUFFIXES } from "../media";
+import { classifyMedia } from "../media";
 import { negativePromptParam, splitNegativePrompt } from "../args";
 import { pushLog } from "../../stores/logStore";
 import { currentUsername } from "../systemUser";
@@ -172,16 +172,11 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstVideo.url, target);
     const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
-    const thumbPath = target.replace(/\.[^.]+$/, THUMB_SUFFIXES[0]);
-    if (ctx.ffmpegPath) {
-      await cmd
-        .video_thumbnail_extract(target, thumbPath, ctx.ffmpegPath)
-        .catch(() => false);
-    }
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
+    await ensureThumbs(ctx);
     return written;
   }
 
@@ -205,7 +200,29 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
   }
+  await ensureThumbs(ctx);
   return written;
+}
+
+/** Give everything just written a cached thumbnail, so the gallery tile that
+ *  appears a moment later is already reading a ~60KB derivative rather than the
+ *  full-resolution original.
+ *
+ *  Sweeps the whole version dir rather than the individual files: it's one IPC
+ *  round trip instead of one per output, and anything already cached is skipped
+ *  on an existence check. This is also what extracts video posters now — the
+ *  poster goes straight into the cache instead of being written as a sibling
+ *  and re-encoded by the next sweep.
+ *
+ *  Never fatal. A thumbnail that fails to write costs a slower gallery, not an
+ *  output; the file and its sidecar are already on disk by this point. */
+async function ensureThumbs(ctx: DownloadCtx): Promise<void> {
+  await cmd
+    .thumbs_ensure(ctx.versionDir, false, ctx.ffmpegPath)
+    .catch((e) => {
+      console.warn("[output] thumbnail sweep failed:", e);
+      return null;
+    });
 }
 
 /** Real output pixel count / 1,000,000, read from the downloaded file's own

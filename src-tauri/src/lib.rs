@@ -68,6 +68,8 @@ pub fn run() {
             commands::download::download_to_path,
             commands::download::write_text_file,
             commands::media::video_thumbnail_extract,
+            commands::thumbs::thumbs_ensure,
+            commands::thumbs::thumb_lookup,
             commands::media::video_info_probe,
             commands::media::timeline_export,
             commands::interchange::timeline_export_interchange,

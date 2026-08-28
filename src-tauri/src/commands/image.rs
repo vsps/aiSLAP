@@ -12,6 +12,7 @@ use crate::commands::fsutil::{
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
 use crate::commands::tags::tags_from_sidecar;
+use crate::commands::thumbs;
 use crate::db::{self, AssetRecord};
 use crate::domain::ShotSidecar;
 use crate::error::{run_blocking, AppError, AppResult};
@@ -170,6 +171,14 @@ pub(crate) fn transfer_triple_to_dir(
         if let Err(e) = transfer_one(mode, src_thumb, &thumb_path_like(&dest_primary, src_thumb)) {
             tracing::warn!("thumb {} failed: {e}", mode.label());
         }
+    }
+    // Cached thumbnails are keyed by project-relative path, so they don't
+    // follow the media the way a sibling did — carry the entry across
+    // explicitly, or the tile falls back to the full-resolution original until
+    // the next sweep. Best-effort: a miss only costs a re-encode.
+    match mode {
+        TransferMode::Move => thumbs::rename_cache_entry(src, &dest_primary),
+        TransferMode::Copy => thumbs::copy_cache_entry(src, &dest_primary),
     }
     Ok(dest_primary)
 }
@@ -451,6 +460,9 @@ fn image_rename_impl(
             tracing::warn!("thumb rename failed: {e}");
         }
     }
+    // The cached thumbnail is keyed by relative path, so it has to be renamed
+    // too — see `transfer_triple_to_dir`.
+    thumbs::rename_cache_entry(&src, &new_primary);
     let relink = relink_info(&new_primary);
     Ok((as_str(&new_primary), relink))
 }
