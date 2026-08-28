@@ -5,6 +5,7 @@ import type {
 } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { videoThumbCandidates } from "../lib/media";
+import { useThumbForPath } from "../lib/thumbs";
 import { resolveClipMedia, useTimelineStore } from "../stores/timelineStore";
 import { Icon } from "../lib/icon";
 import { ClipMediaPicker } from "./ClipMediaPicker";
@@ -99,11 +100,23 @@ export function TimelineClip({
 
   const isBlank = clip.shotPath == null;
   const offsetSec = clip.sourceOffsetSec ?? 0;
-  const thumbCandidates = resolved ? videoThumbCandidates(resolved.path) : [];
+  // A clip points at media by path and never went through a gallery scan, so it
+  // has to ask for the cached thumbnail itself. `undefined` means the answer
+  // hasn't arrived: request nothing rather than guessing at sibling paths, which
+  // costs a 404 per clip and, since the backfill deletes superseded posters,
+  // usually guesses wrong. Sibling guessing stays as the *resolved-null*
+  // fallback, for projects the sweep hasn't reached.
+  const cachedThumb = useThumbForPath(resolved?.path ?? null);
+  const thumbCandidates =
+    !resolved || cachedThumb === undefined
+      ? []
+      : cachedThumb
+        ? [cachedThumb]
+        : videoThumbCandidates(resolved.path);
 
   useEffect(() => {
     setThumbTry(0);
-  }, [resolved?.path]);
+  }, [resolved?.path, cachedThumb]);
 
   const sourceDur =
     resolved?.isVideo ? videoDurations.get(resolved.path) ?? null : null;
@@ -232,8 +245,12 @@ export function TimelineClip({
               onError={() => setThumbTry((t) => t + 1)}
             />
           )
+        ) : cachedThumb === undefined ? (
+          // Lookup in flight. Waiting one memoised IPC round trip beats pulling
+          // the full-resolution original for a strip thumbnail.
+          <div className="absolute inset-0" />
         ) : (
-          <TiledThumb src={fileSrc(resolved.path)} />
+          <TiledThumb src={fileSrc(cachedThumb ?? resolved.path)} />
         )
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-dim text-xs">

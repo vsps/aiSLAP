@@ -8,6 +8,7 @@ import { seqShotNamesForMedia } from "../lib/prism";
 import { assemblePromptFromMetadata } from "../lib/actions";
 import { startThresholdDrag } from "../lib/dragThreshold";
 import { getConfigCached, getImageMetadataCached } from "../lib/metadataCache";
+import { useNearViewport } from "../lib/useNearViewport";
 import { UNKNOWN_TAG_COLOR, useTagsStore } from "../stores/tagsStore";
 
 type Props = {
@@ -31,6 +32,13 @@ type Props = {
 };
 
 const DRAG_THRESHOLD_PX = 5;
+
+type VideoInfoProbe = {
+  fps: number | null;
+  durationSec: number | null;
+  width?: number | null;
+  height?: number | null;
+};
 
 // Renders in long gallery columns (100+ instances), so it's wrapped in memo:
 // a parent re-render skips re-rendering thumbs whose props are referentially
@@ -66,14 +74,17 @@ export const Thumbnail = memo(function Thumbnail({
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null,
   );
-  const [videoInfo, setVideoInfo] = useState<{
-    fps: number | null;
-    durationSec: number | null;
-  } | null>(null);
+  const [videoInfo, setVideoInfo] = useState<VideoInfoProbe | null>(null);
+  // The tile renders a downscaled derivative, so `dims` (measured off the
+  // rendered element) is the thumbnail's size, not the file's. The tooltip has
+  // to report the real thing, which means asking the backend. Resolved lazily
+  // on hover, since that's the only consumer, and cached for the mount.
+  const [trueDims, setTrueDims] = useState<{ w: number; h: number } | null>(
+    null,
+  );
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const videoInfoCache = useRef<
-    { fps: number | null; durationSec: number | null } | "loading" | null
-  >(null);
+  const videoInfoCache = useRef<VideoInfoProbe | "loading" | null>(null);
+  const trueDimsCache = useRef<{ w: number; h: number } | "none" | null>(null);
 
   // When selection arrives via keyboard nav the thumb may be offscreen; scroll
   // it back into view. "nearest" avoids jumpy scrolls for already-visible rows.
@@ -82,18 +93,29 @@ export const Thumbnail = memo(function Thumbnail({
       rootRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selected]);
 
-  const srcUrl =
-    image.isVideo || image.isModel3d
-      ? image.thumbPath
-        ? fileSrc(image.thumbPath)
-        : null
+  // Nothing is fetched until the tile is within a screenful of the viewport.
+  // The wrapper below stays mounted either way, so scrollIntoView, the aspect
+  // box, the tag dots and the context menu all keep working while it's cold.
+  const near = useNearViewport(rootRef);
+
+  // Stills have cached thumbnails now too, so `thumbPath` is checked first for
+  // every kind. The per-kind part is only the fallback: a still with no cache
+  // entry yet still shows its original (large, but correct), while a video
+  // without a poster must not — that path mounts a real <video> element.
+  const srcUrl = image.thumbPath
+    ? fileSrc(image.thumbPath)
+    : image.isVideo || image.isModel3d
+      ? null
       : fileSrc(image.path);
 
   // Reset aspect/dims when image changes so stale values don't persist briefly.
+  // Gated on `near` too: an offscreen tile has nothing loaded to measure, and
+  // firing here would reset the aspect of a tile that is only just scrolling in.
   useEffect(() => {
+    if (!near) return;
     setAspect(1);
     setDims(null);
-  }, [srcUrl]);
+  }, [srcUrl, near]);
 
   function clampAspect(raw: number): number {
     return maxAspect != null ? Math.min(raw, maxAspect) : raw;
@@ -122,10 +144,10 @@ export const Thumbnail = memo(function Thumbnail({
       setTooltipMeta(m);
       setMetaLoaded(true);
 
-      // Video-only: fps/duration aren't derivable from the thumbnail image
-      // (which is what's actually rendered when a thumbPath exists), so probe
-      // via ffmpeg. Cached per-thumbnail; a missing/unconfigured ffmpeg just
-      // means the tooltip omits fps/duration.
+      // Video-only: fps/duration/dimensions aren't derivable from the
+      // thumbnail image (which is what's actually rendered when a thumbPath
+      // exists), so probe via ffmpeg. Cached per-thumbnail; a
+      // missing/unconfigured ffmpeg just means the tooltip omits them.
       if (image.isVideo) {
         let v = videoInfoCache.current;
         if (v === null || v === "loading") {
@@ -140,6 +162,19 @@ export const Thumbnail = memo(function Thumbnail({
           videoInfoCache.current = v;
         }
         setVideoInfo(v);
+      } else if (!image.isModel3d) {
+        // A still renders its cached 1024px thumbnail, so the real dimensions
+        // have to come from the file's own header. Cheap — `imagesize` reads
+        // the first few bytes rather than decoding.
+        let d = trueDimsCache.current;
+        if (d === null) {
+          const read = await cmd
+            .image_dimensions_read(image.path)
+            .catch(() => null);
+          d = read ? { w: read.width, h: read.height } : "none";
+          trueDimsCache.current = d;
+        }
+        if (d !== "none") setTrueDims(d);
       }
     }, 600);
   }
@@ -156,12 +191,24 @@ export const Thumbnail = memo(function Thumbnail({
     setVideoInfo(null);
   }
 
+  // The media's real size, in preference to whatever the tile happens to be
+  // rendering — a still shows a 1024px cached thumbnail and a video shows a
+  // downscaled poster, so `dims` (measured off the element) is the derivative's
+  // size in both cases. `dims` stays as the fallback for the one tile that
+  // still measures its actual media: a posterless video's <video> element.
+  const shownDims =
+    trueDims ??
+    (videoInfo?.width != null && videoInfo.height != null
+      ? { w: videoInfo.width, h: videoInfo.height }
+      : null) ??
+    dims;
+
   // e.g. "1920x1080" for images, "1920x1080 24fps 3.0s" for videos (fps/duration
   // only once the ffmpeg probe resolves — see onMouseEnter).
-  const dimsLabel = dims
+  const dimsLabel = shownDims
     ? image.isVideo
       ? [
-          `${dims.w}x${dims.h}`,
+          `${shownDims.w}x${shownDims.h}`,
           videoInfo?.fps != null
             ? `${Math.round(videoInfo.fps * 10) / 10}fps`
             : null,
@@ -171,7 +218,7 @@ export const Thumbnail = memo(function Thumbnail({
         ]
           .filter(Boolean)
           .join(" ")
-      : `${dims.w}x${dims.h}`
+      : `${shownDims.w}x${shownDims.h}`
     : null;
 
   const tooltipPrompt = tooltipMeta
@@ -230,35 +277,44 @@ export const Thumbnail = memo(function Thumbnail({
       onMouseLeave={onMouseLeave}
     >
       {srcUrl ? (
-        <img
-          src={srcUrl}
-          loading="lazy"
-          decoding="async"
-          alt=""
-          draggable={false}
-          onLoad={(e) => {
-            const el = e.currentTarget;
-            if (el.naturalWidth > 0) {
-              setAspect(clampAspect(el.naturalHeight / el.naturalWidth));
-              setDims({ w: el.naturalWidth, h: el.naturalHeight });
-            }
-          }}
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+        // `near &&` only on the two branches that actually read from disk —
+        // the icon placeholders below cost nothing and are better shown early.
+        near && (
+          <img
+            src={srcUrl}
+            loading="lazy"
+            decoding="async"
+            alt=""
+            draggable={false}
+            onLoad={(e) => {
+              const el = e.currentTarget;
+              if (el.naturalWidth > 0) {
+                setAspect(clampAspect(el.naturalHeight / el.naturalWidth));
+                setDims({ w: el.naturalWidth, h: el.naturalHeight });
+              }
+            }}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        )
       ) : image.isVideo ? (
-        <video
-          src={fileSrc(image.path)}
-          preload="metadata"
-          muted
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-          onLoadedMetadata={(e) => {
-            const v = e.currentTarget;
-            if (v.videoWidth > 0) {
-              setAspect(clampAspect(v.videoHeight / v.videoWidth));
-              setDims({ w: v.videoWidth, h: v.videoHeight });
-            }
-          }}
-        />
+        // A posterless video mounts a real media element, which range-reads the
+        // container header (and, for a non-faststart file, seeks to the end for
+        // the moov atom). Far and away the most expensive tile on a share.
+        near && (
+          <video
+            src={fileSrc(image.path)}
+            preload="metadata"
+            muted
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              if (v.videoWidth > 0) {
+                setAspect(clampAspect(v.videoHeight / v.videoWidth));
+                setDims({ w: v.videoWidth, h: v.videoHeight });
+              }
+            }}
+          />
+        )
       ) : image.isModel3d ? (
         <div className="absolute inset-0 flex items-center justify-center bg-dim text-text">
           <span className="material-symbols-outlined" style={{ fontSize: 40 }}>

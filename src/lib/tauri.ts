@@ -24,6 +24,7 @@ import type {
   TimelineExportParams,
   TimelineInterchangeParams,
   VideoTrimParams,
+  ThumbsReport,
   AssetRecord,
   AssetRefRecord,
   SyncReport,
@@ -249,6 +250,22 @@ export const cmd = {
     ffmpegPath: string,
   ): Promise<{ fps: number | null; durationSec: number | null }> =>
     rawInvoke("video_info_probe", { videoPath, ffmpegPath }),
+
+  /** Build any missing thumbnails under `root` into the project's cache.
+   *  `recursive` walks the whole project and prunes orphans — that's the
+   *  "Rebuild thumbnails" case; otherwise it's one shot's folders. Idempotent
+   *  and safe to interrupt, so a failed call just means the next one retries. */
+  thumbs_ensure: (
+    root: string,
+    recursive: boolean,
+    ffmpegPath: string,
+  ): Promise<ThumbsReport> =>
+    rawInvoke("thumbs_ensure", { root, recursive, ffmpegPath }),
+
+  /** The cached thumbnail for one media path, for callers holding a bare path
+   *  rather than a scanned GalleryImage. Null means "render the original". */
+  thumb_lookup: (path: string): Promise<string | null> =>
+    rawInvoke("thumb_lookup", { path }),
 
   /** Cut [startSec, endSec) out of a video into `outputPath`, re-encoding so
    *  the cut lands exactly on the marks. Errors — rather than no-ops — when

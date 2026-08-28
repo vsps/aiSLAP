@@ -1,6 +1,6 @@
 [package]
 name = "aislap"
-version = "0.5.1"
+version = "0.6.0"
 description = "aiSLAP - AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
@@ -42,6 +42,11 @@ sha2 = "0.10"
 libsql = "0.9"
 uuid = { version = "1", features = ["v4"] }
 imagesize = "0.15"
+# Thumbnail encoding only. Feature set mirrors `fsutil::IMAGE_EXTS`; the PNG
+# decoder is also what reads the legacy 16-bit `rgb48be` posters during a
+# backfill. `imagesize` above stays — it reads dimensions from the header
+# without decoding, which is a different and much cheaper job.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 whoami = "1"
 
 [dev-dependencies]

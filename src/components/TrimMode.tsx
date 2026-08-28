@@ -75,14 +75,10 @@ async function adoptTrimmedClip(
   // metadataCache assumes a sidecar never changes — this path just gained one.
   invalidateImageMetadata(outPath);
 
-  // Without a poster frame the gallery tile renders blank for a video.
-  await cmd
-    .video_thumbnail_extract(
-      outPath,
-      outPath.replace(/\.[^.]+$/, THUMB_SUFFIXES[0]),
-      ffmpegPath,
-    )
-    .catch(() => false);
+  // Without a poster frame the gallery tile renders blank for a video. Goes
+  // into the project's thumbnail cache, same as a generated output's — sweeping
+  // the containing folder is idempotent, so the other files there are untouched.
+  await cmd.thumbs_ensure(dirname(outPath), false, ffmpegPath).catch(() => null);
 
   if (projectPath) {
     await recordAsset(projectPath, outPath, meta, identity).catch(() => {});

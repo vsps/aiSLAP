@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,12 @@ pub async fn image_dimensions_read(path: String) -> AppResult<Option<ImageDimens
 pub struct VideoInfo {
     pub fps: Option<f64>,
     pub duration_sec: Option<f64>,
+    /// Coded frame size. Read from the same banner as the rest, because a
+    /// video's tile renders its *poster*, and the poster is downscaled to
+    /// `thumbs::THUMB_MAX_EDGE` — so the rendered `<img>` can no longer be
+    /// measured to find out how big the video actually is.
+    pub width: Option<u32>,
+    pub height: Option<u32>,
 }
 
 /// Probe a video's framerate + duration by parsing ffmpeg's own `-i` stderr
@@ -65,10 +71,43 @@ fn video_info_probe_impl(video_path: String, ffmpeg_path: String) -> AppResult<V
         .output()
         .map_err(|e| AppError::Msg(format!("ffmpeg spawn failed: {e}")))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let (width, height) = parse_dimensions(&stderr).unzip();
     Ok(VideoInfo {
         fps: parse_fps(&stderr),
         duration_sec: parse_duration(&stderr),
+        width,
+        height,
     })
+}
+
+/// Coded frame size off the `Video:` line, e.g. `... yuv420p, 1920x1080 [SAR
+/// 1:1 DAR 16:9], 8000 kb/s ...`.
+///
+/// The field is found by shape rather than position, because what precedes it
+/// varies by codec and container. `SAR`/`DAR` are deliberately ignored — the
+/// tooltip reports pixels, not display aspect.
+fn parse_dimensions(banner: &str) -> Option<(u32, u32)> {
+    for line in banner.lines() {
+        let line = line.trim();
+        if !line.contains("Video:") {
+            continue;
+        }
+        for field in line.split(',') {
+            // Trailing `[SAR ...]` rides along on the same comma-field.
+            let Some(candidate) = field.split_whitespace().next() else {
+                continue;
+            };
+            let Some((w, h)) = candidate.split_once('x') else {
+                continue;
+            };
+            if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
+                if w > 0 && h > 0 {
+                    return Some((w, h));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn parse_fps(banner: &str) -> Option<f64> {
@@ -125,6 +164,54 @@ pub async fn video_thumbnail_extract(
     run_blocking(move || video_thumbnail_extract_impl(video_path, thumb_path, ffmpeg_path)).await
 }
 
+/// ffmpeg argv for a poster frame. Pure so the filter string can be tested
+/// without a binary.
+///
+/// Grabs the ~1s frame; `-ss 00:00:01` after `-i` for accuracy.
+///
+/// The pixel format is pinned because the source dictates it otherwise, and a
+/// 10-bit source (Seedance 2.5 returns HEVC Main 10 for some outputs) had
+/// ffmpeg writing 16-bit `rgb48be` PNGs at ~8MB each. `yuvj420p` at `-q:v 3` is
+/// ~150KB for the same 1920x1080 frame.
+///
+/// The scale filter takes that further: a poster never renders above a few
+/// hundred CSS pixels, so anything past `THUMB_MAX_EDGE` is bytes nobody sees.
+/// `min(EDGE,iw)` rather than a bare `force_original_aspect_ratio=decrease`
+/// because that form *upscales* a source smaller than the box.
+/// `force_divisible_by=2` keeps the encoder happy on odd dimensions.
+fn thumb_args(video_path: &str, thumb_path: &str) -> Vec<String> {
+    let edge = crate::commands::thumbs::THUMB_MAX_EDGE;
+    vec![
+        "-y".into(),
+        "-i".into(),
+        video_path.into(),
+        "-ss".into(),
+        "00:00:01".into(),
+        "-vframes".into(),
+        "1".into(),
+        "-vf".into(),
+        format!(
+            "scale=w='min({edge},iw)':h='min({edge},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+        ),
+        "-pix_fmt".into(),
+        "yuvj420p".into(),
+        "-q:v".into(),
+        "3".into(),
+        thumb_path.into(),
+    ]
+}
+
+/// Blocking poster extraction for callers already off the main thread — the
+/// thumbnail sweep, which runs hundreds of these back to back and has no reason
+/// to hop through the async command layer for each one.
+pub(crate) fn extract_poster(video: &Path, dst: &Path, ffmpeg: &str) -> AppResult<bool> {
+    video_thumbnail_extract_impl(
+        video.to_string_lossy().to_string(),
+        dst.to_string_lossy().to_string(),
+        ffmpeg.to_string(),
+    )
+}
+
 fn video_thumbnail_extract_impl(
     video_path: String,
     thumb_path: String,
@@ -143,28 +230,8 @@ fn video_thumbnail_extract_impl(
     if let Some(parent) = thumb.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // Grab ~1s frame; `-ss 00:00:01` after -i for accuracy.
-    //
-    // The pixel format is pinned because the source dictates it otherwise, and
-    // a 10-bit source (Seedance 2.5 returns HEVC Main 10 for some outputs) had
-    // ffmpeg writing 16-bit `rgb48be` PNGs at ~8MB each. `yuvj420p` at `-q:v 3`
-    // is ~150KB for the same 1920x1080 frame, which is ample for a poster that
-    // never renders above a few hundred pixels wide.
     let status = Command::new(&exe_path)
-        .args([
-            "-y",
-            "-i",
-            &video_path,
-            "-ss",
-            "00:00:01",
-            "-vframes",
-            "1",
-            "-pix_fmt",
-            "yuvj420p",
-            "-q:v",
-            "3",
-            &thumb_path,
-        ])
+        .args(thumb_args(&video_path, &thumb_path))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
@@ -521,6 +588,44 @@ mod tests {
             end_sec: end,
             ffmpeg_path: "ffmpeg".into(),
         }
+    }
+
+    /// The poster is what a video tile renders, and it is capped rather than
+    /// full-size — so it must never upscale a small source up to the cap, and
+    /// the cap has to be expressed as a `min` against the input dimensions to
+    /// get that (bare `force_original_aspect_ratio=decrease` does upscale).
+    #[test]
+    fn poster_scale_never_upscales() {
+        let args = thumb_args("in.mp4", "out.jpg");
+        let vf = args.iter().position(|a| a == "-vf").expect("-vf present");
+        let filter = &args[vf + 1];
+        let edge = crate::commands::thumbs::THUMB_MAX_EDGE;
+        assert!(
+            filter.contains(&format!("min({edge},iw)")),
+            "width must be capped, not forced: {filter}"
+        );
+        assert!(
+            filter.contains(&format!("min({edge},ih)")),
+            "height must be capped, not forced: {filter}"
+        );
+        assert!(filter.contains("force_divisible_by=2"), "{filter}");
+        // The seek still has to follow -i for frame accuracy.
+        assert!(
+            args.iter().position(|a| a == "-i").unwrap()
+                < args.iter().position(|a| a == "-ss").unwrap()
+        );
+        assert_eq!(args.last().unwrap(), "out.jpg");
+    }
+
+    #[test]
+    fn dimensions_come_off_the_video_line() {
+        let banner = "  Duration: 00:00:05.00, start: 0.000000, bitrate: 8000 kb/s\n\
+             Stream #0:0(und): Video: h264 (High), yuv420p, 1920x1080 [SAR 1:1 DAR 16:9], 8000 kb/s, 24 fps, 24 tbr";
+        assert_eq!(parse_dimensions(banner), Some((1920, 1080)));
+        assert_eq!(parse_fps(banner), Some(24.0));
+        // No Video: line at all, and a codec field that isn't WxH, must not panic.
+        assert_eq!(parse_dimensions("Stream #0:0: Audio: aac, 48000 Hz"), None);
+        assert_eq!(parse_dimensions(""), None);
     }
 
     #[test]

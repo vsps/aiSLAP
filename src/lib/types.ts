@@ -195,6 +195,18 @@ export type ChainPreset = {
 
 // ---------- Gallery ----------
 
+/** What one `thumbs_ensure` sweep did. `skippedNoFfmpeg` is the one counter
+ *  worth surfacing on its own: it means videos in this project have no poster
+ *  and cannot get one until an ffmpeg path is configured. */
+export type ThumbsReport = {
+  imagesEncoded: number;
+  postersUpgraded: number;
+  postersExtracted: number;
+  skippedNoFfmpeg: number;
+  pruned: number;
+  failed: number;
+};
+
 export type GalleryImage = {
   filename: string;
   path: string;
@@ -395,6 +407,11 @@ export type TabPersisted = {
   lastSequence: string;
   lastShot: string;
   prismEntityType?: PrismEntityType;
+  /** Gallery version columns left collapsed in this tab, by version name
+   *  ("v0003", "SHOT SRC"). Belongs to `lastShot` — a version name only means
+   *  something inside one shot — so the restore applies it only once that shot
+   *  has actually reopened. Optional: state written by an older build has none. */
+  collapsedVersions?: string[];
   chainLinks: ChainLinkPersisted[];
   chainExpandedIdx: number | null;
   iterations: number;

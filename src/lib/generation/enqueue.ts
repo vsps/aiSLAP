@@ -126,12 +126,20 @@ async function loadJobConfig(): Promise<{
  *  walking a network directory, and the proxy would then hand the new version
  *  to whichever tab arrived in front. */
 async function resolveTargetVersion(shotPath: string): Promise<string> {
-  let targetVersion = useSessionStore.getState().targetVersion;
+  // Bundle rather than proxy, for the reason in the docstring above — and taken
+  // before the read, so the write-back and the read agree on which tab they mean.
+  const session = activeStores().session;
+  let targetVersion = session.getState().targetVersion;
   if (!targetVersion || targetVersion === "SRC") {
-    const session = activeStores().session;
     targetVersion = await cmd.version_create_next(shotPath);
     session.setState({ targetVersion });
   }
+  // Collapse now survives a tab switch and a restart, so the column this job
+  // writes into can be one the user folded away days ago — and a collapsed
+  // column renders neither the pending placeholders nor the results. Nothing
+  // else would tell them: `unseenOutputs` only counts what arrives while the
+  // tab is in the background. Open it.
+  session.getState().expandVersion(targetVersion);
   return targetVersion;
 }
 

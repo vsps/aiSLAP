@@ -13,6 +13,7 @@ use crate::commands::fsutil::{
     project_root_for, require_dir, sidecar_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::tags::{generated_by_from_sidecar, tags_from_sidecar};
+use crate::commands::thumbs::ThumbCtx;
 use crate::commands::walk;
 use crate::db::TagIndex;
 use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
@@ -143,6 +144,7 @@ pub(crate) fn try_make_gallery_image(
     path: &Path,
     tags: Vec<String>,
     generated_by: Option<String>,
+    thumbs: Option<&ThumbCtx>,
 ) -> Option<GalleryImage> {
     let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
     if is_thumb(path) {
@@ -155,10 +157,13 @@ pub(crate) fn try_make_gallery_image(
         return None;
     }
     let meta_path = sidecar_path(path);
-    let thumb_path = if is_video || is_model_3d {
-        existing_thumb_path(path).map(|t| as_str(&t))
-    } else {
-        None
+    // Stills get a thumbnail now too — the whole point of the cache. Without a
+    // `ThumbCtx` (a caller outside a project root) fall back to the legacy
+    // sibling lookup, which is what every scan did before the cache existed.
+    let thumb_path = match thumbs {
+        Some(ctx) => ctx.lookup(path).map(|t| as_str(&t)),
+        None if is_video || is_model_3d => existing_thumb_path(path).map(|t| as_str(&t)),
+        None => None,
     };
     Some(GalleryImage {
         filename,
@@ -214,11 +219,15 @@ fn scan_directory_images(
     project_root: Option<&ProjectRoot>,
     index: &TagIndex,
 ) -> AppResult<Vec<GalleryImage>> {
+    // One cache-key snapshot per directory rather than per file: the set is
+    // memoised per project for the session, so this is a map lookup after the
+    // first call and never a second `read_dir` of the cache.
+    let thumbs = project_root.map(|r| ThumbCtx::for_project(&r.path));
     let mut out: Vec<GalleryImage> = Vec::new();
     for path in walk::dir_media(dir)? {
         let tags = tags_for_file(&path, project_root, index);
         let generated_by = generated_by_for_file(&path, project_root, index);
-        if let Some(img) = try_make_gallery_image(&path, tags, generated_by) {
+        if let Some(img) = try_make_gallery_image(&path, tags, generated_by, thumbs.as_ref()) {
             out.push(img);
         }
     }
@@ -358,7 +367,7 @@ mod tests {
                 let stem = media.file_stem().unwrap().to_str().unwrap();
                 std::fs::write(media.with_file_name(format!("{stem}{suffix}")), b"t").unwrap();
             }
-            let img = try_make_gallery_image(&media, Vec::new(), None).unwrap();
+            let img = try_make_gallery_image(&media, Vec::new(), None, None).unwrap();
             assert!(img.is_video, "{rel} classified as video");
             match suffix {
                 Some(suffix) => assert!(
@@ -375,7 +384,7 @@ mod tests {
             let thumb = project.root.join(format!("SQ01/sh010/v001/x{suffix}"));
             std::fs::write(&thumb, b"t").unwrap();
             assert!(
-                try_make_gallery_image(&thumb, Vec::new(), None).is_none(),
+                try_make_gallery_image(&thumb, Vec::new(), None, None).is_none(),
                 "{suffix} must not scan as media"
             );
         }

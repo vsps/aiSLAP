@@ -25,6 +25,7 @@ use crate::commands::fsutil::{
 use crate::commands::gallery::try_make_gallery_image;
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
 use crate::commands::prism;
+use crate::commands::thumbs::ThumbCtx;
 use crate::db::{self, AssetRecord, TagUpdate};
 use crate::domain::{GalleryImage, ProjectSidecar, TagDef};
 use crate::error::{run_blocking, AppError, AppResult};
@@ -678,6 +679,9 @@ pub async fn project_tag_scan(
     // rebuilt exactly. In a native project these keys *are* the names.
     type ShotMap = BTreeMap<String, Vec<GalleryImage>>;
     let mut by_seq: BTreeMap<String, ShotMap> = BTreeMap::new();
+    // The tag view is the one project-wide, unpaginated grid in the app, so it
+    // is the single biggest beneficiary of cached thumbnails.
+    let thumbs = ThumbCtx::for_project(&root);
     let mut rels: Vec<&String> = index.by_rel.keys().collect();
     rels.sort();
     for rel in rels {
@@ -700,7 +704,9 @@ pub async fn project_tag_scan(
             continue;
         }
         let generated_by = index.generated_by_for(rel);
-        let Some(img) = try_make_gallery_image(&abs, image_tags.clone(), generated_by) else {
+        let Some(img) =
+            try_make_gallery_image(&abs, image_tags.clone(), generated_by, Some(&thumbs))
+        else {
             continue;
         };
         by_seq

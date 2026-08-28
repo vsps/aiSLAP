@@ -96,6 +96,7 @@ function tabToPersisted(tab: Tab): TabPersisted {
     lastSequence: relativeTo(s.projectPath ?? "", s.sequencePath ?? ""),
     lastShot: relativeTo(s.sequencePath ?? "", s.shotPath ?? ""),
     prismEntityType: s.prism ? s.entityType : undefined,
+    collapsedVersions: s.collapsedVersions,
     chainLinks: g.links.map(toPersisted),
     chainExpandedIdx: g.expandedIdx,
     iterations: g.iterations,
@@ -324,6 +325,13 @@ async function restoreSessionPaths(
       const shotPath = joinPath(seqPath, persisted.lastShot);
       try {
         await store.getState().setShot(shotPath);
+        // After `setShot`, never before: collapse state belongs to `lastShot`,
+        // and setShot has just cleared it as a shot move. No await in between,
+        // so the shot it landed on is still the one we asked for. Skipped when
+        // empty so a restore never rewrites state for nothing.
+        if (persisted.collapsedVersions?.length) {
+          store.getState().setCollapsedVersions(persisted.collapsedVersions);
+        }
       } catch (e) {
         console.warn(`[bootstrap] shot restore failed for ${shotPath}:`, e);
       }
@@ -387,7 +395,8 @@ function installPersistence(): () => void {
         s.sequencePath !== prev.sequencePath ||
         s.shotPath !== prev.shotPath ||
         s.prism !== prev.prism ||
-        s.entityType !== prev.entityType
+        s.entityType !== prev.entityType ||
+        s.collapsedVersions !== prev.collapsedVersions
       ) {
         schedule();
       }

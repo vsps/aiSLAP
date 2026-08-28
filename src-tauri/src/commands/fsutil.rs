@@ -122,6 +122,70 @@ pub(crate) fn is_thumb(p: &Path) -> bool {
         .is_some_and(|n| THUMB_SUFFIXES.iter().any(|s| n.ends_with(s)))
 }
 
+// ---------- the thumbnail cache ----------
+//
+// Thumbnails used to be siblings of their media (`<stem>.thumb.jpg`), which
+// made the media triple self-maintaining but scattered derivatives through
+// every folder a user looks at — including the shared `SRC` folders other
+// people drop plates into. New thumbnails go to one flat per-project cache
+// instead: `<project>/.aislap/thumbs/<key>.jpg`.
+//
+// `.aislap` is `.`-prefixed, so `walk::is_content_dir` already excludes it from
+// every directory scan. The sibling helpers above stay for *reading* the
+// legacy thumbnails projects are still full of.
+
+/// Hidden per-project directory for aiSLAP's derived, disposable data.
+pub(crate) const CACHE_DIR: &str = ".aislap";
+/// Thumbnail cache, inside [`CACHE_DIR`]. Deleting it costs a re-sweep, nothing else.
+pub(crate) const THUMB_CACHE_SUBDIR: &str = "thumbs";
+/// Extension every cache entry is written with — see `thumbs::THUMB_QUALITY`.
+pub(crate) const THUMB_CACHE_EXT: &str = "jpg";
+
+pub(crate) fn thumb_cache_dir(project_root: &Path) -> PathBuf {
+    project_root.join(CACHE_DIR).join(THUMB_CACHE_SUBDIR)
+}
+
+/// Cache filename for one media file: `sha256(rel_path, mtime_ms, len).jpg`.
+///
+/// The relative path (not the absolute one) keeps the cache valid when the
+/// project is moved, re-mounted on another drive letter, or opened over a
+/// different UNC name. `mtime`+`len` make the key self-invalidating: a file
+/// edited in place by some other tool simply misses and gets re-encoded, so
+/// there is no staleness to detect and no metadata to keep alongside.
+///
+/// The flip side is that a *move* inside the project also changes the key, so
+/// `image.rs` renames the cache entry along with the media rather than leaving
+/// it orphaned — see `thumbs::rename_cache_entry`.
+pub(crate) fn thumb_cache_key(rel_path: &str, mtime_ms: i64, len: u64) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    // Lowercased because Windows and SMB are case-insensitive: the same file
+    // reached through two spellings must not occupy two cache entries.
+    hasher.update(rel_path.to_lowercase().as_bytes());
+    hasher.update([0]);
+    hasher.update(mtime_ms.to_le_bytes());
+    hasher.update(len.to_le_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Full path of a cache entry from its key.
+pub(crate) fn thumb_cache_path(project_root: &Path, key: &str) -> PathBuf {
+    thumb_cache_dir(project_root).join(format!("{key}.{THUMB_CACHE_EXT}"))
+}
+
+/// `(mtime_ms, len)` for a file, from metadata already in hand where possible.
+/// `mtime` falls back to 0 on the platforms/filesystems that don't report one —
+/// the key stays stable, it just loses its invalidation-on-edit property there.
+pub(crate) fn thumb_stat(meta: &std::fs::Metadata) -> (i64, u64) {
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    (mtime_ms, meta.len())
+}
+
 /// Guard for every command that takes a directory path over IPC.
 ///
 /// Was spelled out at eighteen call sites, with two different phrasings of the

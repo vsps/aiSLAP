@@ -72,7 +72,18 @@ subscription sees no diff and a tab switch doesn't look like an edit.
 Deliberate side effect of the keying: switching tabs resets component-local
 state and DOM. Scroll offsets, a half-typed inline rename, timeline playback.
 Everything that matters is already in the tab's stores (selection, zoom, compare
-slots, target version), so what is lost is only what was never worth keeping.
+slots, target version, **gallery column collapse**), so what is lost is only what
+was never worth keeping.
+
+Gallery column collapse is the one thing that moved *out* of component state for
+a reason other than tidiness. A collapsed column unmounts its images entirely,
+so re-expanding one on every switch re-read a shot's worth of thumbnails from
+what is usually a network drive — the collapse set is now
+`sessionStore.collapsedVersions`, and it is in `TabPersisted` too, so it also
+survives a restart. Because it can now outlive the moment it was set,
+`enqueue.ts` force-expands the target version before a job runs: a generation
+into a collapsed column renders neither its placeholders nor its results, and
+`unseenOutputs` doesn't cover the tab you are sitting in.
 
 ### Reaching a specific tab
 

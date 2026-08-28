@@ -87,7 +87,14 @@ export const useTabsStore = create<State & Actions>((set, get) => ({
   async duplicateTab() {
     const from = activeStores();
     const seed = from.session.getState();
-    const { projectPath, sequencePath, shotPath, entityType, prism } = seed;
+    const {
+      projectPath,
+      sequencePath,
+      shotPath,
+      entityType,
+      prism,
+      collapsedVersions,
+    } = seed;
     const chain = from.generation.getState();
     const links = chain.links;
     const expandedIdx = chain.expandedIdx;
@@ -119,7 +126,15 @@ export const useTabsStore = create<State & Actions>((set, get) => ({
         await tab.stores.session
           .getState()
           .setSequence(sequencePath, { openLastShot: false });
-        if (shotPath) await tab.stores.session.getState().setShot(shotPath);
+        if (shotPath) {
+          await tab.stores.session.getState().setShot(shotPath);
+          // Inherit the collapse set: the duplicate opens the same shot, and
+          // expanding everything would re-read exactly the thumbnails the
+          // original tab has already folded away.
+          tab.stores.session
+            .getState()
+            .setCollapsedVersions(collapsedVersions);
+        }
       }
     } catch (e) {
       console.warn("[tabs] duplicating tab failed:", e);

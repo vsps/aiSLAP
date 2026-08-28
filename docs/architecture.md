@@ -107,14 +107,14 @@ there is one instance app-wide or one per open tab; see [tabs.md](tabs.md).
 
 | Store | Scope | Owns |
 |---|---|---|
-| `sessionStore` | per-tab | project / sequence / shot paths, loaded gallery `columns`, `taggedGroups`, selection, `traceActive`, view mode, `restoringLastSession` |
+| `sessionStore` | per-tab | project / sequence / shot paths, loaded gallery `columns`, `taggedGroups`, selection, `collapsedVersions` (which gallery columns are folded), `traceActive`, view mode, `restoringLastSession` |
 | `generationStore` | per-tab | chain `links`, the active link's model/settings/prompts/refs, `iterations`, job list, `pendingOutputs` |
 | `timelineStore` | per-tab | clips, playhead, transport, video durations, segment flattening — [timeline.md](timeline.md) |
 | `scriptStore` | per-tab | the parsed `script.md` |
 | `tagsStore` | per-tab | vocabulary (`defs`), the derived `colorsByName` map, `activeFilter`, `filterMode` |
 | `tabsStore` | global | the tab list, the active tab, and every tab's store bundle |
 | `modelsStore` | global | the loaded registry and a `loaded` flag (drives `models: N`) |
-| `layoutStore` | global | panel sizes and collapsed columns — persisted to `localStorage` |
+| `layoutStore` | global | panel sizes, gallery column widths, and collapsed **chain** columns — persisted to `localStorage`. Gallery column collapse is per-tab and lives in `sessionStore`. |
 | `pricesStore` | global | cached fal prices plus manual per-endpoint overrides |
 | `presetsStore` | global | chain presets |
 | `logStore` | global | the in-app log ring, fed by `lib/consoleCapture.ts` |
@@ -319,6 +319,9 @@ Told apart so nobody "fixes" a decision, or lives with a bug thinking it is one:
 | `write_json_atomic` does not `fsync` | **known gap** | Rename-based atomicity without a flush; deliberately unaddressed pending measurement on SMB, where the extra round trip is expensive. |
 | `app-state.json` has no Rust struct | **deliberate** | It is frontend state (rule 3). The typed mirror it replaced silently dropped `chainLinks`, so the prompt chain never survived a restart. See [tabs.md](tabs.md) §6. |
 | N tabs on one project reconcile it N times at boot | **known gap** | Fire-and-forget and idempotent, so it costs time on a slow drive, not correctness. |
+| A thumbnail cache entry is orphaned by a move made outside aiSLAP | **known gap** | The key contains the project-relative path. In-app moves/renames carry the entry across; anything else leaves it until the next full sweep prunes it. Costs disk, never correctness — a miss re-encodes. See [storage.md](storage.md). |
+| The thumbnail cache lives inside the project, on the share | **deliberate** | One folder per project, so a sweep serves the whole team and travels with an archive. The cost is that it writes into the shared drive, cannot work on a read-only one, and every read still crosses SMB. An `%APPDATA%` cache would read from local disk but be per-user. |
+| Videos have no poster when `ffmpegPath` is unset | **deliberate** | ffmpeg is the only way to get a frame out of a container. `thumbs_ensure` reports the count as `skippedNoFfmpeg` rather than failing, and those tiles mount a real `<video>` to read their own header. |
 
 ---
 

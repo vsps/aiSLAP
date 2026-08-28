@@ -40,6 +40,7 @@ Plus `models_dir`, which is *resolved* rather than assumed — see
 project/
   project.json           project id, title, tagDefs, tagsMigrated, version prefix
   script.md              optional
+  .aislap/thumbs/        gallery thumbnail cache — derived, see below
   SRC/                   project-wide inputs
   TRASH/                 trashed media — see below
   <sequence>/
@@ -59,47 +60,95 @@ project/
 > tag. Every directory scan treats `SRC`, `SEL` and `.`/`$`-prefixed names as
 > non-version folders.
 
-## The media triple
+## The media pair
 
 ```
 clip.mp4            the media
 clip.json           its sidecar — the durable record
+```
+
+These move as a unit through copy, move, rename, **trash** and **export**. `fsutil.rs`
+provides `sidecar_path` (plus the legacy thumbnail helpers below) so no caller has to
+rebuild those names by hand — the export path silently dropped thumbnails for exactly
+that reason before the helpers existed.
+
+## The thumbnail cache
+
+Every gallery tile renders a small cached derivative, not the media itself:
+
+```
+<project>/.aislap/thumbs/<sha256(rel_path, mtime_ms, len)>.jpg
+```
+
+One flat directory per project. `commands/thumbs.rs` owns it; `fsutil.rs` owns the
+path/key helpers (`thumb_cache_dir`, `thumb_cache_key`, `thumb_cache_path`,
+`thumb_stat`).
+
+- **Spec:** long edge 1024px (never upscaled), JPEG q80, RGB8 with alpha composited
+  onto black — which is what a tile renders against anyway. The widest a tile ever gets
+  is 500 CSS px, so 1024 covers a 2× display.
+- **Stills have one too.** This is the point of the whole thing. Before it, a still
+  rendered its full-resolution original into an 80–500px tile: one real 8-column shot
+  measured 110 stills / 208MB, over SMB, re-read on every gallery mount — and a tab
+  switch remounts the gallery (`tabs.md` §3).
+- **The key self-invalidates.** `mtime`+`len` are in it, so a file edited in place by
+  another tool simply misses and gets re-encoded; there is no staleness to detect and no
+  metadata stored alongside. The *relative* path is used so moving or re-mounting the
+  whole project doesn't invalidate everything.
+- **A move inside the project does change the key**, which is the cost of not being a
+  sibling any more. `image.rs` therefore renames/copies the cache entry alongside the
+  media (`thumbs::rename_cache_entry` / `copy_cache_entry`). A move made *outside*
+  aiSLAP orphans an entry until the next full sweep prunes it — **known gap**, the same
+  shape as the reconcile gap below.
+- **`.aislap` is `.`-prefixed**, so `walk::is_content_dir` and `fsutil::list_dirs`
+  already exclude it from every traversal. That is the *only* thing keeping the cache
+  out of gallery scans, so the constant must keep that property — there is a test.
+- **Membership is answered from memory.** `THUMB_INDEX` (a `OnceLock<Mutex<HashMap<…>>>`,
+  same shape as `db::LOCAL_DBS`) holds each project's key set, filled by one `read_dir`
+  per project per session. Stat-ing per file would add a few hundred SMB round trips to
+  every rescan, and a rescan follows every generation iteration.
+
+`thumbs_ensure(root, recursive, ffmpeg)` builds what's missing. Non-recursive sweeps a
+shot's own folders (the frontend also sweeps `<project>/SRC`, which renders as the
+GLOBAL SRC column but lives outside the shot); recursive walks the whole project **and
+prunes** unclaimed entries and stale `.jpg.tmp` files. Every arm is an existence check
+and every write is tmp-then-rename, so it is idempotent and safe to interrupt. Driven
+from `src/lib/thumbs.ts`, which remembers which folders it has already swept this
+session — without that, a read-only share would retry a doomed write on every rescan.
+
+### Legacy sibling thumbnails
+
+Projects made before the cache are full of these, and they are still **read**:
+
+```
 clip.thumb.jpg      poster frame, for video (8-bit JPEG)
 clip.thumb.png      poster frame, for 3D — the provider's RGBA preview
 ```
 
-These move as a unit through copy, move, rename, **trash** and **export**. `fsutil.rs`
-provides `sidecar_path`, `thumb_path`, `existing_thumb_path`, `thumb_path_like` and
-`is_thumb` so no caller has to rebuild those names by hand — the export path silently
-dropped thumbnails for exactly that reason before the helpers existed.
+- **`.thumb.png`** is what every project generated before the JPEG switch is full of, at
+  ~8MB each: a 10-bit source (Seedance 2.5 returns HEVC Main 10 for some outputs) had
+  ffmpeg emitting 16-bit `rgb48be` PNGs. A recursive sweep re-encodes these into the
+  cache and deletes them — **except in a PRISM project, where aiSLAP never removes
+  files**; there the PNG stays and is simply never read again.
+- **3D previews keep their sibling `.thumb.png` permanently.** Those bytes are
+  downloaded from the provider (Meshy ships an RGBA render, already ~130KB) and never
+  re-encoded, because flattening them to JPEG would cost the transparency that is the
+  point of them. `ThumbCtx::lookup` special-cases `is_model3d_ext` for this.
 
-Two thumbnail suffixes are live, and the distinction is load-bearing:
-
-- **`.thumb.jpg`** is what a video poster is written as now (`-pix_fmt yuvj420p -q:v 3`).
-  The pixel format is pinned because a 10-bit source — Seedance 2.5 returns HEVC Main 10
-  for some outputs — otherwise had ffmpeg emitting 16-bit `rgb48be` PNGs at ~8MB each,
-  for a picture never shown above a few hundred pixels wide. The same frame is ~150KB
-  as JPEG.
-- **`.thumb.png`** is what every project generated before that switch is full of, and
-  what a 3D preview still gets: those bytes are downloaded from the provider (Meshy
-  ships an RGBA render, already ~130KB), never re-encoded, so flattening them to JPEG
-  would only cost the transparency.
-
-So *write* through `thumb_path` (canonical, always `.jpg`), *read* through
-`existing_thumb_path` (prefers `.jpg`, falls back to `.png`, `None` for neither), and
-when carrying a thumbnail alongside a move or rename use `thumb_path_like` so a legacy
-PNG stays a PNG instead of having its bytes relabelled. `THUMB_SUFFIXES` in
-`src/lib/media.ts` mirrors the Rust list for the frontend's guess-the-sidecar paths —
-keep the two in step.
+`existing_thumb_path` (prefers `.jpg`, falls back to `.png`, `None` for neither) is the
+read path, and it is also the fallback `ThumbCtx::lookup` returns for media the sweep
+hasn't reached yet. `thumb_path_like` keeps a legacy PNG a PNG when a move or rename
+carries it, instead of relabelling its bytes. `THUMB_SUFFIXES` in `src/lib/media.ts`
+mirrors the Rust list for the frontend's guess-the-sidecar paths — keep the two in step.
 
 The sidecar carries the prompt pieces, the exact `combinedPrompt` sent, the settings,
 a ref snapshot, the provider response, `costUsd`, the chain lineage, `tags`, `assetId`
 and `contentHash`.
 
 **Derived media.** The video trim (`video_trim` in `media.rs`, driven by `TrimMode`)
-writes `<stem>_trim.mp4` beside its source and gives it a full triple, so it is the
-first file aiSLAP creates that has one with no generation behind it. Its sidecar is
-cloned from the source's, minus three fields: `tags` (a trimmed copy of the `select`
+writes `<stem>_trim.mp4` beside its source and gives it a full pair plus a cached
+thumbnail, so it is the first file aiSLAP creates with no generation behind it. Its
+sidecar is cloned from the source's, minus three fields: `tags` (a trimmed copy of the `select`
 take is not itself the selected take), `costUsd` (the trim is local work — inheriting
 it would double-count the clip in `project_cost_scan`), and a fresh `assetId` +
 `contentHash`, because two files must never share an identity. `refs` stays the
@@ -109,11 +158,13 @@ rather than the edit; the link back to the source lives in **`derivedFrom`**
 
 ## TRASH
 
-**There is no hard delete.** `image_trash` moves the whole triple into `<project>/TRASH/`
+**There is no hard delete.** `image_trash` moves the whole pair (and any legacy sibling
+thumbnail) into `<project>/TRASH/`
 under a mirror of the file's project-relative path — `TRASH/SQ01/sh010/v003/clip.mp4` —
 so where it came from is legible and two shots' identically-named files can't collide.
-A name trashed twice gets `_1`, `_2` … appended, applied to all three companions at once
-so the triple stays a set (`CollisionPolicy::Uniquify` in `image.rs`).
+A name trashed twice gets `_1`, `_2` … appended, applied to every companion at once so
+the set stays a set (`CollisionPolicy::Uniquify` in `image.rs`). The cache entry is not
+moved: its key changes with the path, so the next full sweep prunes it.
 
 `TRASH` is excluded from every traversal, at **both** gates: `walk.rs::is_content_dir`
 (which covers `project_walk`, `project_reconcile`, `project_cost_scan`, `timeline_init`
