@@ -83,6 +83,43 @@ export function linkFromPersisted(
   });
 }
 
+/** Serialize the in-memory per-shot collapse map for disk. Keys are stored
+ *  relative to the sequence (same shape as `lastShot`) so a moved project
+ *  directory still restores them; entries for shots outside the current
+ *  sequence and empty/duplicate entries are dropped rather than persisted as
+ *  keys that could never round-trip. */
+function collapseMapRelative(
+  byShot: Record<string, string[]>,
+  sequencePath: string | null,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [shotPath, versions] of Object.entries(byShot)) {
+    if (!Array.isArray(versions)) continue;
+    const clean = versions.filter((v) => typeof v === "string");
+    if (clean.length === 0) continue;
+    const rel = relativeTo(sequencePath ?? "", shotPath);
+    if (sequencePath && rel === shotPath) continue;
+    out[rel] = clean;
+  }
+  return out;
+}
+
+/** Inverse of `collapseMapRelative`: rebuild absolute shot keys from a saved
+ *  map. `sequencePath` here is already absolute (project + lastSequence). */
+function collapseMapAbsolute(
+  byShot: Record<string, string[]>,
+  sequencePath: string,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [rel, versions] of Object.entries(byShot)) {
+    if (!Array.isArray(versions)) continue;
+    const clean = versions.filter((v) => typeof v === "string");
+    if (clean.length === 0) continue;
+    out[joinPath(sequencePath, rel)] = clean;
+  }
+  return out;
+}
+
 /** One tab's slice of the saved state. Paths are stored parent-relative rather
  *  than as bare names: in a native project these *are* the folder names, but a
  *  PRISM project needs the entity-root and `Renders/2dRender/AI` segments to
@@ -97,6 +134,10 @@ function tabToPersisted(tab: Tab): TabPersisted {
     lastShot: relativeTo(s.sequencePath ?? "", s.shotPath ?? ""),
     prismEntityType: s.prism ? s.entityType : undefined,
     collapsedVersions: s.collapsedVersions,
+    collapsedVersionsByShot: collapseMapRelative(
+      s.collapsedVersionsByShot,
+      s.sequencePath,
+    ),
     chainLinks: g.links.map(toPersisted),
     chainExpandedIdx: g.expandedIdx,
     iterations: g.iterations,
@@ -324,12 +365,26 @@ async function restoreSessionPaths(
       if (!persisted.lastShot) return;
       const shotPath = joinPath(seqPath, persisted.lastShot);
       try {
+        // Load the per-shot collapse map before `setShot`, so the shot we're
+        // about to open can pick up its own saved collapse set. Older saved
+        // states have no map and fall back to the single `collapsedVersions`
+        // field below, which still applies to `lastShot`.
+        if (persisted.collapsedVersionsByShot) {
+          store
+            .getState()
+            .setCollapsedVersionsByShot(
+              collapseMapAbsolute(persisted.collapsedVersionsByShot, seqPath),
+            );
+        }
         await store.getState().setShot(shotPath);
         // After `setShot`, never before: collapse state belongs to `lastShot`,
         // and setShot has just cleared it as a shot move. No await in between,
         // so the shot it landed on is still the one we asked for. Skipped when
         // empty so a restore never rewrites state for nothing.
-        if (persisted.collapsedVersions?.length) {
+        if (
+          !persisted.collapsedVersionsByShot &&
+          persisted.collapsedVersions?.length
+        ) {
           store.getState().setCollapsedVersions(persisted.collapsedVersions);
         }
       } catch (e) {
@@ -396,7 +451,8 @@ function installPersistence(): () => void {
         s.shotPath !== prev.shotPath ||
         s.prism !== prev.prism ||
         s.entityType !== prev.entityType ||
-        s.collapsedVersions !== prev.collapsedVersions
+        s.collapsedVersions !== prev.collapsedVersions ||
+        s.collapsedVersionsByShot !== prev.collapsedVersionsByShot
       ) {
         schedule();
       }
