@@ -69,9 +69,14 @@ type State = {
    *  `App.tsx` keys the gallery on the active tab: component state dies on
    *  every switch, and re-expanding a column re-reads every one of its
    *  thumbnails off what is usually a network drive. Belongs to the current
-   *  shot — a version name only means something inside one — so `setShot`
-   *  clears it on a genuine move, exactly as it re-picks `targetVersion`. */
+   *  shot — a version name only means something inside one. */
   collapsedVersions: string[];
+
+  /** The same collapsed columns remembered per shot, keyed by absolute shot
+   *  (media root) path. Lets a shot keep its collapse state while the user
+   *  looks at another, then restore it on return. `collapsedVersions` above is
+   *  only the live slice for whichever shot is currently open. */
+  collapsedVersionsByShot: Record<string, string[]>;
 
   /** Preview compare mode — wipe/flicker A vs B. Ephemeral, reset per shot. */
   compareMode: boolean;
@@ -129,6 +134,9 @@ type Actions = {
   setCollapsedVersions: (versions: string[]) => void;
   /** Force one column open. Called when work is about to land in it. */
   expandVersion: (version: string) => void;
+  /** Replace the whole per-shot collapse map. Session restore applies a saved
+   *  map before `setShot`, so the reopened shot can pick up its own entry. */
+  setCollapsedVersionsByShot: (byShot: Record<string, string[]>) => void;
   createSequence: (name: string) => Promise<void>;
   createShot: (name: string) => Promise<void>;
   setSequencesInProject: (paths: string[]) => void;
@@ -195,11 +203,27 @@ function clearedSelection() {
     columns: [],
     targetVersion: null,
     collapsedVersions: [],
+    collapsedVersionsByShot: {},
     selectedImagePath: null,
     sequenceHistory: emptyChannel(),
     shotHistory: emptyChannel(),
     versionComments: {},
   };
+}
+
+/** Return the per-shot collapse map with the current shot's entry updated.
+ *  Empty sets are dropped rather than stored, so the map only ever holds a
+ *  shot that actually has something collapsed. */
+function collapseMapForShot(
+  byShot: Record<string, string[]>,
+  shotPath: string | null,
+  collapsedVersions: string[],
+): Record<string, string[]> {
+  if (!shotPath) return byShot;
+  const next = { ...byShot };
+  if (collapsedVersions.length > 0) next[shotPath] = collapsedVersions;
+  else delete next[shotPath];
+  return next;
 }
 
 // ---------- path -> image lookup ----------
@@ -352,6 +376,7 @@ export function createSessionStore(tab: TabStores) {
     imageDrag: null,
     targetVersion: null,
     collapsedVersions: [],
+    collapsedVersionsByShot: {},
 
     compareMode: false,
     compareA: null,
@@ -540,11 +565,14 @@ export function createSessionStore(tab: TabStores) {
         columns,
         targetVersion,
         // Same rule as `targetVersion` above: re-opening the shot you're
-        // already on keeps your collapse state, a genuine move clears it.
+        // already on keeps your collapse state; a genuine move restores the
+        // collapse set remembered for the destination shot (or starts empty).
         // Read through `get()` rather than the destructure at the top — that
         // happens before two awaits, and this is the one field a user could
         // plausibly toggle while they run.
-        collapsedVersions: sameShot ? get().collapsedVersions : [],
+        collapsedVersions: sameShot
+          ? get().collapsedVersions
+          : (get().collapsedVersionsByShot[resolved] ?? []),
         selectedImagePath: null,
         compareMode: false,
         compareA: null,
@@ -567,30 +595,56 @@ export function createSessionStore(tab: TabStores) {
     },
 
     toggleVersionCollapsed(version) {
-      set((s) => ({
-        collapsedVersions: s.collapsedVersions.includes(version)
+      set((s) => {
+        const collapsedVersions = s.collapsedVersions.includes(version)
           ? s.collapsedVersions.filter((v) => v !== version)
-          : [...s.collapsedVersions, version],
-      }));
+          : [...s.collapsedVersions, version];
+        return {
+          collapsedVersions,
+          collapsedVersionsByShot: collapseMapForShot(
+            s.collapsedVersionsByShot,
+            s.shotPath,
+            collapsedVersions,
+          ),
+        };
+      });
     },
 
     setCollapsedVersions(versions) {
-      set({ collapsedVersions: versions });
+      set((s) => ({
+        collapsedVersions: versions,
+        collapsedVersionsByShot: collapseMapForShot(
+          s.collapsedVersionsByShot,
+          s.shotPath,
+          versions,
+        ),
+      }));
     },
 
     expandVersion(version) {
       // No-op when it isn't collapsed, leaving the array reference untouched:
       // this runs on every Run, and a fresh array would trip the app-state
       // persistence gate in bootstrap.ts and schedule a pointless write.
-      set((s) =>
-        s.collapsedVersions.includes(version)
-          ? {
-              collapsedVersions: s.collapsedVersions.filter(
-                (v) => v !== version,
-              ),
-            }
-          : ({} as Partial<State>),
-      );
+      set((s) => {
+        if (!s.collapsedVersions.includes(version)) {
+          return {} as Partial<State>;
+        }
+        const collapsedVersions = s.collapsedVersions.filter(
+          (v) => v !== version,
+        );
+        return {
+          collapsedVersions,
+          collapsedVersionsByShot: collapseMapForShot(
+            s.collapsedVersionsByShot,
+            s.shotPath,
+            collapsedVersions,
+          ),
+        };
+      });
+    },
+
+    setCollapsedVersionsByShot(byShot) {
+      set({ collapsedVersionsByShot: byShot });
     },
 
     async createSequence(name) {

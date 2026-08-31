@@ -412,6 +412,11 @@ export type TabPersisted = {
    *  something inside one shot — so the restore applies it only once that shot
    *  has actually reopened. Optional: state written by an older build has none. */
   collapsedVersions?: string[];
+  /** Collapsed gallery columns remembered per shot, keyed by shot path relative
+   *  to the sequence (same shape as `lastShot`). Supersedes `collapsedVersions`
+   *  for shots other than the one in front; `collapsedVersions` is retained so
+   *  pre-per-shot states still load. Optional. */
+  collapsedVersionsByShot?: Record<string, string[]>;
   chainLinks: ChainLinkPersisted[];
   chainExpandedIdx: number | null;
   iterations: number;

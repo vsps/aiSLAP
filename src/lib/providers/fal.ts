@@ -1,4 +1,4 @@
-import { fal } from "@fal-ai/client";
+import { fal, ValidationError } from "@fal-ai/client";
 import type { QueueStatus } from "@fal-ai/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
@@ -12,6 +12,53 @@ import {
   type ProviderProgress,
   type ProviderRunHooks,
 } from "./provider";
+
+const UPLOAD_PROPAGATION_RETRY_DELAYS_MS = [2000, 4000];
+
+function isUploadPropagationError(e: unknown): boolean {
+  return (
+    e instanceof ValidationError &&
+    e.fieldErrors.some((fe) => /not accessible|has expired/i.test(fe.msg))
+  );
+}
+
+// fal.storage.upload() resolves before the file is readable by fal's own
+// inference workers — submitting immediately after can 422 with "not
+// accessible or has expired" on a URL that is in fact brand new. A couple of
+// short retries clears it without re-uploading anything.
+async function submitWithRetry(
+  endpoint: string,
+  opts: Parameters<typeof fal.queue.submit>[1],
+  signal: AbortSignal,
+): Promise<Awaited<ReturnType<typeof fal.queue.submit>>> {
+  for (const delayMs of UPLOAD_PROPAGATION_RETRY_DELAYS_MS) {
+    try {
+      return await fal.queue.submit(endpoint, opts);
+    } catch (e) {
+      if (signal.aborted || !isUploadPropagationError(e)) throw e;
+      await sleep(delayMs, signal);
+    }
+  }
+  return fal.queue.submit(endpoint, opts);
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("aborted", "AbortError"));
+      return;
+    }
+    const t = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 export class FalProvider implements Provider {
   private lifecycle: FalLifecycle | undefined;
@@ -39,11 +86,15 @@ export class FalProvider implements Provider {
   ): Promise<ProviderOutput> {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
 
-    const enqueued = await fal.queue.submit(endpoint, {
-      input,
-      abortSignal: signal,
-      ...(this.lifecycle ? { storageSettings: { expiresIn: this.lifecycle } } : {}),
-    });
+    const enqueued = await submitWithRetry(
+      endpoint,
+      {
+        input,
+        abortSignal: signal,
+        ...(this.lifecycle ? { storageSettings: { expiresIn: this.lifecycle } } : {}),
+      },
+      signal,
+    );
     const requestId = enqueued.request_id;
     // Fire the hook before we start waiting — gives the caller a chance to
     // persist a recovery record while the request is in fal's queue.

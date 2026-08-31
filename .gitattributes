@@ -1,0 +1,6 @@
+# Normalize line endings across all platforms
+* text=auto
+
+# Keep Cargo manifests and lockfile explicitly LF
+*.toml      text eol=lf
+Cargo.lock  text eol=lf

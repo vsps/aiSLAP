@@ -9,7 +9,7 @@ import {
 import type { ModelEntry } from "../lib/types";
 import { hasUnsupportedRefs } from "../lib/chainValidation";
 
-type Provider = "fal" | "replicate" | "bytedance";
+type Provider = "fal" | "replicate" | "bytedance" | "beeble";
 
 type UiGroup = "image" | "video" | "utility" | "model3d";
 
@@ -66,7 +66,7 @@ export function ModelPicker() {
   );
   const refImages = useGenerationStore(selectRefImages);
 
-  // Provider tab and family mirror the active model rather than living in
+  // Provider dropdown and family mirror the active model rather than living in
   // local state: every interaction here ends in selectModel, so there's
   // nothing extra to remember — and it means a store-driven model change
   // (RESTORE PROMPT, restore chain, chain presets) moves the tabs with it
@@ -137,28 +137,24 @@ export function ModelPicker() {
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex gap-1 text-xs font-mono">
+      <select
+        className="bg-bg text-text px-1 py-[2px] w-full"
+        value={provider}
+        onChange={(e) => {
+          const p = e.currentTarget.value as Provider;
+          const newProviderEntries = entries.filter(
+            (e) => (e.node.provider ?? "fal") === p,
+          );
+          const fam = orderedFamilies(newProviderEntries)[0] ?? null;
+          selectFamilyAndFirstModel(newProviderEntries, fam);
+        }}
+      >
         {(["fal", "replicate", "bytedance", "beeble"] as Provider[]).map((p) => (
-          <button
-            key={p}
-            type="button"
-            onClick={() => {
-              const newProviderEntries = entries.filter(
-                (e) => (e.node.provider ?? "fal") === p,
-              );
-              const fam = orderedFamilies(newProviderEntries)[0] ?? null;
-              selectFamilyAndFirstModel(newProviderEntries, fam);
-            }}
-            className={
-              provider === p
-                ? "px-2 py-[1px] bg-accent text-bg"
-                : "px-2 py-[1px] bg-bg text-text hover:opacity-80"
-            }
-          >
+          <option key={p} value={p}>
             {p}
-          </button>
+          </option>
         ))}
-      </div>
+      </select>
       <select
         className="bg-bg text-text px-1 py-[2px] w-full"
         value={selectedFamily ?? ""}
@@ -206,25 +202,27 @@ export function ModelPicker() {
           </optgroup>
         )}
       </select>
-      <div className="flex flex-wrap gap-1">
-        {familyModels.map((e) => (
-          <button
-            key={e.node.id}
-            type="button"
-            onClick={() => selectModel(e.node)}
-            className={
-              currentModel?.id === e.node.id
-                ? "px-2 py-[1px] text-xs font-mono bg-accent text-bg"
-                : "px-2 py-[1px] text-xs font-mono bg-bg text-text hover:opacity-80"
-            }
-          >
-            {e.node.name}
-          </button>
-        ))}
-        {familyModels.length === 0 && loaded && (
-          <span className="text-xs text-dim">—</span>
+      <select
+        className="bg-bg text-text px-1 py-[2px] w-full"
+        value={currentModel?.id ?? ""}
+        onChange={(e) => {
+          const entry = familyModels.find(
+            (m) => m.node.id === e.currentTarget.value,
+          );
+          if (entry) selectModel(entry.node);
+        }}
+      >
+        {familyModels.length === 0 && (
+          <option value="" disabled>
+            {loaded ? "—" : ""}
+          </option>
         )}
-      </div>
+        {familyModels.map((e) => (
+          <option key={e.node.id} value={e.node.id}>
+            {e.node.name}
+          </option>
+        ))}
+      </select>
       {currentPrice && (
         <div
           className="text-[11px] font-mono text-dim truncate"
