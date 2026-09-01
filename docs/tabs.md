@@ -69,6 +69,12 @@ subscription sees no diff and a tab switch doesn't look like an edit.
    memory: one gallery's thumbnails, not N.
 2. **Anything that outlives a switch must hold its own bundle** — §1.
 
+Modes (GENERATE / DELIVER / AUDIT) are a separate axis and are **not** keyed: a
+mode is app-global state on `layoutStore`, a tab is a session. See
+[architecture.md](architecture.md) §3. What modes do give you is mutual exclusion,
+which is why `Gallery` can be mounted by two of them without the double-mount
+hazards that rule out two galleries at once.
+
 Deliberate side effect of the keying: switching tabs resets component-local
 state and DOM. Scroll offsets, a half-typed inline rename, timeline playback.
 Everything that matters is already in the tab's stores (selection, zoom, compare

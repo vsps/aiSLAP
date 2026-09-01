@@ -78,6 +78,18 @@ type State = {
    *  only the live slice for whichever shot is currently open. */
   collapsedVersionsByShot: Record<string, string[]>;
 
+  /** Media the user has un-ticked on DELIVER, by absolute path.
+   *
+   *  Stored as the *inverse* of a selection on purpose. DELIVER exports "what
+   *  is listed", so the default has to be everything the current tag filter
+   *  leaves visible — and a positive selection would need re-seeding on every
+   *  filter change, every rescan and every shot switch, each of which is a
+   *  chance to seed it wrong. Holding only the exclusions means the default
+   *  needs no maintenance at all: a path nobody touched is exported.
+   *
+   *  A `string[]` rather than a `Set` so zustand selector identity behaves. */
+  deliverExcluded: string[];
+
   /** Preview compare mode — wipe/flicker A vs B. Ephemeral, reset per shot. */
   compareMode: boolean;
   compareA: string | null;
@@ -137,6 +149,11 @@ type Actions = {
   /** Replace the whole per-shot collapse map. Session restore applies a saved
    *  map before `setShot`, so the reopened shot can pick up its own entry. */
   setCollapsedVersionsByShot: (byShot: Record<string, string[]>) => void;
+  /** Flip one path in or out of the DELIVER export set. */
+  toggleDeliverExcluded: (path: string) => void;
+  /** Replace the whole exclusion list — select-all passes `[]`, select-none
+   *  passes every visible path. */
+  setDeliverExcluded: (paths: string[]) => void;
   createSequence: (name: string) => Promise<void>;
   createShot: (name: string) => Promise<void>;
   setSequencesInProject: (paths: string[]) => void;
@@ -205,6 +222,7 @@ function clearedSelection() {
     collapsedVersions: [],
     collapsedVersionsByShot: {},
     selectedImagePath: null,
+    deliverExcluded: [],
     sequenceHistory: emptyChannel(),
     shotHistory: emptyChannel(),
     versionComments: {},
@@ -377,6 +395,7 @@ export function createSessionStore(tab: TabStores) {
     targetVersion: null,
     collapsedVersions: [],
     collapsedVersionsByShot: {},
+    deliverExcluded: [],
 
     compareMode: false,
     compareA: null,
@@ -498,6 +517,7 @@ export function createSessionStore(tab: TabStores) {
         targetVersion: null,
         collapsedVersions: [],
         selectedImagePath: null,
+        deliverExcluded: [],
         sequenceHistory: {
           entries: sidecar.promptHistory,
           cursor: sidecar.promptHistory.length,
@@ -574,6 +594,7 @@ export function createSessionStore(tab: TabStores) {
           ? get().collapsedVersions
           : (get().collapsedVersionsByShot[resolved] ?? []),
         selectedImagePath: null,
+        deliverExcluded: [],
         compareMode: false,
         compareA: null,
         compareB: null,
@@ -645,6 +666,19 @@ export function createSessionStore(tab: TabStores) {
 
     setCollapsedVersionsByShot(byShot) {
       set({ collapsedVersionsByShot: byShot });
+    },
+
+    toggleDeliverExcluded(path) {
+      const cur = get().deliverExcluded;
+      set({
+        deliverExcluded: cur.includes(path)
+          ? cur.filter((p) => p !== path)
+          : [...cur, path],
+      });
+    },
+
+    setDeliverExcluded(paths) {
+      set({ deliverExcluded: paths });
     },
 
     async createSequence(name) {

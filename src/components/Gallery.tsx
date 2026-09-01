@@ -21,7 +21,7 @@ import { Icon } from "../lib/icon";
 import { selectImageByPath, useSessionStore } from "../stores/sessionStore";
 import { useLayoutStore } from "../stores/layoutStore";
 import { useGenerationStore } from "../stores/generationStore";
-import { matchesFilter, useTagsStore } from "../stores/tagsStore";
+import { useFilteredColumns } from "../lib/galleryFilter";
 import { addImageToRefs, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
 import { basename } from "../lib/paths";
@@ -47,35 +47,21 @@ const ModelZoomModal = lazy(() =>
   import("./ModelZoomModal").then((m) => ({ default: m.ModelZoomModal })),
 );
 
-export function Gallery() {
+type Props = {
+  /** DELIVER mode: show a tick box on every tile so the visible set can be
+   *  refined before export. Off everywhere else. */
+  selectable?: boolean;
+};
+
+export function Gallery({ selectable }: Props = {}) {
   const columns = useSessionStore((s) => s.columns);
   const shotPath = useSessionStore((s) => s.shotPath);
   const pendingOutputs = useGenerationStore((s) => s.pendingOutputs);
-  const activeFilter = useTagsStore((s) => s.activeFilter);
-  const filterMode = useTagsStore((s) => s.filterMode);
-  const activeUserFilter = useTagsStore((s) => s.activeUserFilter);
 
   // What the gallery actually shows: the loaded columns narrowed to the
-  // active tag + user filter. Keyboard nav walks this too, so arrows can't
-  // land on a thumbnail the filter has hidden.
-  const filtered = useMemo<GalleryColumnData[]>(
-    () =>
-      activeFilter.length === 0 && !activeUserFilter
-        ? columns
-        : columns.map((c) => ({
-            ...c,
-            images: c.images.filter((i) =>
-              matchesFilter(
-                i.tags,
-                activeFilter,
-                filterMode,
-                i.generatedBy,
-                activeUserFilter,
-              ),
-            ),
-          })),
-    [columns, activeFilter, filterMode, activeUserFilter],
-  );
+  // active tag + user filter. Shared with DELIVER's export bar so the two can
+  // never disagree about what is listed — see `lib/galleryFilter.ts`.
+  const filtered = useFilteredColumns(columns);
 
   // Unfiltered per-version image counts, keyed off `columns` (not `filtered`)
   // — a tag/user filter can make a non-empty version folder show 0 images in
@@ -189,6 +175,16 @@ export function Gallery() {
   const collapsedVersions = useSessionStore((s) => s.collapsedVersions);
   const toggleCollapsed = useSessionStore((s) => s.toggleVersionCollapsed);
   const setCollapsedVersions = useSessionStore((s) => s.setCollapsedVersions);
+
+  // DELIVER tick boxes. `excludedSet` is a Set for O(1) per-tile lookup;
+  // `toggleExcluded` comes straight off the store so it is referentially
+  // stable and the memo'd Thumbnails downstream keep their memo.
+  const deliverExcluded = useSessionStore((s) => s.deliverExcluded);
+  const toggleExcluded = useSessionStore((s) => s.toggleDeliverExcluded);
+  const excludedSet = useMemo(
+    () => new Set(deliverExcluded),
+    [deliverExcluded],
+  );
   const collapsedSet = useMemo(
     () => new Set(collapsedVersions),
     [collapsedVersions],
@@ -770,7 +766,12 @@ export function Gallery() {
         ) : viewMode === "tagged" ? (
           <>
             {splitButtons}
-            <TagView onDragStart={onDragStart} />
+            <TagView
+              onDragStart={onDragStart}
+              selectable={selectable}
+              excludedSet={excludedSet}
+              onToggleExcluded={toggleExcluded}
+            />
           </>
         ) : viewMode === "stacked" ? (
           <>
@@ -803,6 +804,9 @@ export function Gallery() {
                       onImageAction={onImageAction}
                       onRefresh={c.isSrc ? () => rescanShot() : undefined}
                       onDragStart={onDragStart}
+                      selectable={selectable}
+                      excludedSet={excludedSet}
+                      onToggleExcluded={toggleExcluded}
                     />
                   ))}
                 </>

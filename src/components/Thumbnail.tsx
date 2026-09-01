@@ -29,6 +29,12 @@ type Props = {
   dragDisabled?: boolean;
   /** Caps the computed aspect ratio. In grid views portrait images are forced square. */
   maxAspect?: number;
+  /** DELIVER mode: show a tick box. Unlike the other corner controls this one
+   *  is always visible rather than hover-only — it is state the user is
+   *  actively managing, not an affordance. */
+  checkable?: boolean;
+  checked?: boolean;
+  onToggleChecked?: (path: string) => void;
 };
 
 const DRAG_THRESHOLD_PX = 5;
@@ -54,6 +60,9 @@ export const Thumbnail = memo(function Thumbnail({
   onDragStart,
   dragDisabled,
   maxAspect,
+  checkable,
+  checked,
+  onToggleChecked,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const colorsByName = useTagsStore((s) => s.colorsByName);
@@ -382,6 +391,30 @@ export const Thumbnail = memo(function Thumbnail({
             : "opacity-0 group-hover:opacity-100 text-white hover:text-accent"
         }`}
       />
+      {/* Export tick box, bottom-right — the one corner nothing else claims
+          (top-right is the media badge, top-left the tag dots, bottom-left the
+          tag button). Stops propagation so ticking doesn't also select. */}
+      {checkable && (
+        <button
+          type="button"
+          title={checked ? "Exclude from export" : "Include in export"}
+          aria-pressed={checked}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleChecked?.(image.path);
+          }}
+          className={`absolute bottom-1 right-1 w-[16px] h-[16px] flex items-center justify-center border drop-shadow ${
+            checked
+              ? "bg-accent border-accent text-text"
+              : "bg-bg/70 border-white/70 text-transparent hover:border-accent"
+          }`}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+            check
+          </span>
+        </button>
+      )}
       {tooltipPos && metaLoaded && (
         <div
           className="fixed z-50 pointer-events-none max-w-xs bg-panel/95 border border-dim shadow-xl px-2 py-1.5 text-xs space-y-0.5"

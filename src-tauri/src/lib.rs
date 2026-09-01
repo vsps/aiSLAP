@@ -49,7 +49,7 @@ pub fn run() {
             commands::tags::project_tag_scan,
             commands::tags::project_tags_reindex,
             commands::tags::project_tags_migrate,
-            commands::tags::export_by_tag,
+            commands::tags::export_paths,
             commands::image::ref_copy_to_global_src,
             commands::image::image_copy_to_dir,
             commands::image::image_move_to_dir,

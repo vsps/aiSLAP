@@ -9,17 +9,15 @@ import { installOsDragDropListener } from "./lib/osDragDrop";
 import { checkForUpdate } from "./lib/updater";
 import { SessionBar } from "./components/SessionBar";
 import { TabBar } from "./components/TabBar";
-import { Workbench } from "./components/Workbench";
-import { Timeline } from "./components/Timeline";
-import { Gallery } from "./components/Gallery";
+import { ModeSwitcher } from "./components/ModeSwitcher";
+import { GenerateMode } from "./components/modes/GenerateMode";
+import { DeliverMode } from "./components/modes/DeliverMode";
+import { AuditMode } from "./components/modes/AuditMode";
 import { ErrorPopup } from "./components/ErrorPopup";
-import { LogWindow } from "./components/LogWindow";
-import { QueueChecklist } from "./components/QueueChecklist";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { SplashScreen } from "./components/SplashScreen";
 import { UpdateAvailableDialog } from "./components/UpdateAvailableDialog";
-import { ResizeBar } from "./components/ResizeBar";
 import { useGenerationStore } from "./stores/generationStore";
 import { useModelsStore } from "./stores/modelsStore";
 import { useSessionStore } from "./stores/sessionStore";
@@ -38,16 +36,7 @@ export default function App() {
   const setPendingUpdate = useUpdateStore((s) => s.setPendingUpdate);
   const traceActive = useSessionStore((s) => s.traceActive);
   const setTrace = useSessionStore((s) => s.setTrace);
-  const galleryHeight = useLayoutStore((s) => s.panelSizes.galleryHeight);
-  const setGalleryHeight = useLayoutStore((s) => s.setGalleryHeight);
-  const logHeight = useLayoutStore((s) => s.panelSizes.logHeight);
-  const setLogHeight = useLayoutStore((s) => s.setLogHeight);
-  const timelineHeight = useLayoutStore((s) => s.panelSizes.timelineHeight);
-  const setTimelineHeight = useLayoutStore((s) => s.setTimelineHeight);
-  const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
-  const setThumbColWidth = useLayoutStore((s) => s.setThumbColWidth);
-  const queueWidth = useLayoutStore((s) => s.panelSizes.queueWidth);
-  const setQueueWidth = useLayoutStore((s) => s.setQueueWidth);
+  const mode = useLayoutStore((s) => s.mode);
 
   useEffect(() => {
     installOsDragDropListener();
@@ -108,6 +97,11 @@ export default function App() {
 
   return (
     <div className="flex h-full w-full flex-col gap-prompt-surface bg-bg p-prompt-surface text-text">
+      {/* Modes are app-global and deliberately unkeyed: which surface you are
+          on is a choice about what you are doing, not about which session you
+          are in. Switching mode leaves the active tab alone. */}
+      <ModeSwitcher />
+
       <TabBar />
 
       {/* Every session-scoped panel below is keyed on the active tab. The
@@ -123,67 +117,10 @@ export default function App() {
         onOpenProjectSettings={() => setProjectSettingsOpen(true)}
       />
 
-      <Workbench key={`bench-${activeTabId}`} />
+      {mode === "generate" && <GenerateMode />}
+      {mode === "deliver" && <DeliverMode />}
+      {mode === "audit" && <AuditMode />}
 
-      <ResizeBar
-        orientation="horizontal"
-        value={timelineHeight}
-        onChange={setTimelineHeight}
-        grow="up"
-      />
-
-      <Timeline key={`timeline-${activeTabId}`} />
-
-      <ResizeBar
-        orientation="horizontal"
-        value={galleryHeight}
-        onChange={setGalleryHeight}
-        grow="up"
-      />
-
-      <div
-        className="shrink-0 flex min-h-0"
-        style={{ height: `${galleryHeight}px` }}
-      >
-        <Gallery key={`gallery-${activeTabId}`} />
-      </div>
-
-      <ResizeBar
-        orientation="horizontal"
-        value={logHeight}
-        onChange={setLogHeight}
-        grow="up"
-      />
-
-      <input
-        type="range"
-        min={80}
-        max={500}
-        value={thumbColWidth}
-        onChange={(e) => setThumbColWidth(Number(e.target.value))}
-        title={`Thumbnail size: ${thumbColWidth}px`}
-        className="accent-white w-full shrink-0"
-        style={{ height: 4, padding: 0, margin: 0, cursor: "ew-resize" }}
-      />
-
-      <div
-        className="shrink-0 flex flex-row min-h-0"
-        style={{ height: `${logHeight}px` }}
-      >
-        <QueueChecklist
-          key={`queue-${activeTabId}`}
-          height={logHeight}
-          className="shrink-0"
-          style={{ width: `${queueWidth}px` }}
-        />
-        <ResizeBar
-          orientation="vertical"
-          value={queueWidth}
-          onChange={setQueueWidth}
-          grow="right"
-        />
-        <LogWindow height={logHeight} className="flex-1 min-w-0" />
-      </div>
       <StatusBar ready={ready} bootError={bootError} />
       <ErrorPopup />
       {pendingUpdate && (

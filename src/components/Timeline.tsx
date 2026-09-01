@@ -22,7 +22,7 @@ export function Timeline() {
   const setPlayheadSec = useTimelineStore((s) => s.setPlayheadSec);
   const pause = useTimelineStore((s) => s.pause);
   const recordVideoDuration = useTimelineStore((s) => s.recordVideoDuration);
-  const timelineHeight = useLayoutStore((s) => s.panelSizes.timelineHeight);
+  const timelineHeight = useLayoutStore((s) => s.panelSizes.deliverEditHeight);
 
   const stripRef = useRef<HTMLDivElement>(null);
   const [dropIdx, setDropIdx] = useState<number | null>(null);

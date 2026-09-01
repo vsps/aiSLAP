@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::commands::fsutil::{
-    as_str, existing_thumb_path, is_media_ext, is_thumb, project_root_for, relativize, require_dir,
-    sidecar_path, thumb_path, thumb_path_like, ProjectRoot, PROJECT_SIDECAR, SEL_DIR,
+    as_str, existing_thumb_path, is_media_ext, is_thumb, project_root_for, rel_of, relativize,
+    require_dir, sidecar_path, thumb_path, thumb_path_like, ProjectRoot, PROJECT_SIDECAR, SEL_DIR,
 };
 use crate::commands::gallery::try_make_gallery_image;
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
@@ -744,28 +744,35 @@ pub async fn project_tag_scan(
         .collect())
 }
 
-/// Copy every image matching the filter out of the project. `mode`
-/// "preserve" mirrors each file's path under the destination; anything else
-/// flattens into one folder with a `seq_shot_` filename prefix. The sidecar and
-/// thumbnail come along so the export stays self-describing and browsable.
+/// Copy an explicit list of media out of the project. `layout` "preserve"
+/// mirrors each file's path under the destination; anything else flattens into
+/// one folder with a `seq_shot_` filename prefix. The sidecar and thumbnail come
+/// along so the export stays self-describing and browsable.
+///
+/// The caller supplies the set. This replaced an `export_by_tag` that ran its
+/// own tag query against `db::asset_tags`, which meant the export could not
+/// express what the gallery was actually showing — the filter had to be
+/// re-stated, the user filter could not be expressed at all, and a stale index
+/// silently exported the wrong files. Taking a list also removes the ghost-row
+/// case, where the index named a file no longer on disk.
+///
+/// Paths outside the project root are skipped rather than rejected: the set is
+/// derived from what the gallery lists, which can include a reference image
+/// living somewhere else entirely, and one such entry should not fail the whole
+/// export.
 #[tauri::command]
-pub async fn export_by_tag(
+pub async fn export_paths(
     project_path: String,
-    tags: Vec<String>,
-    mode: Option<TagFilterMode>,
+    paths: Vec<String>,
     dest_dir: String,
     layout: String,
 ) -> AppResult<u32> {
     let root = PathBuf::from(&project_path);
     require_dir(&root)?;
-    let wanted = normalize_tags(tags);
-    let filter_mode = mode.unwrap_or_default();
-    let index = db::tags_all(&root).await?;
-    let hits: Vec<String> = index
-        .by_rel
+    let hits: Vec<String> = paths
         .iter()
-        .filter(|(_, t)| matches(t, &wanted, filter_mode))
-        .map(|(rel, _)| rel.clone())
+        .filter_map(|p| rel_of(Path::new(p), &root))
+        .filter(|rel| !rel.is_empty() && !rel.starts_with("../"))
         .collect();
 
     run_blocking(move || {
@@ -1155,10 +1162,9 @@ mod tests {
         // Flattened: media is renamed `seq1_shot1_gen001_clip.mp4`, so the
         // companions must be renamed to match or nothing resolves them.
         let flat = root.join("out-flat");
-        let n = export_by_tag(
+        let n = export_paths(
             as_str(&root),
-            vec!["fav".into()],
-            None,
+            vec![as_str(&video)],
             as_str(&flat),
             "flatten".into(),
         )
@@ -1172,10 +1178,9 @@ mod tests {
 
         // Preserved: same three files, original names, mirrored path.
         let tree = root.join("out-tree");
-        export_by_tag(
+        export_paths(
             as_str(&root),
-            vec!["fav".into()],
-            None,
+            vec![as_str(&video)],
             as_str(&tree),
             "preserve".into(),
         )
@@ -1185,6 +1190,35 @@ mod tests {
         assert!(kept.is_file(), "media exported");
         assert!(sidecar_path(&kept).is_file(), "sidecar exported");
         assert!(thumb_path(&kept).is_file(), "thumbnail exported");
+    }
+
+    /// The export set comes from whatever the gallery is listing, which can
+    /// include media that does not live under the project — a reference image
+    /// dragged in from elsewhere, say. One such entry must be skipped rather
+    /// than failing the export that the rest of the selection is relying on.
+    #[tokio::test]
+    async fn export_skips_paths_outside_the_project_and_files_that_are_gone() {
+        let project = TestProject::new("export-outside");
+        let root = project.root.clone();
+
+        let inside = media(&root, "seq1/shot1/gen001/a.png", None);
+        let outside = project.root.parent().unwrap().join("stray.png");
+        fs::write(&outside, b"not in the project").unwrap();
+        let missing = root.join("seq1/shot1/gen001/never-existed.png");
+
+        let dest = root.join("out");
+        let n = export_paths(
+            as_str(&root),
+            vec![as_str(&inside), as_str(&outside), as_str(&missing)],
+            as_str(&dest),
+            "preserve".into(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(n, 1, "only the in-project file that exists is copied");
+        assert!(dest.join("seq1/shot1/gen001/a.png").is_file());
+        assert!(!dest.join("stray.png").is_file());
     }
 
     /// A damaged `project.json` used to read as an empty `ProjectSidecar`, and

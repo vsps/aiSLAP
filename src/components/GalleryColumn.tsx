@@ -56,6 +56,11 @@ type Props = {
     fromColumnVersion: string;
     pointerEvent: React.PointerEvent;
   }) => void;
+  /** DELIVER mode: show a tick box on every tile. */
+  selectable?: boolean;
+  /** Paths the user has un-ticked. Passed as a Set for O(1) per-tile lookup. */
+  excludedSet?: Set<string>;
+  onToggleExcluded?: (path: string) => void;
 };
 
 const COLLAPSED_WIDTH = 28;
@@ -74,6 +79,9 @@ export function GalleryColumn({
   onImageAction,
   onRefresh,
   onDragStart,
+  selectable,
+  excludedSet,
+  onToggleExcluded,
 }: Props) {
   const targetVersion = useSessionStore((s) => s.targetVersion);
   const setTargetVersion = useSessionStore((s) => s.setTargetVersion);
@@ -347,6 +355,9 @@ export function GalleryColumn({
                   onEditTags={handleEditTags}
                   onDragStart={onDragStart}
                   maxAspect={maxAspect}
+                  checkable={selectable}
+                  checked={selectable && !excludedSet?.has(img.path)}
+                  onToggleChecked={onToggleExcluded}
                 />
               ),
             )}

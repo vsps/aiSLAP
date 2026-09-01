@@ -160,14 +160,17 @@ export const cmd = {
     rawInvoke("project_tags_reindex", { projectPath }),
   project_tags_migrate: (projectPath: string): Promise<TagMigrationReport> =>
     rawInvoke("project_tags_migrate", { projectPath }),
-  export_by_tag: (
+  /** Copy an explicit list of media (plus each one's sidecar and thumbnail)
+   *  out of the project. `layout` is "preserve" or "flatten". Returns how many
+   *  media files were copied — entries outside the project root, and entries
+   *  with no file behind them, are skipped rather than failing the export. */
+  export_paths: (
     projectPath: string,
-    tags: string[],
-    mode: TagFilterMode,
+    paths: string[],
     destDir: string,
     layout: string,
   ): Promise<number> =>
-    rawInvoke("export_by_tag", { projectPath, tags, mode, destDir, layout }),
+    rawInvoke("export_paths", { projectPath, paths, destDir, layout }),
 
   sequence_prompt_append: (
     sequencePath: string,

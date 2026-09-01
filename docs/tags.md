@@ -41,11 +41,28 @@ than disappearing — the sidecars are authoritative for names.
 - **`TagView`** — every tagged item across the whole project, grouped by sequence and
   shot. This is the cross-referencing surface that replaced the old
   promoted-images list.
-- **Export by tag** — copies matching media out of the project, in a flattened or
-  path-preserving layout. The **whole media triple** travels, so the export stays
-  self-describing and browsable.
-- **`ProjectSettingsDialog`** — manages the vocabulary (rename, recolour, reorder,
-  delete).
+- **`DeliverExportBar`** (DELIVER) — copies media out of the project, in a
+  flattened or path-preserving layout. The **whole media triple** travels, so the
+  export stays self-describing and browsable.
+
+  The set is *what the gallery is listing*: the tag filter narrows the gallery, and
+  the bar exports exactly that, minus anything the user un-ticked. There is no tag
+  picker in the export itself. This replaced an `export_by_tag` command that ran its
+  own query against `db::asset_tags` — which meant the filter had to be re-stated,
+  `activeUserFilter` could not be expressed at all, and a stale index silently
+  exported the wrong files. `export_paths` now takes the list; the derivation is
+  shared with the gallery in `lib/galleryFilter.ts` so the two cannot disagree.
+
+  Exclusions rather than a selection are stored (`sessionStore.deliverExcluded`),
+  so the default set needs no re-seeding when the filter, the scan or the shot
+  changes.
+- **`TagManager`** (DELIVER) — manages the vocabulary: rename, recolour, delete,
+  and rebuild the index. There is **no reorder UI**, though `tagsStore.setDefs`
+  could support one.
+
+  It renders the raw `defs` from `project.json`, *not* `useEffectiveTagDefs()` —
+  so a tag that exists on sidecars but not in the vocabulary is invisible here
+  until "Rebuild tag index" is pressed. **Known gap.**
 
 ## Gotchas
 

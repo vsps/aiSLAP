@@ -69,21 +69,42 @@ Adding a provider touches no Rust — see [providers.md](providers.md).
 
 ### Composition
 
-`main.tsx` → `App.tsx`, which mounts, top to bottom:
+`main.tsx` → `App.tsx`, which mounts a fixed shell around one of three **modes**:
 
 ```
+ModeSwitcher        GENERATE | DELIVER | AUDIT — app-global, see below
 TabBar              one chip per open session — see tabs.md
 SessionBar          project / sequence / shot pickers, PRISM SHOT|ASSET toggle
-Workbench           the chain editor — one column set per chain link
-Timeline            built-in NLE strip
-Gallery             version columns · tag view · stacked view · trace view
-QueueChecklist | LogWindow
+  ── the active mode ──
 StatusBar           ready · models: N · restoring last session…
 SplashScreen        overlays everything until `ready`
 ```
 
+| Mode | Mounts |
+|---|---|
+| **GENERATE** | `Workbench` (the chain editor), `Gallery`, `QueueChecklist` \| `LogWindow` |
+| **DELIVER** | `LatestImageColumn` as a preview, `Timeline` as the edit strip, `Gallery selectable` + `TagManager` + `DeliverExportBar` |
+| **AUDIT** | the project cost tree, the per-image report and Sankey, and `CostSettings` in a collapsible |
+
 `ResizeBar`s between the panels are driven by `layoutStore`, which persists sizes to
 `localStorage`.
+
+### Modes vs tabs
+
+They are orthogonal, and the difference is load-bearing.
+
+A **mode** is app-global: `layoutStore.mode`, persisted to `localStorage`, and
+deliberately *not* keyed on the active tab. Which surface you are looking at is a
+statement about what you are doing, not about which session you are in.
+
+A **tab** is a session — see [tabs.md](tabs.md). Every session-scoped panel inside a
+mode is still keyed on `activeTabId`.
+
+Because the modes are mutually exclusive, a component may appear in more than one of
+them without being mounted twice. `Gallery` relies on this: it installs `window`
+keydown handlers for grid navigation, commits file moves from its own drag handlers,
+and owns five singleton modals — all of which would misbehave in duplicate. Two
+*simultaneous* galleries are still not safe; two mode-exclusive ones are.
 
 ### Components by role
 
@@ -91,13 +112,13 @@ Rather than an alphabetical inventory (53 files, and they move):
 
 | Role | Components |
 |---|---|
-| **Shell** | `App`, `SessionBar`, `Workbench`, `SplashScreen`, `ResizeBar`, `ColumnResizeHandle`, `CollapsedColumnBar` |
+| **Shell** | `App`, `ModeSwitcher`, `GenerateMode`, `DeliverMode`, `AuditMode`, `SessionBar`, `Workbench`, `SplashScreen`, `ResizeBar`, `ColumnResizeHandle`, `CollapsedColumnBar` |
 | **Chain columns** | `ModelSettingsColumn`, `PromptColumn`, `RefImagesColumn`, `LatestImageColumn`, `RunColumn`, `CollapsedLinkColumn`, `ChainAddBar` |
-| **Gallery** | `Gallery`, `GalleryColumn`, `Thumbnail`, `VersionStack`, `StackedView`, `TagView`, `TagFilterBar`, `TagEditorPopup`, `SelectPickerPopup` |
+| **Gallery** | `Gallery`, `GalleryColumn`, `Thumbnail`, `VersionStack`, `StackedView`, `TagView`, `TagFilterBar`, `TagEditorPopup`, `SelectPickerPopup`; filtering is shared with DELIVER via `lib/galleryFilter.ts` |
 | **Viewers / editors** | `ImageZoomModal` (hosts `DrawMode`, `CropMode`), `ModelZoomModal` (GLB), `SamPromptModal`, `LlmPromptModal`, `ComparePreview`, `FullscreenModal` |
 | **Timeline** | `Timeline`, `TimelineClip`, `TimelineTransport`, `ClipMediaPicker`, `ExportModal` — see [timeline.md](timeline.md) |
 | **Diagnostics** | `LogWindow`, `QueueChecklist`, `TraceView`, `ErrorPopup` |
-| **Settings** | `SettingsDialog` (app-wide) and `ProjectSettingsDialog` (per-project) — **two different dialogs**; the README used to imply one |
+| **Settings** | `SettingsDialog` (app-wide) and `ProjectSettingsDialog` (per-project) — **two different dialogs**; the README used to imply one. Everything cost-shaped has left both for AUDIT (`AuditMode`, `CostSettings`), and tag-vocabulary editing has left for DELIVER (`TagManager`) |
 | **Primitives** | `ModalDialog` (centred dialog) vs `FullscreenModal` (full-bleed editor), `IconBtn`, `ToggleGroup`, `InlinePrompt`, `RoleMenu`, `PathContextMenu`, `LazyBoundary` |
 
 ### Store ownership
@@ -114,7 +135,7 @@ there is one instance app-wide or one per open tab; see [tabs.md](tabs.md).
 | `tagsStore` | per-tab | vocabulary (`defs`), the derived `colorsByName` map, `activeFilter`, `filterMode` |
 | `tabsStore` | global | the tab list, the active tab, and every tab's store bundle |
 | `modelsStore` | global | the loaded registry and a `loaded` flag (drives `models: N`) |
-| `layoutStore` | global | panel sizes, gallery column widths, and collapsed **chain** columns — persisted to `localStorage`. Gallery column collapse is per-tab and lives in `sessionStore`. |
+| `layoutStore` | global | the active **mode**, panel sizes, gallery column widths, and collapsed **chain** columns — persisted to `localStorage`. Gallery column collapse is per-tab and lives in `sessionStore`. |
 | `pricesStore` | global | cached fal prices plus manual per-endpoint overrides |
 | `presetsStore` | global | chain presets |
 | `logStore` | global | the in-app log ring, fed by `lib/consoleCapture.ts` |
@@ -170,7 +191,7 @@ Inside `commands/`:
 | `walk.rs` | **the** project → sequence → shot → version → media traversal, PRISM resolved |
 | `gallery.rs` | version-column and stacked scanning; resolves tags from the index |
 | `image.rs` | media-triple copy/move/rename, version-stack moves, reveal-in-explorer |
-| `tags.rs` | tag writes, vocabulary, rename/delete sweeps, reindex, migrate, export-by-tag |
+| `tags.rs` | tag writes, vocabulary, rename/delete sweeps, reindex, migrate, `export_paths` |
 | `metadata.rs` | sidecar read/write, and the trash move (there is no hard delete) |
 | `media_id.rs` | embedded asset identity (EXIF/PNG text/WebP chunk) and content hashing |
 | `prism.rs` | PRISM layout detection and entity resolution |
