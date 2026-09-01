@@ -6,6 +6,12 @@ see §7 for what that rules out.
 
 Layer placement and store ownership: [architecture.md](architecture.md).
 
+The strip lives on the **DELIVER** mode, not in the generate stack, and `Timeline`
+takes its height from `layoutStore.panelSizes.deliverEditHeight` (seeded to a
+quarter of the window). Leaving DELIVER calls `timelineStore.deactivate()`: without
+it `timelineActive` would outlive the unmount and `LatestImageColumn` on GENERATE
+would keep hiding its toolbar with no timeline on screen to explain why.
+
 ## 1. The clip model
 
 `SequenceTimeline` (`lib/types.ts`, mirrored by `domain.rs`) is

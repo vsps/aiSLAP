@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useSessionStore } from "../stores/sessionStore";
-import { tagsEqual, useTagsStore } from "../stores/tagsStore";
+import { useTagsStore } from "../stores/tagsStore";
+import { useVisibleTaggedGroups } from "../lib/galleryFilter";
 import { editTagsAt, selectImagePath } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
-import type { SeqTaggedGroup } from "../lib/types";
 
 type Props = {
   onDragStart: (payload: {
@@ -11,9 +11,18 @@ type Props = {
     fromColumnVersion: string;
     pointerEvent: React.PointerEvent;
   }) => void;
+  /** DELIVER mode: show a tick box on every tile. */
+  selectable?: boolean;
+  excludedSet?: Set<string>;
+  onToggleExcluded?: (path: string) => void;
 };
 
-export function TagView({ onDragStart }: Props) {
+export function TagView({
+  onDragStart,
+  selectable,
+  excludedSet,
+  onToggleExcluded,
+}: Props) {
   const taggedGroups = useSessionStore((s) => s.taggedGroups);
   const taggedLoading = useSessionStore((s) => s.taggedLoading);
   const projectPath = useSessionStore((s) => s.projectPath);
@@ -28,23 +37,8 @@ export function TagView({ onDragStart }: Props) {
   }, [projectPath, rescanTagged]);
 
   // The tag filter drives the server query above; the user filter narrows
-  // client-side on top of it, same shape as Gallery.tsx's columns-view filter.
-  const visibleGroups = useMemo<SeqTaggedGroup[]>(() => {
-    if (!activeUserFilter) return taggedGroups;
-    return taggedGroups
-      .map((seq) => ({
-        ...seq,
-        shots: seq.shots
-          .map((sh) => ({
-            ...sh,
-            images: sh.images.filter(
-              (i) => i.generatedBy && tagsEqual(i.generatedBy, activeUserFilter),
-            ),
-          }))
-          .filter((sh) => sh.images.length > 0),
-      }))
-      .filter((seq) => seq.shots.length > 0);
-  }, [taggedGroups, activeUserFilter]);
+  // client-side on top of it. Shared with DELIVER's export bar.
+  const visibleGroups = useVisibleTaggedGroups(taggedGroups);
 
   if (!projectPath) {
     return (
@@ -111,6 +105,9 @@ export function TagView({ onDragStart }: Props) {
                           onSelect={selectImagePath}
                           onEditTags={editTagsAt}
                           onDragStart={onDragStart}
+                          checkable={selectable}
+                          checked={selectable && !excludedSet?.has(img.path)}
+                          onToggleChecked={onToggleExcluded}
                         />
                       </div>
                     ))}

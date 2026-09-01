@@ -72,15 +72,31 @@ type PanelKey =
   | "galleryHeight"
   | "thumbColWidth"
   | "logHeight"
-  | "timelineHeight"
-  | "queueWidth";
+  | "queueWidth"
+  | "deliverPreviewHeight"
+  | "deliverEditHeight";
+
+/** Deliver-mode panels are seeded as a fraction of the window rather than a
+ *  fixed pixel count: the edit strip is specified as a quarter of the window
+ *  height, and a hard-coded default would be that only on one screen size.
+ *  Read once at module load; after the first resize the stored value wins.
+ *
+ *  `deliverEditHeight` is the timeline strip's own height — `Timeline` reads it
+ *  directly. It replaced a separate `timelineHeight` key when the strip moved
+ *  out of the generate stack and onto DELIVER; two keys for one panel was one
+ *  too many. */
+function windowFraction(f: number, fallback: number): number {
+  const h = typeof window === "undefined" ? 0 : window.innerHeight;
+  return h > 0 ? Math.round(h * f) : fallback;
+}
 
 const PANEL_DEFAULTS: Record<PanelKey, number> = {
   galleryHeight: 400,
   thumbColWidth: 80,
   logHeight: 78,
-  timelineHeight: 45,
   queueWidth: 400,
+  deliverPreviewHeight: windowFraction(0.3, 300),
+  deliverEditHeight: windowFraction(0.25, 250),
 };
 
 /** Thumbnail-tile width bounds. Shared by the global slider (`thumbColWidth`)
@@ -91,8 +107,9 @@ const PANEL_RANGE: Record<PanelKey, [number, number]> = {
   galleryHeight: [120, 1200],
   thumbColWidth: THUMB_WIDTH_RANGE,
   logHeight: [24, 600],
-  timelineHeight: [45, 400],
   queueWidth: [120, 1200],
+  deliverPreviewHeight: [120, 1600],
+  deliverEditHeight: [45, 800],
 };
 
 const PANEL_STORAGE_KEY = "aislap.panelSizes";
@@ -159,6 +176,27 @@ function loadGalleryListMode(): boolean {
   }
 }
 
+/** Which top-level surface the window is showing. App-global on purpose: a
+ *  mode is a choice about what you are doing, not about which session you are
+ *  in, so it does not belong in the per-tab state that rides in app-state.json
+ *  (see `lib/bootstrap.ts` — adding a field there means editing `tabToPersisted`
+ *  and the `installPersistence` change gate in lockstep). Tabs and modes are
+ *  orthogonal: switching mode leaves the active tab alone, and vice versa. */
+export type AppMode = "generate" | "deliver" | "audit";
+
+const MODE_STORAGE_KEY = "aislap.activeMode";
+
+const APP_MODES: readonly AppMode[] = ["generate", "deliver", "audit"];
+
+function loadMode(): AppMode {
+  try {
+    const raw = localStorage.getItem(MODE_STORAGE_KEY);
+    return APP_MODES.includes(raw as AppMode) ? (raw as AppMode) : "generate";
+  } catch {
+    return "generate";
+  }
+}
+
 type State = {
   widths: Record<ColumnKey, number>;
   setWidth: (key: ColumnKey, px: number) => void;
@@ -173,12 +211,16 @@ type State = {
   galleryListMode: boolean;
   toggleGalleryListMode: () => void;
 
+  mode: AppMode;
+  setMode: (m: AppMode) => void;
+
   panelSizes: Record<PanelKey, number>;
   setGalleryHeight: (n: number) => void;
   setThumbColWidth: (n: number) => void;
   setLogHeight: (n: number) => void;
-  setTimelineHeight: (n: number) => void;
   setQueueWidth: (n: number) => void;
+  setDeliverPreviewHeight: (n: number) => void;
+  setDeliverEditHeight: (n: number) => void;
   /** One-time migration from the old Rust-backed app_state.json fields.
    *  No-ops if panel sizes have already been persisted to localStorage. */
   migrateLegacyPanelSizes: (legacy: Partial<Record<PanelKey, number>>) => void;
@@ -249,6 +291,17 @@ export const useLayoutStore = create<State>((set, get) => ({
     }
   },
 
+  mode: loadMode(),
+  setMode(m) {
+    if (get().mode === m) return;
+    set({ mode: m });
+    try {
+      localStorage.setItem(MODE_STORAGE_KEY, m);
+    } catch {
+      /* swallow — mode persistence is best-effort */
+    }
+  },
+
   panelSizes: loadPanelSizes(),
   setGalleryHeight(n) {
     const next = { ...get().panelSizes, galleryHeight: clampPanel("galleryHeight", n) };
@@ -265,13 +318,24 @@ export const useLayoutStore = create<State>((set, get) => ({
     set({ panelSizes: next });
     persistPanelSizes(next);
   },
-  setTimelineHeight(n) {
-    const next = { ...get().panelSizes, timelineHeight: clampPanel("timelineHeight", n) };
+  setQueueWidth(n) {
+    const next = { ...get().panelSizes, queueWidth: clampPanel("queueWidth", n) };
     set({ panelSizes: next });
     persistPanelSizes(next);
   },
-  setQueueWidth(n) {
-    const next = { ...get().panelSizes, queueWidth: clampPanel("queueWidth", n) };
+  setDeliverPreviewHeight(n) {
+    const next = {
+      ...get().panelSizes,
+      deliverPreviewHeight: clampPanel("deliverPreviewHeight", n),
+    };
+    set({ panelSizes: next });
+    persistPanelSizes(next);
+  },
+  setDeliverEditHeight(n) {
+    const next = {
+      ...get().panelSizes,
+      deliverEditHeight: clampPanel("deliverEditHeight", n),
+    };
     set({ panelSizes: next });
     persistPanelSizes(next);
   },

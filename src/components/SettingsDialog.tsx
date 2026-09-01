@@ -4,25 +4,23 @@ import { cmd } from "../lib/tauri";
 import { pickFile, showMessage } from "../lib/dialog";
 import { applyColors, COLOR_KEYS, DEFAULT_COLORS } from "../lib/colors";
 import { recoverOrphans } from "../lib/recovery";
-import { fetchFalPrices } from "../lib/falPrices";
 import { checkForUpdate } from "../lib/updater";
 import { pushLog } from "../stores/logStore";
-import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { invalidateConfigCache } from "../lib/metadataCache";
 import { ensureRefLifecycleRule, TOS_DEFAULTS } from "../lib/providers/tos";
+import { Field } from "./Field";
 import { ModalDialog } from "./ModalDialog";
 import {
   DEFAULT_CONFIG,
   DEFAULT_MAX_CONCURRENT_JOBS,
   type ColorOverrides,
   type Config,
-  type EnumParam,
   type FalLifecycle,
 } from "../lib/types";
 
-const TABS = ["General", "Appearance", "APIs", "Costs"] as const;
+const TABS = ["General", "Appearance", "APIs"] as const;
 type Tab = (typeof TABS)[number];
 
 const FAL_LIFECYCLE_OPTIONS: { value: "" | FalLifecycle; label: string }[] = [
@@ -74,119 +72,17 @@ export function SettingsDialog({ onClose }: Props) {
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
   const [orphanStatus, setOrphanStatus] = useState<string | null>(null);
-  const [pricesBusy, setPricesBusy] = useState(false);
-  const [pricesStatus, setPricesStatus] = useState<string | null>(null);
-  const pricesFetchedAt = usePricesStore((s) => s.fetchedAt);
-  const prices = usePricesStore((s) => s.prices);
-  const pricesCount = usePricesStore((s) => Object.keys(s.prices).length);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const setPendingUpdate = useUpdateStore((s) => s.setPendingUpdate);
-  const modelEntries = useModelsStore((s) => s.entries);
-  const [costProvider, setCostProvider] = useState<string>("fal");
-  const [priceTableHeight, setPriceTableHeight] = useState(256);
 
   const currentColors = useMemo<Required<ColorOverrides>>(
     () => ({ ...DEFAULT_COLORS, ...(config.colors ?? {}) }),
     [config.colors],
   );
-
-  const providers = useMemo<string[]>(() => {
-    const set = new Set<string>(modelEntries.map((e) => e.node.provider ?? "fal"));
-    return [...set].sort();
-  }, [modelEntries]);
-
-  useEffect(() => {
-    if (providers.length > 0 && !providers.includes(costProvider)) {
-      setCostProvider(providers[0]);
-    }
-  }, [providers, costProvider]);
-
-  const modelsForProvider = useMemo(
-    () =>
-      modelEntries
-        .filter((e) => (e.node.provider ?? "fal") === costProvider)
-        .sort((a, b) => a.node.name.localeCompare(b.node.name)),
-    [modelEntries, costProvider],
-  );
-
-  // One row per model, or one row per resolution option for models whose
-  // cost varies by resolution — fal's pricing API only ever returns one flat
-  // price per model, so a resolution split only ever affects the override.
-  type PriceRow = {
-    key: string;
-    name: string;
-    endpoint: string;
-    isVideo: boolean;
-    resolution: string | null;
-  };
-  const priceRows = useMemo<PriceRow[]>(() => {
-    const rows: PriceRow[] = [];
-    for (const e of modelsForProvider) {
-      const resParam = e.node.parameters.find(
-        (p): p is EnumParam => p.type === "enum" && p.name === "resolution",
-      );
-      const isVideo = e.node.kind === "video";
-      if (resParam && resParam.options.length > 0) {
-        for (const r of resParam.options) {
-          rows.push({
-            key: `${e.node.id}::${r}`,
-            name: e.node.name,
-            endpoint: e.node.endpoint,
-            isVideo,
-            resolution: r,
-          });
-        }
-      } else {
-        rows.push({
-          key: e.node.id,
-          name: e.node.name,
-          endpoint: e.node.endpoint,
-          isVideo,
-          resolution: null,
-        });
-      }
-    }
-    return rows;
-  }, [modelsForProvider]);
-
-  function overrideKeyFor(row: { endpoint: string; resolution: string | null }): string {
-    return row.resolution ? `${row.endpoint}::${row.resolution}` : row.endpoint;
-  }
-
-  // Self-contained drag session: onMove/onUp close over startY/startHeight
-  // directly rather than a ref, so add/removeEventListener always operate on
-  // the exact same function instances for this one drag.
-  function startPriceTableResize(e: React.MouseEvent) {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startHeight = priceTableHeight;
-    function onMove(ev: MouseEvent) {
-      setPriceTableHeight(Math.min(600, Math.max(120, startHeight + (ev.clientY - startY))));
-    }
-    function onUp() {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
-
-  function setPriceOverride(overrideKey: string, raw: string) {
-    setConfig((c) => {
-      const next = { ...(c.priceOverrides ?? {}) };
-      if (raw.trim() === "") {
-        delete next[overrideKey];
-      } else {
-        const n = parseFloat(raw);
-        if (Number.isFinite(n)) next[overrideKey] = n;
-      }
-      return { ...c, priceOverrides: next };
-    });
-  }
 
   useEffect(() => {
     void (async () => {
@@ -270,47 +166,6 @@ export function SettingsDialog({ onClose }: Props) {
     }
   }
 
-  async function fetchPrices() {
-    if (pricesBusy) return;
-    if (!falKey.trim()) {
-      setPricesStatus("fal API key not configured — enter it in the APIs tab above.");
-      return;
-    }
-    setPricesBusy(true);
-    setPricesStatus("Fetching…");
-    try {
-      const falEntries = useModelsStore
-        .getState()
-        .entries.filter((e) => (e.node.provider ?? "fal") === "fal");
-      const unique = [...new Set(falEntries.map((e) => e.node.endpoint))];
-
-      const prices = await fetchFalPrices(unique, falKey);
-      const fetchedAt = new Date().toISOString();
-
-      // Persist immediately into the on-disk config (merged into a fresh
-      // load, NOT the dialog's edited copy — Cancel must not lose prices,
-      // and fetching must not silently commit unsaved dialog edits).
-      const onDisk = (await cmd.config_load().catch(() => null)) ?? DEFAULT_CONFIG;
-      await cmd.config_save({
-        ...onDisk,
-        falPrices: prices,
-        falPricesFetchedAt: fetchedAt,
-      });
-      usePricesStore.getState().setPrices(prices, fetchedAt);
-      // Keep the dialog's copy in sync so a later Save doesn't revert them.
-      setConfig((c) => ({
-        ...c,
-        falPrices: prices,
-        falPricesFetchedAt: fetchedAt,
-      }));
-      const pricedCount = unique.filter((e) => e in prices).length;
-      setPricesStatus(`${pricedCount} of ${unique.length} fal models priced.`);
-    } catch (e) {
-      setPricesStatus(`Error: ${String(e)}`);
-    } finally {
-      setPricesBusy(false);
-    }
-  }
 
   // Live-preview color edits — only after config has loaded to avoid wiping current colors on mount.
   useEffect(() => {
@@ -378,9 +233,20 @@ export function SettingsDialog({ onClose }: Props) {
       await cmd.provider_key_set("tos_sk", sk);
       await cmd.provider_key_set("turso_url", tursoUrl.trim());
       await cmd.provider_key_set("turso_token", tursoToken.trim());
-      await cmd.config_save(config);
+      // Pricing lives on AUDIT now and writes straight to disk, so `config`
+      // — loaded when this dialog opened — can be holding stale price fields
+      // by the time Save runs. Take those three back off disk rather than
+      // writing our copy over a newer one.
+      const fresh = await cmd.config_load().catch(() => null);
+      const merged: Config = {
+        ...config,
+        falPrices: fresh?.falPrices ?? config.falPrices,
+        falPricesFetchedAt: fresh?.falPricesFetchedAt ?? config.falPricesFetchedAt,
+        priceOverrides: fresh?.priceOverrides ?? config.priceOverrides,
+      };
+      await cmd.config_save(merged);
       invalidateConfigCache();
-      usePricesStore.getState().setOverrides(config.priceOverrides ?? {});
+      usePricesStore.getState().setOverrides(merged.priceOverrides ?? {});
       setOriginalColors(config.colors);
 
       // Best-effort: install/refresh the TOS ref-expiry lifecycle rule when
@@ -794,138 +660,6 @@ export function SettingsDialog({ onClose }: Props) {
           </>
         )}
 
-        {tab === "Costs" && (
-          <>
-            <Field label="fal.ai prices">
-              <div className="flex gap-1 items-center">
-                <button
-                  type="button"
-                  className="px-2 bg-bg text-xs disabled:opacity-50"
-                  onClick={() => void fetchPrices()}
-                  disabled={pricesBusy}
-                >
-                  {pricesBusy ? "Fetching…" : "Fetch prices"}
-                </button>
-                <span className="text-xs text-dim">
-                  {pricesCount > 0
-                    ? `${pricesCount} cached${
-                        pricesFetchedAt
-                          ? ` · ${new Date(pricesFetchedAt).toLocaleString()}`
-                          : ""
-                      }`
-                    : "no prices cached"}
-                </span>
-              </div>
-              <div className="text-xs text-dim mt-1">
-                {pricesStatus ??
-                  "Pulls per-model prices from fal's official pricing API (requires the fal API key, set above)."}
-              </div>
-            </Field>
-
-            <Field label="Model prices">
-              <div className="flex items-center gap-2">
-                <select
-                  value={costProvider}
-                  onChange={(e) => setCostProvider(e.currentTarget.value)}
-                  className="bg-inset px-2 py-1 text-xs font-mono"
-                >
-                  {providers.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-xs text-dim">
-                  {priceRows.length} row{priceRows.length === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="text-xs text-dim mt-1">
-                <span className="text-accent">Known price</span> comes straight
-                from fal's pricing API (fal only) — one flat rate per model, so
-                every resolution row of the same model shows the same value.
-                Override is the only way to price a specific resolution
-                differently, and always wins for cost estimates and exports
-                when set. Video models are billed per second — enter a $/sec
-                rate, not a flat price. A few models (FLUX, Topaz image
-                upscale) are billed per megapixel — their actual cost is
-                measured from the real output size at generation time, not
-                from this table; an override for one of these is still a
-                flat $ amount, not a $/megapixel rate.
-              </div>
-              <div
-                className="overflow-y-auto thin-scroll mt-1"
-                style={{ height: priceTableHeight }}
-              >
-                <table className="w-full table-fixed text-xs font-mono">
-                  <colgroup>
-                    <col className="w-[34%]" />
-                    <col className="w-[44%]" />
-                    <col className="w-[22%]" />
-                  </colgroup>
-                  <thead>
-                    <tr className="text-dim text-left">
-                      <th className="font-normal pb-1">Model</th>
-                      <th className="font-normal pb-1">Known price</th>
-                      <th className="font-normal pb-1">Override</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {priceRows.map((row) => {
-                      const overrideKey = overrideKeyFor(row);
-                      const known = prices[overrideKey] ?? prices[row.endpoint];
-                      const override = config.priceOverrides?.[overrideKey];
-                      return (
-                        <tr key={row.key} className="border-t border-dim/30">
-                          <td className="py-1 pr-2 truncate" title={row.endpoint}>
-                            {row.name}
-                            {row.resolution && (
-                              <span className="text-dim"> · {row.resolution}</span>
-                            )}
-                          </td>
-                          <td className="py-1 pr-2 text-accent truncate" title={known}>
-                            {known ?? "—"}
-                          </td>
-                          <td className="py-1">
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="number"
-                                step="0.001"
-                                min={0}
-                                value={override ?? ""}
-                                onChange={(ev) =>
-                                  setPriceOverride(overrideKey, ev.currentTarget.value)
-                                }
-                                placeholder="—"
-                                className="w-20 bg-inset px-1 py-0.5 text-xs font-mono text-right"
-                              />
-                              <span className="text-dim">
-                                {row.isVideo ? "$/sec" : "$"}
-                              </span>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {priceRows.length === 0 && (
-                      <tr>
-                        <td colSpan={3} className="text-dim py-2">
-                          No models for this provider.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div
-                onMouseDown={startPriceTableResize}
-                className="h-2 mt-0.5 cursor-row-resize flex items-center justify-center group"
-                title="Drag to resize"
-              >
-                <div className="w-8 h-1 rounded-full bg-dim/40 group-hover:bg-accent" />
-              </div>
-            </Field>
-          </>
-        )}
       </div>
 
       <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
@@ -941,23 +675,6 @@ export function SettingsDialog({ onClose }: Props) {
         </button>
       </div>
     </ModalDialog>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-        {label}
-      </div>
-      {children}
-    </div>
   );
 }
 
