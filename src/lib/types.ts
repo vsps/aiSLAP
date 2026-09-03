@@ -756,6 +756,92 @@ export type ReconcileReport = {
   tagsSynced: number;
 };
 
+// ---------- Shared price sheet (pricing_pull / pricing_push) ----------
+
+/** The team's price sheet as held in Turso. Mirrors the Rust `SharedPricing`.
+ *  Null from `pricing_pull` means no Turso is configured — the app stays on
+ *  its local `config.json` cache. */
+export type SharedPricing = {
+  /** Endpoint → fal price string, e.g. `"$0.05 per megapixel"`. */
+  prices: Record<string, string>;
+  /** `endpoint` or `endpoint::resolution` → dollars. */
+  overrides: Record<string, number>;
+  /** Newest `updatedAt` across every row — the sheet's age. */
+  updatedAt?: string;
+  updatedBy?: string;
+};
+
+/** One rate read back out of real spend. Mirrors the Rust `DerivedPrice`. */
+export type DerivedPrice = {
+  endpoint: string;
+  /** Absent when the generations recorded no resolution — the proposal is
+   *  then for the flat endpoint key. */
+  resolution?: string;
+  /** The override key this would write to. */
+  key: string;
+  kind: "image" | "video" | "model3d" | "other";
+  /** $/sec for video (how an override is applied to video), else $/output. */
+  rate: number;
+  /** Reconciled generations behind the figure. One sample is a data point,
+   *  not a price. */
+  samples: number;
+  min: number;
+  max: number;
+  totalCostUsd: number;
+};
+
+/** Mirrors the Rust `DerivedPricing`. */
+export type DerivedPricing = {
+  prices: DerivedPrice[];
+  /** `remote` = the team's shared index; `local` = this machine's projects. */
+  source: "remote" | "local";
+  /** Priced rows skipped for not being reconciled — why the table is thin. */
+  unreconciled: number;
+  /** Reconciled but unusable: a video with no recorded duration, say. */
+  unusable: number;
+};
+
+// ---------- File lookup (asset_trace) ----------
+
+/** One index row that describes the file being traced. Mirrors the Rust
+ *  `TraceMatch`. */
+export type TraceMatch = {
+  /** `assetId` and `contentHash` are proof of identity; `fileName` is a
+   *  same-name guess, only ever returned when neither identity matched. */
+  matchedBy: "assetId" | "contentHash" | "fileName";
+  /** `local` — an index file on this machine; `remote` — the shared Turso db. */
+  source: "local" | "remote";
+  asset: AssetRecord;
+  tags: string[];
+  refs: AssetRefRecord[];
+  projectTitle?: string;
+  /** Absent for a project this machine has never opened. */
+  projectRoot?: string;
+  originalPath?: string;
+  /** Undefined (not false) when `projectRoot` is unknown. */
+  originalExists?: boolean;
+};
+
+/** What `asset_trace` could work out about a loose file. Mirrors the Rust
+ *  `AssetTrace`. */
+export type AssetTrace = {
+  path: string;
+  fileName: string;
+  sizeBytes: number;
+  /** Hashed from the bytes on disk at lookup time. */
+  contentHash?: string;
+  embeddedAssetId?: string;
+  embeddedProjectId?: string;
+  sidecarFound: boolean;
+  sidecarAssetId?: string;
+  /** Disagreeing with `contentHash` means the bytes changed after it was written. */
+  sidecarContentHash?: string;
+  matches: TraceMatch[];
+  indexesSearched: number;
+  remoteSearched: boolean;
+  remoteError?: string;
+};
+
 // ---------- Cost aggregation (project_cost_scan) ----------
 
 export type ShotCost = {

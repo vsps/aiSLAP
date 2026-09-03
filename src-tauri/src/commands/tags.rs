@@ -171,6 +171,7 @@ fn record_from_sidecar(
             .map(String::from),
         settings_json: obj.get("settings").map(|v| v.to_string()),
         cost_usd: obj.get("costUsd").and_then(|v| v.as_f64()),
+        cost_usd_actual: obj.get("costUsdActual").and_then(|v| v.as_bool()),
         created_at: obj
             .get("timestamp")
             .and_then(|v| v.as_str())

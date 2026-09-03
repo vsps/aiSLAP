@@ -6,6 +6,7 @@ import { showMessage } from "../lib/dialog";
 import { FalProvider } from "../lib/providers/fal";
 import { FullscreenModal } from "./FullscreenModal";
 import type { SamBox, SamPoint } from "../lib/types";
+import { Btn } from "./Btn";
 
 type Props = {
   sourcePath: string;
@@ -335,7 +336,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
                   {p.label === 1 ? "fg" : "bg"}
                 </button>
                 {isVideo && <span className="opacity-50" title="frame">f{p.frame_index ?? 0}</span>}
-                <button className="px-1 text-red-500 ml-auto" title="delete" onClick={() => setPts((a) => a.filter((_, j) => j !== i))}>×</button>
+                <Btn className="ml-auto" title="delete" onClick={() => setPts((a) => a.filter((_, j) => j !== i))}>×</Btn>
               </div>
             ))}
             {bxs.map((b, i) => (
@@ -346,7 +347,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
                 <NumCell value={b.x_max} onChange={(v) => setBxs((a) => a.map((q, j) => (j === i ? { ...q, x_max: v } : q)))} />
                 <NumCell value={b.y_max} onChange={(v) => setBxs((a) => a.map((q, j) => (j === i ? { ...q, y_max: v } : q)))} />
                 {isVideo && <span className="opacity-50" title="frame">f{b.frame_index ?? 0}</span>}
-                <button className="px-1 text-red-500 ml-auto" title="delete" onClick={() => setBxs((a) => a.filter((_, j) => j !== i))}>×</button>
+                <Btn className="ml-auto" title="delete" onClick={() => setBxs((a) => a.filter((_, j) => j !== i))}>×</Btn>
               </div>
             ))}
             {pts.length === 0 && bxs.length === 0 && (
@@ -358,25 +359,31 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
 
       {/* Toolbar */}
       <div className="bg-panel text-text p-2 flex items-center gap-2 flex-wrap">
-        <button
+        <Btn
+          variant="toggle"
+          active={arm === "point"}
           onClick={() => setArm((a) => (a === "point" ? null : "point"))}
-          className={`text-xs px-3 py-0.5 border ${arm === "point" ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
         >
           + point
-        </button>
+        </Btn>
+        {/* Foreground/background stays colour-coded rather than accent: the
+            green/red is what tells you which kind of point you are placing,
+            and it matches the dots drawn on the canvas. */}
         <button
+          type="button"
           onClick={() => setNewLabel((l) => (l === 1 ? 0 : 1))}
-          className={`text-xs px-2 py-0.5 border ${newLabel === 1 ? "border-green-500 text-green-400" : "border-red-500 text-red-400"}`}
+          className={`rounded-full text-xs px-2.5 py-[2px] border ${newLabel === 1 ? "border-green-500 text-green-400" : "border-red-500 text-red-400"}`}
           title="label for new points"
         >
           {newLabel === 1 ? "fg" : "bg"}
         </button>
-        <button
+        <Btn
+          variant="toggle"
+          active={arm === "box"}
           onClick={() => setArm((a) => (a === "box" ? null : "box"))}
-          className={`text-xs px-3 py-0.5 border ${arm === "box" ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
         >
           + box
-        </button>
+        </Btn>
         {isVideo && (
           <span className="text-xs text-dim flex items-center gap-1">
             <span>frame {frame}</span>
@@ -392,33 +399,21 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
             <span className="opacity-50">fps</span>
           </span>
         )}
-        <button
-          onClick={() => { setPts([]); setBxs([]); }}
-          disabled={pts.length === 0 && bxs.length === 0}
-          className="text-xs px-2 py-0.5 text-red-500 hover:underline disabled:opacity-40 disabled:no-underline"
-        >
+        <Btn onClick={() => { setPts([]); setBxs([]); }} disabled={pts.length === 0 && bxs.length === 0}>
           clear
-        </button>
+        </Btn>
         <div className="flex-1" />
         {previewError && <span className="text-xs text-red-400 max-w-[200px] truncate" title={previewError}>{previewError}</span>}
-        <button
-          onClick={() => void runPreview()}
-          disabled={previewing}
-          className="text-xs px-3 py-0.5 border border-dim text-dim hover:border-text hover:text-text disabled:opacity-40"
-          title="Run SAM on the current image/frame + prompts and overlay the mask"
-        >
+        <Btn onClick={() => void runPreview()} disabled={previewing} title="Run SAM on the current image/frame + prompts and overlay the mask">
           {previewing ? "previewing…" : `preview (${pts.length}pt ${bxs.length}bx)`}
-        </button>
+        </Btn>
         {maskUrl && (
-          <button
-            onClick={() => { setMaskUrl(null); setPreviewFrame(null); }}
-            className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text"
-          >
+          <Btn onClick={() => { setMaskUrl(null); setPreviewFrame(null); }}>
             clear preview
-          </button>
+          </Btn>
         )}
-        <button onClick={() => onSave(pts, bxs)} className="text-xs px-3 py-0.5 bg-accent text-text hover:opacity-80">save</button>
-        <button onClick={onClose} className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text">cancel</button>
+        <Btn onClick={() => onSave(pts, bxs)}>save</Btn>
+        <Btn onClick={onClose}>cancel</Btn>
       </div>
     </FullscreenModal>
   );

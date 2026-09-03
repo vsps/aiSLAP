@@ -7,6 +7,20 @@ export function formatTime(iso: string): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+/** "12.4 MB" from a byte count. Decimal units, matching what Explorer and
+ *  every provider's file-size column say. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+}
+
 /** "M:SS.mmm" from a duration in seconds, for scrub/trim readouts. Clamps
  *  negatives and non-finite input to zero so a half-loaded video can't put
  *  "NaN:NaN" on screen. */

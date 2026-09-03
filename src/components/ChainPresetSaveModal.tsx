@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChainPresetLink } from "../lib/types";
 import { usePresetsStore } from "../stores/presetsStore";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
 
 type Props = {
   links: ChainPresetLink[];
@@ -71,22 +72,12 @@ export function ChainPresetSaveModal({ links, onClose }: Props) {
       />
       {error && <div className="text-xs text-red-500">{error}</div>}
       <div className="flex justify-end gap-2 mt-1">
-        <button
-          type="button"
-          className="px-2 py-[2px] text-sm hover:bg-accent"
-          onClick={onClose}
-          disabled={busy}
-        >
+        <Btn onClick={onClose} disabled={busy}>
           Cancel
-        </button>
-        <button
-          type="button"
-          className="px-2 py-[2px] text-sm bg-accent hover:opacity-80 disabled:opacity-40"
-          onClick={() => void confirm()}
-          disabled={busy || !name.trim()}
-        >
+        </Btn>
+        <Btn onClick={() => void confirm()} disabled={busy || !name.trim()}>
           Save
-        </button>
+        </Btn>
       </div>
     </ModalDialog>
   );

@@ -82,11 +82,10 @@ export function ClipMediaPicker({
       style={style}
     >
       <div className="flex items-center px-2 py-1 text-xs opacity-70">
-        <span>Pick clip media</span>
-        <span className="flex-1" />
+        Pick clip media
         <button
           type="button"
-          className="text-dim hover:text-text"
+          className="ml-auto text-dim hover:text-text"
           onClick={() => {
             onPick(null);
             onClose();

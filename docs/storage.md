@@ -195,6 +195,35 @@ cannot carry one still gets an id in its sidecar.
   fresh uuid. That is what embedding an id is *for*: minting a new one would orphan the
   existing index row and every tag on it. Reported as `identityRecovered`.
 
+### Tracing a loose file
+
+`db::trace::asset_trace` (AUDIT → File lookup) is the read-only counterpart: given a
+media file that turned up *somewhere* — moved off the share, handed over by an editor,
+with or without its sidecar — it answers which project, which generation and whose.
+
+It is the one query in `db/` that is **deliberately not scoped to a project**, because
+the premise is a file that may not belong to the one currently open: it walks every
+`.db` in `%APPDATA%/aiSLAP/db` plus the remote, and reports which index each row came
+from.
+
+Three passes, in descending order of confidence:
+
+| Pass | Key | Strength |
+|---|---|---|
+| 1 | sidecar `assetId`, then the id embedded in the media | proof |
+| 2 | content hash — of the bytes *now*, not the sidecar's copy | proof, and deliberately unlimited: a copy keeps its source's bytes, so one hash legitimately matches several assets |
+| 3 | file name | a guess — **only run when 1 and 2 matched nothing**, labelled `fileName` in the result so the UI can say so |
+
+A sidecar hash that disagrees with the bytes is reported rather than hidden: it means
+the file was edited in place, which is exactly the case reconcile no longer notices.
+
+**`projects.root_path` is local-only.** Added by `ensure_column` in `local_db` and
+written by `sync_outbox`, never by `upsert_project_row` — the remote `projects` table
+must not carry it, since the same project is mounted at a different path on every
+machine. It is what lets a match name a folder the user can open instead of a bare
+project id, including for a row that only exists remotely: a project this machine has
+opened resolves locally regardless of which index answered.
+
 ### What reconcile does, and what it deliberately misses
 
 `project_reconcile` runs on every project open. It:
@@ -274,6 +303,42 @@ Notes that are easy to get wrong:
 - **Batch writes are batched.** `assets_relink`, `assets_cost_update`, `assets_ingest`
   and `asset_tags_apply` each take a slice and run in one transaction. The per-row
   variants they replaced opened the database once per row.
+
+## The shared price sheet
+
+`db/pricing.rs` — the one table in the remote database that is **not about
+assets at all**, and the only part of `db/` with no local counterpart. A price
+belongs to an endpoint, not to a project, so `pricing_pull`/`pricing_push`
+open the remote straight from `turso_config()` and never touch a project index.
+
+```
+pricing(scope, key, value, updated_at, updated_by)   PK (scope, key)
+  scope "fal_price"  key <endpoint>                  value "$0.014 per units"
+  scope "override"   key <endpoint>[::<resolution>]  value "0.303"
+```
+
+- **The shared sheet wins.** `config.json` keeps its `falPrices` /
+  `priceOverrides` copy purely as the offline cache: it is what seeds
+  `pricesStore` at startup, and all there is when no Turso is configured.
+  `lib/sharedPricing.ts` pulls on top of it (fire-and-forget, so startup never
+  waits on the network) and merges per key, so a price only one machine has
+  fetched isn't lost to someone else's shorter sheet.
+- **Last write wins, per row.** A push is an upsert of the rows it was handed —
+  never a whole-table replace, which would let a stale copy delete a colleague's
+  override. The corollary: **clearing an override is its own delete**
+  (`pricing_forget`), because an absence in a pushed map is indistinguishable
+  from a key the pusher never had.
+- Written on: a price fetch (the whole fetched table), an override edit (that
+  one row), a derive-and-apply, and never implicitly. `updated_by` is the OS
+  username, same source as `assets.generated_by`.
+
+**`assets.cost_usd_actual`** records whether a row's cost came from fal's billing
+ledger or from our own price table. Added by `ensure_column` on both the local and
+remote schemas, so existing rows read NULL — correct, since nothing had reconciled
+them, and `project_reconcile` restores the real value from the sidecar's
+`costUsdActual`, which has carried it all along. It exists because
+`db::derive` may only average real invoices; see
+[generation-pipeline.md](generation-pipeline.md) § Deriving prices from spend.
 
 ## Outbox and Turso sync
 

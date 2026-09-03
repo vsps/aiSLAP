@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useGenerationStore } from "../stores/generationStore";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
 
 export function ErrorPopup() {
   const errorPopup = useGenerationStore((s) => s.errorPopup);
@@ -34,18 +35,12 @@ export function ErrorPopup() {
         {errorPopup}
       </pre>
       <div className="px-4 py-2 flex justify-end gap-2">
-        <button
-          className="bg-dim text-text px-3 py-1"
-          onClick={copy}
-        >
+        <Btn onClick={copy}>
           {copied ? "Copied" : "Copy"}
-        </button>
-        <button
-          className="bg-accent text-text px-3 py-1"
-          onClick={() => setError(null)}
-        >
+        </Btn>
+        <Btn onClick={() => setError(null)}>
           Dismiss
-        </button>
+        </Btn>
       </div>
     </ModalDialog>
   );

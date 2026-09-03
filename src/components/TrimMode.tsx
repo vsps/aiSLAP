@@ -11,6 +11,7 @@ import { getConfigCached, invalidateImageMetadata } from "../lib/metadataCache";
 import { identifyMedia, recordAsset } from "../lib/generation/output";
 import { FullscreenModal } from "./FullscreenModal";
 import { IconBtn } from "./IconBtn";
+import { Btn } from "./Btn";
 
 type Props = {
   image: GalleryImage;
@@ -394,20 +395,12 @@ export function TrimMode({ image, onSave, onCancel }: Props) {
           {Math.max(0, outSec - inSec).toFixed(3)}s
         </span>
         <div className="w-px h-4 bg-dim/40 mx-1" />
-        <button
-          title="Set in point at playhead (i)"
-          onClick={() => markIn(cur)}
-          className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text"
-        >
+        <Btn title="Set in point at playhead (i)" onClick={() => markIn(cur)}>
           set in
-        </button>
-        <button
-          title="Set out point at playhead (o)"
-          onClick={() => markOut(cur)}
-          className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text"
-        >
+        </Btn>
+        <Btn title="Set out point at playhead (o)" onClick={() => markOut(cur)}>
           set out
-        </button>
+        </Btn>
         <input
           type="number"
           step={0.001}
@@ -442,21 +435,12 @@ export function TrimMode({ image, onSave, onCancel }: Props) {
         {previewError && (
           <span className="text-xs text-bad">{previewError}</span>
         )}
-        <div className="flex-1" />
-        <button
-          onClick={() => void save()}
-          disabled={!canSave}
-          className="text-xs px-3 py-0.5 bg-accent text-text hover:opacity-80 disabled:opacity-40"
-        >
+        <Btn className="ml-auto" onClick={() => void save()} disabled={!canSave}>
           {saving ? "trimming…" : "trim & save"}
-        </button>
-        <button
-          onClick={onCancel}
-          disabled={saving}
-          className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text disabled:opacity-40"
-        >
+        </Btn>
+        <Btn onClick={onCancel} disabled={saving}>
           cancel
-        </button>
+        </Btn>
       </div>
     </FullscreenModal>
   );

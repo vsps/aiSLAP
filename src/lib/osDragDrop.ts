@@ -6,6 +6,7 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useSessionStore } from "../stores/sessionStore";
 import { useGenerationStore } from "../stores/generationStore";
+import { useAssetTraceStore } from "../stores/assetTraceStore";
 import { classifyMedia } from "./media";
 import { cmd } from "./tauri";
 import { showMessage } from "./dialog";
@@ -15,6 +16,7 @@ import { enrichRefIdentity } from "./actions";
 export type OsDragTarget =
   | { kind: "column"; version: string; isSrc: boolean; destDir: string }
   | { kind: "ref" }
+  | { kind: "trace" }
   | null;
 
 let target: OsDragTarget = null;
@@ -40,6 +42,11 @@ function resolveTarget(x: number, y: number): OsDragTarget {
   if (!el) return null;
   const refPanel = (el as HTMLElement).closest<HTMLElement>("[data-ref-drop]");
   if (refPanel) return { kind: "ref" };
+  // AUDIT's file lookup. Read-only — it identifies the dropped file, it never
+  // copies or moves it — so unlike the two targets below it has no shot open
+  // to require and works with no project loaded at all.
+  const traceZone = (el as HTMLElement).closest<HTMLElement>("[data-trace-drop]");
+  if (traceZone) return { kind: "trace" };
   const col = (el as HTMLElement).closest<HTMLElement>("[data-column-version]");
   if (col) {
     const version = col.dataset.columnVersion ?? "";
@@ -138,7 +145,11 @@ export function installOsDragDropListener(): void {
         } else if (p.type === "drop") {
           const hit = resolveTarget(p.position.x, p.position.y);
           setTarget(null);
-          if (hit?.kind === "ref") {
+          if (hit?.kind === "trace") {
+            // One file: the panel answers a question about a specific file,
+            // and a multi-file drop has no sensible "which one".
+            if (p.paths[0]) await useAssetTraceStore.getState().run(p.paths[0]);
+          } else if (hit?.kind === "ref") {
             await ingestIntoRefPanel(p.paths);
           } else if (hit?.kind === "column") {
             await ingestIntoColumn(

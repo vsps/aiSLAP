@@ -4,6 +4,8 @@ import {
   useEffectiveTagDefs,
   useTagsStore,
 } from "../stores/tagsStore";
+import { Btn } from "./Btn";
+import { Chip } from "./Chip";
 import { ToggleGroup } from "./ToggleGroup";
 import { Icon } from "../lib/icon";
 import type { TagFilterMode } from "../lib/types";
@@ -44,21 +46,16 @@ export function TagFilterBar() {
           {users.map((u) => {
             const on = activeUserFilter != null && tagsEqual(activeUserFilter, u);
             return (
-              <button
+              <Chip
                 key={u}
-                type="button"
+                active={on}
                 onClick={() => setUserFilter(u)}
                 title={
                   on ? `Stop filtering by user "${u}"` : `Filter by user "${u}"`
                 }
-                className={`px-1.5 py-[1px] text-xs whitespace-nowrap border ${
-                  on
-                    ? "bg-accent text-bg border-accent"
-                    : "bg-bg border-dim hover:bg-panel"
-                }`}
               >
                 {u}
-              </button>
+              </Chip>
             );
           })}
         </div>
@@ -69,25 +66,17 @@ export function TagFilterBar() {
           {defs.map((d) => {
             const on = isOn(d.name);
             return (
-              <button
+              <Chip
                 key={d.name}
-                type="button"
+                color={d.color}
+                active={on}
                 onClick={() => toggleFilter(d.name)}
                 title={
                   on ? `Stop filtering by "${d.name}"` : `Filter by "${d.name}"`
                 }
-                className={`flex items-center gap-1 px-1.5 py-[1px] text-xs whitespace-nowrap border ${
-                  on
-                    ? "bg-accent text-bg border-accent"
-                    : "bg-bg border-dim hover:bg-panel"
-                }`}
               >
-                <span
-                  className="w-[6px] h-[6px] shrink-0"
-                  style={{ background: d.color }}
-                />
                 {d.name}
-              </button>
+              </Chip>
             );
           })}
           {activeFilter.length > 1 && (
@@ -99,14 +88,13 @@ export function TagFilterBar() {
             />
           )}
           {activeFilter.length > 0 && (
-            <button
-              type="button"
+            <Btn
               onClick={clearFilter}
               title="Clear tag filter"
-              className="px-1.5 py-[1px] text-xs bg-bg hover:bg-panel shrink-0"
+              className="shrink-0"
             >
               CLEAR
-            </button>
+            </Btn>
           )}
         </div>
       )}

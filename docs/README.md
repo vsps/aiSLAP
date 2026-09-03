@@ -26,6 +26,7 @@ Read in this order:
 | [storage.md](storage.md) | touch paths, sidecars, asset identity, or the SQLite index |
 | [prism.md](prism.md) | touch anything path-shaped in a PRISM project |
 | [tags.md](tags.md) | touch tagging, filtering, or the tag view |
+| [styling.md](styling.md) | add a button, toggle, tag chip, or colour token |
 | [timeline.md](timeline.md) | touch the timeline strip, playback, or either export path |
 | [model.schema.json](model.schema.json) | (not prose — point your editor at it from a model file) |
 
@@ -53,5 +54,6 @@ release cycle, and because a doc that contradicts the code is worse than no doc.
 ## Keeping them true
 
 If you change tags, PRISM paths, the model JSON shape, the provider interface, the DB
-schema, or the generation pipeline, **update the matching file in the same PR**. The
+schema, the generation pipeline, or the colour tokens and control primitives,
+**update the matching file in the same PR**. The
 whole set is small enough to re-read in one sitting; keep it that way.

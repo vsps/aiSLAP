@@ -59,6 +59,48 @@ pub fn is_per_area_unit(unit: &str) -> bool {
         .is_match(unit)
 }
 
+/// ByteDance's video token divisor: their video models bill on
+/// `tokens = width * height * fps * duration / 1024`, and fal resells that
+/// verbatim. Mirrors TOKEN_DIVISOR in falPrices.ts.
+const TOKEN_DIVISOR: f64 = 1024.0;
+
+/// Tokens in one billed unit, or None when the unit isn't token-billed.
+///
+/// `"units"` is the ambiguous one: on an image or 3D output a fal "unit" is
+/// one output, but on a *video* output it is 1000 ByteDance tokens — so this
+/// is only ever consulted for video (see `per_item_price`, where the token
+/// branch precedes the flat one for exactly that reason). Mirrors
+/// tokensPerBilledUnit(); see the TS doc comment for where the 1000 comes
+/// from.
+pub fn tokens_per_billed_unit(unit: &str) -> Option<f64> {
+    static TOKENS: OnceLock<Regex> = OnceLock::new();
+    static UNITS: OnceLock<Regex> = OnceLock::new();
+    let tokens = TOKENS.get_or_init(|| Regex::new(r"(?i)^(?:(\d+)\s+)?tokens?\b").unwrap());
+    if let Some(caps) = tokens.captures(unit) {
+        return Some(match caps.get(1) {
+            Some(n) => n.as_str().parse().ok()?,
+            None => 1.0,
+        });
+    }
+    UNITS
+        .get_or_init(|| Regex::new(r"(?i)^units?\b").unwrap())
+        .is_match(unit)
+        .then_some(1000.0)
+}
+
+/// Frames in one billed unit ("16 frames" for sam-3 video), else None.
+/// Mirrors framesPerBilledUnit().
+pub fn frames_per_billed_unit(unit: &str) -> Option<f64> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let caps = RE
+        .get_or_init(|| Regex::new(r"(?i)^(?:(\d+)\s+)?frames?\b").unwrap())
+        .captures(unit)?;
+    Some(match caps.get(1) {
+        Some(n) => n.as_str().parse().ok()?,
+        None => 1.0,
+    })
+}
+
 /// Parse a `duration` setting value (already extracted to a plain string,
 /// e.g. "8", "8s") to seconds. Mirrors parseDurationSeconds(); non-numeric
 /// values (e.g. seedance-2's "auto") return None.
@@ -74,6 +116,7 @@ pub fn parse_duration_seconds(raw: &str) -> Option<f64> {
 /// Per-generation cost inputs beyond provider/endpoint — everything needed
 /// to resolve a per-resolution or per-second price. Mirrors CostContext in
 /// falPrices.ts.
+#[derive(Default)]
 pub struct CostContext<'a> {
     pub is_video: bool,
     pub duration_sec: Option<f64>,
@@ -83,6 +126,23 @@ pub struct CostContext<'a> {
     /// from a named size preset — `None` when unknown (e.g. not yet wired up
     /// for this call site, or the file's dimensions couldn't be read).
     pub megapixels: Option<f64>,
+    /// Coded frame size and frame rate of the output video, for token- and
+    /// frame-billed units. Measured with `video_info_probe`; no model in the
+    /// registry declares a frame rate, so there is no other source. `None`
+    /// leaves such a model unpriced rather than guessed.
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    pub fps: Option<f64>,
+}
+
+/// ByteDance video tokens for one output. Every factor must be known and
+/// positive — a guessed frame rate is a guessed invoice. Mirrors videoTokens().
+pub fn video_tokens(ctx: &CostContext) -> Option<f64> {
+    let (w, h, fps, dur) = (ctx.width?, ctx.height?, ctx.fps?, ctx.duration_sec?);
+    let all = [w, h, fps, dur];
+    all.iter()
+        .all(|n| n.is_finite() && *n > 0.0)
+        .then(|| w * h * fps * dur / TOKEN_DIVISOR)
 }
 
 /// Per-output price for one endpoint. A user-entered override always wins
@@ -119,6 +179,16 @@ pub fn per_item_price(
         .and_then(|r| prices.get(&format!("{endpoint}::{r}")))
         .or_else(|| prices.get(endpoint))?;
     let parsed = parse_fal_price(text)?;
+    // Video token billing is tested FIRST: "units" would otherwise be
+    // swallowed by is_per_item_unit's `unit` alternative and priced flat,
+    // which for Seedance 2.0 meant $0.014 a video instead of ~$1.50. An image
+    // or 3D output still takes the flat branch below, where "units" genuinely
+    // does mean one output.
+    if ctx.is_video {
+        if let Some(per_unit) = tokens_per_billed_unit(&parsed.unit) {
+            return video_tokens(ctx).map(|t| parsed.amount * t / per_unit);
+        }
+    }
     if is_per_item_unit(&parsed.unit) {
         return Some(parsed.amount);
     }
@@ -127,6 +197,13 @@ pub fn per_item_price(
     }
     if is_per_area_unit(&parsed.unit) {
         return ctx.megapixels.map(|mp| parsed.amount * mp);
+    }
+    // Frame-billed (sam-3 video: "$0.005 per 16 frames") — frame count from
+    // the same probe as the token math.
+    if let Some(per_unit) = frames_per_billed_unit(&parsed.unit) {
+        if let (Some(fps), Some(dur)) = (ctx.fps, ctx.duration_sec) {
+            return Some(parsed.amount * fps * dur / per_unit);
+        }
     }
     None
 }
@@ -163,12 +240,171 @@ mod tests {
         assert_eq!(parse_duration_seconds("auto"), None);
     }
 
+    // A `const` can't spread `Default::default()`, so this one stays spelled
+    // out in full.
     const NOT_VIDEO: CostContext = CostContext {
         is_video: false,
         duration_sec: None,
         resolution: None,
         megapixels: None,
+        width: None,
+        height: None,
+        fps: None,
     };
+
+    /// 720p / 24fps / 5s — the geometry the Seedance token formula was
+    /// checked against. 1280*720*24*5/1024 = 108,000 tokens.
+    fn seedance_720p_5s() -> CostContext<'static> {
+        CostContext {
+            is_video: true,
+            duration_sec: Some(5.0),
+            width: Some(1280.0),
+            height: Some(720.0),
+            fps: Some(24.0),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn video_units_are_thousand_token_blocks_not_flat() {
+        // The regression this whole branch exists for: "units" matches
+        // is_per_item_unit's `unit` alternative, so Seedance 2.0 priced flat
+        // at $0.014 a video instead of ~$1.50.
+        let mut prices = HashMap::new();
+        prices.insert(
+            "bytedance/seedance-2.0/text-to-video".to_string(),
+            "$0.014 per units".to_string(),
+        );
+        let overrides = HashMap::new();
+        let got = per_item_price(
+            Some("fal"),
+            "bytedance/seedance-2.0/text-to-video",
+            &prices,
+            &overrides,
+            &seedance_720p_5s(),
+        )
+        .unwrap();
+        // 108 kilotokens * $0.014. The real billed figure for this generation
+        // was $1.515, which is where the 1000-tokens-per-unit reading comes
+        // from — see tokens_per_billed_unit.
+        assert!((got - 1.512).abs() < 1e-9, "got {got}");
+    }
+
+    #[test]
+    fn thousand_tokens_unit_prices_the_same_way() {
+        let mut prices = HashMap::new();
+        prices.insert(
+            "bytedance/seedance-2.5/text-to-video".to_string(),
+            "$0.0214 per 1000 tokens".to_string(),
+        );
+        let overrides = HashMap::new();
+        let got = per_item_price(
+            Some("fal"),
+            "bytedance/seedance-2.5/text-to-video",
+            &prices,
+            &overrides,
+            &seedance_720p_5s(),
+        )
+        .unwrap();
+        assert!((got - 108.0 * 0.0214).abs() < 1e-9, "got {got}");
+    }
+
+    #[test]
+    fn units_stay_flat_for_non_video_outputs() {
+        // The other half of the ambiguity: for sam-3 / seedream / gpt-image a
+        // fal "unit" really is one output, and the user's own override for
+        // sam-3/3d-objects ($0.02) matches the fetched price exactly.
+        let mut prices = HashMap::new();
+        prices.insert(
+            "fal-ai/sam-3/3d-objects".to_string(),
+            "$0.02 per units".to_string(),
+        );
+        let overrides = HashMap::new();
+        assert_eq!(
+            per_item_price(
+                Some("fal"),
+                "fal-ai/sam-3/3d-objects",
+                &prices,
+                &overrides,
+                &NOT_VIDEO
+            ),
+            Some(0.02)
+        );
+    }
+
+    #[test]
+    fn token_billing_needs_every_factor_and_yields_none_without_them() {
+        let mut prices = HashMap::new();
+        prices.insert("vid".to_string(), "$0.014 per units".to_string());
+        let overrides = HashMap::new();
+        // No probe ran: duration alone can't produce a token count, and a
+        // guessed frame rate would be a guessed invoice.
+        let no_geometry = CostContext {
+            is_video: true,
+            duration_sec: Some(5.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            per_item_price(Some("fal"), "vid", &prices, &overrides, &no_geometry),
+            None
+        );
+    }
+
+    #[test]
+    fn frame_billed_units_use_the_probed_frame_count() {
+        // sam-3 video: "$0.005 per 16 frames". 24fps * 5s = 120 frames = 7.5
+        // billed blocks.
+        let mut prices = HashMap::new();
+        prices.insert(
+            "fal-ai/sam-3/video".to_string(),
+            "$0.005 per 16 frames".to_string(),
+        );
+        let overrides = HashMap::new();
+        let got = per_item_price(
+            Some("fal"),
+            "fal-ai/sam-3/video",
+            &prices,
+            &overrides,
+            &seedance_720p_5s(),
+        )
+        .unwrap();
+        assert!((got - 7.5 * 0.005).abs() < 1e-9, "got {got}");
+    }
+
+    #[test]
+    fn compute_seconds_stays_unpriced() {
+        // minimax h3-max bills GPU time, which no amount of output geometry
+        // can reconstruct. Better unpriced than confidently wrong.
+        let mut prices = HashMap::new();
+        prices.insert(
+            "minimax/h3-max/text-to-video".to_string(),
+            "$0.00017 per compute seconds".to_string(),
+        );
+        let overrides = HashMap::new();
+        assert_eq!(
+            per_item_price(
+                Some("fal"),
+                "minimax/h3-max/text-to-video",
+                &prices,
+                &overrides,
+                &seedance_720p_5s()
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn unit_parsers_read_their_multipliers() {
+        assert_eq!(tokens_per_billed_unit("1000 tokens"), Some(1000.0));
+        assert_eq!(tokens_per_billed_unit("tokens"), Some(1.0));
+        assert_eq!(tokens_per_billed_unit("units"), Some(1000.0));
+        assert_eq!(tokens_per_billed_unit("unit"), Some(1000.0));
+        assert_eq!(tokens_per_billed_unit("seconds"), None);
+        assert_eq!(tokens_per_billed_unit("megapixels"), None);
+        assert_eq!(frames_per_billed_unit("16 frames"), Some(16.0));
+        assert_eq!(frames_per_billed_unit("frame"), Some(1.0));
+        assert_eq!(frames_per_billed_unit("seconds"), None);
+    }
 
     #[test]
     fn per_item_price_end_to_end_and_provider_defaults_to_fal() {
@@ -238,12 +474,14 @@ mod tests {
             duration_sec: Some(5.0),
             resolution: None,
             megapixels: None,
+            ..Default::default()
         };
         let video_unknown = CostContext {
             is_video: true,
             duration_sec: None,
             resolution: None,
             megapixels: None,
+            ..Default::default()
         };
         assert_eq!(
             per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_5s),
@@ -271,6 +509,7 @@ mod tests {
             duration_sec: Some(10.0),
             resolution: None,
             megapixels: None,
+            ..Default::default()
         };
         assert_eq!(
             per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &video_10s),
@@ -289,12 +528,14 @@ mod tests {
             duration_sec: None,
             resolution: Some("1080p"),
             megapixels: None,
+            ..Default::default()
         };
         let ctx_720p = CostContext {
             is_video: false,
             duration_sec: None,
             resolution: Some("720p"),
             megapixels: None,
+            ..Default::default()
         };
         assert_eq!(
             per_item_price(Some("fal"), "fal-ai/img", &prices, &overrides, &ctx_1080p),
@@ -335,18 +576,21 @@ mod tests {
             duration_sec: Some(5.0),
             resolution: Some("720p"),
             megapixels: None,
+            ..Default::default()
         };
         let ctx_1080p = CostContext {
             is_video: true,
             duration_sec: Some(5.0),
             resolution: Some("1080p"),
             megapixels: None,
+            ..Default::default()
         };
         let ctx_unknown_res = CostContext {
             is_video: true,
             duration_sec: Some(5.0),
             resolution: None,
             megapixels: None,
+            ..Default::default()
         };
         assert_eq!(
             per_item_price(Some("fal"), "fal-ai/vid", &prices, &overrides, &ctx_720p),
@@ -384,6 +628,7 @@ mod tests {
             duration_sec: None,
             resolution: None,
             megapixels: Some(1.048576),
+            ..Default::default()
         };
         let amount =
             per_item_price(Some("fal"), "fal-ai/flux/dev", &prices, &overrides, &ctx).unwrap();

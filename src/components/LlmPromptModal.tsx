@@ -10,6 +10,8 @@ import {
 } from "../lib/llm";
 import { splitPromptsByDelimiter } from "../lib/args";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
+import { IconBtn } from "./IconBtn";
 
 type Props = {
   originalPrompt: string;
@@ -97,15 +99,13 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel, onSplit }: 
             auto_awesome
           </span>
           <div className="text-sm font-semibold">AI Rewrite</div>
-          <div className="flex-1" />
-          <button
-            type="button"
-            className="text-sm px-1 hover:bg-accent"
+          <IconBtn
+            name="close"
+            size={18}
             onClick={cancel}
             title="Close (Esc)"
-          >
-            ✕
-          </button>
+            className="ml-auto"
+          />
         </div>
 
         <div className="flex items-center gap-2 text-sm">
@@ -164,39 +164,27 @@ export function LlmPromptModal({ originalPrompt, onAccept, onCancel, onSplit }: 
         {error && <div className="text-xs text-red-500 break-words">{error}</div>}
 
         <div className="flex justify-end gap-2 mt-1">
-          <button
-            type="button"
-            className="px-3 py-1 text-sm hover:bg-accent"
-            onClick={cancel}
-          >
+          <Btn onClick={cancel}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="px-3 py-1 text-sm bg-accent hover:opacity-80 disabled:opacity-40"
-            onClick={() => void run()}
-            disabled={running || !inputPrompt.trim()}
-          >
+          </Btn>
+          <Btn onClick={() => void run()} disabled={running || !inputPrompt.trim()}>
             {running ? "Running…" : "Run"}
-          </button>
-          <button
-            type="button"
-            className="px-3 py-1 text-sm bg-accent hover:opacity-80 disabled:opacity-40"
-            onClick={accept}
-            disabled={!outputPrompt.trim()}
-          >
+          </Btn>
+          <Btn onClick={accept} disabled={!outputPrompt.trim()}>
             Accept
-          </button>
+          </Btn>
           {onSplit && (
-            <button
-              type="button"
-              className="px-3 py-1 text-sm bg-accent hover:opacity-80 disabled:opacity-40"
+            <Btn
               onClick={split}
               disabled={!canSplit}
-              title={canSplit ? `Split into ${splitParts.length} prompts` : "Add --- delimiter lines to split"}
+              title={
+                canSplit
+                  ? `Split into ${splitParts.length} prompts`
+                  : "Add --- delimiter lines to split"
+              }
             >
               Split{canSplit ? ` (${splitParts.length})` : ""}
-            </button>
+            </Btn>
           )}
         </div>
     </ModalDialog>

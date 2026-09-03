@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Btn } from "./Btn";
 import { cmd } from "../lib/tauri";
 import { pickDirectory, showMessage } from "../lib/dialog";
 import { useExportPaths, useVisiblePaths } from "../lib/galleryFilter";
@@ -65,22 +66,18 @@ export function DeliverExportBar() {
         {selected.length} of {visible.length}
       </span>
 
-      <button
-        type="button"
-        className="px-2 py-[2px] bg-bg hover:bg-panel disabled:opacity-40"
+      <Btn
         disabled={visible.length === 0 || selected.length === visible.length}
         onClick={() => setDeliverExcluded([])}
       >
         All
-      </button>
-      <button
-        type="button"
-        className="px-2 py-[2px] bg-bg hover:bg-panel disabled:opacity-40"
+      </Btn>
+      <Btn
         disabled={selected.length === 0}
         onClick={() => setDeliverExcluded(visible)}
       >
         None
-      </button>
+      </Btn>
 
       <span className="w-px self-stretch bg-border" />
 
@@ -90,7 +87,7 @@ export function DeliverExportBar() {
           checked={layout === "preserve"}
           onChange={() => setLayout("preserve")}
         />
-        <span>Preserve folders</span>
+        Preserve folders
       </label>
       <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap">
         <input
@@ -98,20 +95,17 @@ export function DeliverExportBar() {
           checked={layout === "dump"}
           onChange={() => setLayout("dump")}
         />
-        <span>One folder</span>
+        One folder
         <span className="text-dim">(seq_shot_ prefix)</span>
       </label>
 
-      <span className="flex-1" />
-
-      <button
-        type="button"
-        className="px-3 py-[2px] bg-accent text-text disabled:opacity-50"
+      <Btn
+        className="ml-auto"
         disabled={busy || !projectPath || selected.length === 0}
         onClick={runExport}
       >
         EXPORT
-      </button>
+      </Btn>
     </div>
   );
 }

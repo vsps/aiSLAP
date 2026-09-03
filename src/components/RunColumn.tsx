@@ -17,9 +17,16 @@ import { isJobTerminal } from "../lib/jobs";
 import { playSound } from "../lib/audio";
 import { showMessage } from "../lib/dialog";
 import { seqShotNames } from "../lib/prism";
-import { formatCost, perItemPrice, parseDurationSeconds } from "../lib/falPrices";
+import {
+  ASSUMED_PREVIEW_FPS,
+  estimateVideoGeometry,
+  formatCost,
+  perItemPrice,
+  parseDurationSeconds,
+} from "../lib/falPrices";
 import { usePricesStore } from "../stores/pricesStore";
 import type { ChainLink } from "../lib/types";
+import { Btn } from "./Btn";
 
 // Cost of one run of a link, when its model is fal-priced per output item
 // (request/image/video) or has a user-entered override. Otherwise (time/
@@ -31,13 +38,20 @@ function perRunCost(
 ): number | null {
   const model = link?.model;
   if (!model) return null;
+  const resolution =
+    typeof link.settings.resolution === "string" ? link.settings.resolution : null;
+  // A token-billed model needs frame size and rate, and there is no output to
+  // measure yet — so the preview assumes 16:9 at the named resolution and
+  // Seedance's native 24fps. Deliberately an estimate: the sidecar takes the
+  // exact figures from the probe the moment the file lands.
+  const geometry = model.kind === "video" ? estimateVideoGeometry(resolution) : null;
   const amount = perItemPrice(model.provider, model.endpoint, prices, overrides, {
     isVideo: model.kind === "video",
     durationSec: parseDurationSeconds(link.settings.duration),
-    resolution:
-      typeof link.settings.resolution === "string"
-        ? link.settings.resolution
-        : null,
+    resolution,
+    width: geometry?.width,
+    height: geometry?.height,
+    fps: geometry ? ASSUMED_PREVIEW_FPS : null,
   });
   if (amount == null) return null;
   // Batch models produce N outputs per request but fal bills per output.
@@ -206,20 +220,19 @@ export function RunColumn() {
           )
           .join("\n");
 
-  const btn =
-    "bg-src-bg text-accent font-mono text-xs px-3 py-2 hover:opacity-80 w-full text-center";
-  const btnDisabled =
-    "bg-src-bg text-accent font-mono text-xs px-3 py-2 opacity-40 cursor-not-allowed w-full text-center";
+  // The column's buttons are all full-width; everything else about them is the
+  // shared Btn treatment.
+  const wide = "w-full py-2";
 
   return (
     <div className="bg-surface border border-border p-prompt-column text-text flex flex-col items-center gap-prompt-column-gap shrink-0 w-[110px]">
-      <button
+      <Btn
         onClick={resetGenerationForm}
-        className={`${btn} mb-1`}
+        className={`${wide} mb-1`}
         title="Reset prompts, settings, refs, iterations"
       >
         [RESET]
-      </button>
+      </Btn>
 
       <span className="text-xs font-semibold mt-2">ITERATIONS</span>
       <input
@@ -230,22 +243,22 @@ export function RunColumn() {
         className="w-full text-center bg-src-bg text-text py-[2px]"
       />
 
-      <button
+      <Btn
         title={disabledReason || "Submit"}
         disabled={!canRun}
         onClick={() => void onSubmit()}
-        className={canRun ? btn : btnDisabled}
+        className={wide}
       >
         {showCount ? `[SUBMIT ${runCount}]` : "[SUBMIT]"}
-      </button>
-      <button
+      </Btn>
+      <Btn
         title={disabledReason || "Submit + new version"}
         disabled={!canRunPlus}
         onClick={() => void onSubmitPlus()}
-        className={canRunPlus ? btn : btnDisabled}
+        className={wide}
       >
         {showCount ? `[SUBMIT+ ${runCount}]` : "[SUBMIT+]"}
-      </button>
+      </Btn>
 
       {costEstimate != null && (
         <span
@@ -266,23 +279,23 @@ export function RunColumn() {
 
       {queueCount > 0 && (
         <span
-          className="text-xs font-mono bg-bg text-text px-1 py-[1px] cursor-help"
+          className="text-xs font-mono bg-bg text-text rounded-full px-1.5 py-[1px] cursor-help"
           title={queueTitle}
         >
           Q: {queueCount}
         </span>
       )}
 
-      <button
+      <Btn
         title={
           queueCount > 0 ? `Cancel all (${queueCount})` : "Nothing to cancel"
         }
         disabled={queueCount === 0}
         onClick={cancelAllGenerations}
-        className={queueCount > 0 ? btn : btnDisabled}
+        className={wide}
       >
         [CANCEL]
-      </button>
+      </Btn>
     </div>
   );
 }

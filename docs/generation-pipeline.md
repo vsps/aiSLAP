@@ -155,10 +155,104 @@ lineage backwards across the project (Escape exits; the status bar reads
 
 ## 10. Cost
 
-fal reports a live estimate that is stamped into the sidecar on success. For other
-providers, and for backfill, `pricing.rs` mirrors `falPrices.ts` and
-`project_cost_scan` rolls costs up per shot, sequence and project — writing `costUsd`
-back into sidecars that lack it.
+**Cost is per file, stamped into the sidecar at write time, and never recomputed.**
+Every total in the app — tile, column, shot, sequence, project, Sankey — is a sum of
+those frozen `costUsd` values. Prices are consulted only to mint a number that doesn't
+exist yet; re-deriving from today's table would drift from what was actually billed.
+
+Three sources, in priority order (`buildMetadataRecord` in `output.ts`):
+
+1. **fal's own estimate** — `/v1/models/pricing/estimate`, `historical_api_price`, one
+   call per job, divided evenly across the files it produced (fal bills a batch
+   uniformly). Never blocks the write.
+2. **Local computation** — `perItemPrice`, mirrored in Rust as `pricing.rs`.
+3. **Nothing.** `costUsd` is absent and the file counts as unpriced. Better than a
+   confident wrong number.
+
+### Resolving a fetched price to a total
+
+An override always wins and is *terminal* — the exact figure for stills, `× duration`
+for video, never scaled by anything else. Otherwise the fetched unit decides:
+
+| Unit fal reports | Total | Needs |
+|---|---|---|
+| request / image / video / generation | flat | — |
+| `units` on a **video** output | token formula ↓ | probe |
+| `1000 tokens` | token formula ↓ | probe |
+| `units` on an image or 3D output | flat | — |
+| second | `× duration` | duration |
+| megapixel | `× measured MP` | image dimensions |
+| `16 frames` | `× fps × duration / 16` | probe |
+| `compute seconds` | **unpriceable** | — |
+
+> **`units` is ambiguous, and the output kind resolves it.** For sam-3, seedream v5 and
+> gpt-image-2 a fal "unit" is one output. For Seedance 2.0 video it is 1000 ByteDance
+> tokens. `isPerItemUnit`'s regex matches `units` via its `unit` alternative, so the
+> video-token branch is deliberately tested **first** — before that ordering existed, a
+> Seedance video priced at $0.014 instead of ~$1.50.
+
+**The token formula** is ByteDance's own: `tokens = width × height × fps × duration /
+1024`, billed per 1000. Established by arithmetic rather than documentation — Seedance
+2.0 at $0.014/unit, 720p/24fps/5s, gives 108 kilotokens = $1.512 against a real billed
+$1.515. `reconcile_actual_costs` reads fal's billing ledger and is the way to re-check
+it if a model's numbers ever look wrong.
+
+**Geometry is measured, never inferred.** `readVideoGeometry` / `readImageGeometry`
+probe the written file, because a named preset doesn't know the delivered frame size,
+and **no model in the registry declares a frame rate at all** — so without the probe a
+token-billed video cannot be priced. The one exception is RunColumn's pre-submit
+preview, which has no file yet and assumes 16:9 at the named resolution and 24fps
+(`estimateVideoGeometry` / `ASSUMED_PREVIEW_FPS`); the sidecar corrects it seconds
+later from the real thing.
+
+**`compute seconds`** (minimax h3-max) is GPU time, reconstructible from no amount of
+output geometry. Only fal's estimate or a manual override can price it — **deliberate**
+that it stays unpriced otherwise.
+
+### Rollup and reconciliation
+
+`project_cost_scan` walks every media file: a sidecar with `costUsd` is trusted as-is;
+one without is priced now, **backfilled** into the sidecar and pushed to the index.
+That backfill probes unpriced *videos* (one ffmpeg spawn each, once — they take the
+fast path forever after) but not stills, where `megapixels` stays `None`. Shot and
+sequence totals are cached into their sidecars, which is what `project_cost_scan_cached`
+reloads instantly on project open. `project_cost_lines` (Reports) is read-only and
+never computes, so it cannot disagree with the tree.
+
+`reconcile_actual_costs` is the only path that *replaces* a number: it reads fal's
+billing-events ledger for each `falRequestId` and writes the real charge plus
+`costUsdActual: true`. Needs a billing-scoped fal key.
+
+### Deriving prices from spend
+
+**fal's pricing API has no resolution dimension** — one price per endpoint,
+even for the 33 endpoints in the registry that offer a resolution choice, several
+of which really cost ~2× at their top tier. Modelling each vendor's formula only
+reaches so far: ByteDance's token maths is knowable, minimax's `compute seconds`
+is GPU time and knowable by nobody.
+
+`db::derive::pricing_derive` inverts it. Group generations by
+`(endpoint, resolution)`, divide what fal billed by what was produced, and read
+the rate off the group — $/sec for video (matching how an override is applied to
+video), $/output otherwise. No vendor formula, no per-model configuration, and it
+prices the models no formula can.
+
+- **Only `cost_usd_actual` rows are averaged.** That column marks a cost that came
+  from fal's billing ledger rather than our own estimate. Averaging estimates would
+  derive the price table from the price table. `assets_cost_update` takes the flag
+  explicitly, and an estimate never clears an actual already on a row.
+- **Median, not mean** — one retried or partially-billed job would drag a mean and
+  leave no trace.
+- **Reads the remote index when Turso is configured**, so the table reflects the
+  whole team's spend; falls back to every local project index otherwise.
+- **Nothing is applied unseen.** Every proposal carries its sample count, min/max
+  spread and total billed. Only rows with ≥3 samples and a spread under 1.25×
+  are pre-selected; the rest are shown and left to a human.
+- A reconciled video with **no recorded duration** yields no rate at all — dividing
+  by a guess would bake the guess into everyone's sheet. Counted as `unusable`.
+
+The price table itself is shared across the team — see
+[storage.md](storage.md) § The shared price sheet.
 
 ## 11. Orphan recovery
 

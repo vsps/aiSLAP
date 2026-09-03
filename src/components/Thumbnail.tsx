@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { IconBtn } from "./IconBtn";
 import { fileSrc } from "../lib/assets";
@@ -35,6 +35,11 @@ type Props = {
   checkable?: boolean;
   checked?: boolean;
   onToggleChecked?: (path: string) => void;
+  /** Sizing/positioning from the caller. The root is already `w-full shrink-0`,
+   *  so a grid or row that needs a fixed tile size sets it here rather than
+   *  wrapping the whole thumbnail in a sizing div. */
+  className?: string;
+  style?: CSSProperties;
 };
 
 const DRAG_THRESHOLD_PX = 5;
@@ -63,6 +68,8 @@ export const Thumbnail = memo(function Thumbnail({
   checkable,
   checked,
   onToggleChecked,
+  className = "",
+  style,
 }: Props) {
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const colorsByName = useTagsStore((s) => s.colorsByName);
@@ -250,14 +257,13 @@ export const Thumbnail = memo(function Thumbnail({
     return (
       <div
         ref={rootRef}
-        className="group relative w-full shrink-0 overflow-hidden border border-dim/30 bg-panel"
+        className={`group relative w-full shrink-0 overflow-hidden border border-dim/30 bg-panel ${className}`}
         style={{
           paddingBottom: `${maxAspect != null ? maxAspect * 100 : 100}%`,
+          ...style,
         }}
       >
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="w-8 h-8 rounded-full border-2 border-dim/40 border-t-accent animate-spin" />
-        </div>
+        <div className="absolute inset-0 m-auto w-8 h-8 rounded-full border-2 border-dim/40 border-t-accent animate-spin" />
         <div className="absolute inset-0 bg-accent/5 animate-pulse" />
       </div>
     );
@@ -268,8 +274,8 @@ export const Thumbnail = memo(function Thumbnail({
       ref={rootRef}
       className={`group relative w-full shrink-0 overflow-hidden cursor-pointer border ${
         selected ? "border-accent" : "border-transparent"
-      } ${isDragSource ? "opacity-40" : ""} bg-bg`}
-      style={{ paddingBottom: `${aspect * 100}%` }}
+      } ${isDragSource ? "opacity-40" : ""} bg-bg ${className}`}
+      style={{ paddingBottom: `${aspect * 100}%`, ...style }}
       onPointerDown={onPointerDown}
       onClick={(e) => {
         e.stopPropagation();
@@ -324,18 +330,13 @@ export const Thumbnail = memo(function Thumbnail({
             }}
           />
         )
-      ) : image.isModel3d ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-dim text-text">
-          <span className="material-symbols-outlined" style={{ fontSize: 40 }}>
-            deployed_code
-          </span>
-        </div>
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center bg-dim text-text">
-          <span className="material-symbols-outlined" style={{ fontSize: 40 }}>
-            play_circle
-          </span>
-        </div>
+        <span
+          className="material-symbols-outlined absolute inset-0 flex items-center justify-center bg-dim text-text"
+          style={{ fontSize: 40 }}
+        >
+          {image.isModel3d ? "deployed_code" : "play_circle"}
+        </span>
       )}
       {image.isVideo && (
         <span
@@ -363,7 +364,7 @@ export const Thumbnail = memo(function Thumbnail({
           {tags.map((t) => (
             <span
               key={t}
-              className="w-[6px] h-[6px]"
+              className="w-[6px] h-[6px] rounded-full"
               style={{
                 background: colorsByName.get(t.toLowerCase()) ?? UNKNOWN_TAG_COLOR,
               }}
@@ -404,9 +405,9 @@ export const Thumbnail = memo(function Thumbnail({
             e.stopPropagation();
             onToggleChecked?.(image.path);
           }}
-          className={`absolute bottom-1 right-1 w-[16px] h-[16px] flex items-center justify-center border drop-shadow ${
+          className={`absolute bottom-1 right-1 w-[16px] h-[16px] rounded-full flex items-center justify-center border drop-shadow ${
             checked
-              ? "bg-accent border-accent text-text"
+              ? "bg-accent border-accent text-on-accent"
               : "bg-bg/70 border-white/70 text-transparent hover:border-accent"
           }`}
         >

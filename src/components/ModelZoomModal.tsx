@@ -5,6 +5,8 @@ import type { GalleryImage } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { performImageAction } from "../lib/actions";
 import { FullscreenModal } from "./FullscreenModal";
+import { Btn } from "./Btn";
+import { IconBtn } from "./IconBtn";
 
 type Props = {
   image: GalleryImage;
@@ -35,29 +37,21 @@ export function ModelZoomModal({ image, onClose, onDelete }: Props) {
       {/* toolbar */}
       <div className="flex items-center gap-2 px-3 py-1 bg-panel shrink-0">
         <span className="font-mono text-xs text-dim truncate flex-1">{image.filename}</span>
-        <button
-          className="accent-hover px-2 py-1 text-xs font-mono"
+        <Btn
           title="Add to refs"
           onClick={() => performImageAction("add_to_refs", image.path)}
         >
           + ref
-        </button>
+        </Btn>
         {onDelete && (
-          <button
-            className="accent-hover px-2 py-1 text-xs font-mono text-bad"
+          <Btn
             title="Move to TRASH"
             onClick={async () => { await onDelete(); onClose(); }}
           >
             trash
-          </button>
+          </Btn>
         )}
-        <button
-          className="accent-hover px-2 py-1 text-xs font-mono"
-          title="Close (Esc)"
-          onClick={onClose}
-        >
-          ✕
-        </button>
+        <IconBtn name="close" size={18} title="Close (Esc)" onClick={onClose} />
       </div>
 
       {/* 3D canvas */}

@@ -27,12 +27,10 @@ export function ModelSettingsColumn() {
       >
         {TITLE}
       </div>
-      <div className="bg-inset rounded p-prompt-panel">
+      <div className="bg-inset p-prompt-panel">
         <ModelPicker />
       </div>
-      <div className="flex-1 min-h-0 bg-inset rounded p-prompt-panel">
-        <SettingsPanel />
-      </div>
+      <SettingsPanel className="flex-1 min-h-0 bg-inset p-prompt-panel" />
     </div>
   );
 }

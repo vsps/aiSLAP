@@ -1,11 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { cmd } from "../lib/tauri";
-import { fetchFalPrices } from "../lib/falPrices";
+import {
+  ASSUMED_PREVIEW_FPS,
+  effectiveDollarsPerSecond,
+  fetchFalPrices,
+  formatCost,
+} from "../lib/falPrices";
+import {
+  forgetSharedOverride,
+  pullSharedPricing,
+  pushSharedPricing,
+} from "../lib/sharedPricing";
 import { DEFAULT_CONFIG } from "../lib/types";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePricesStore } from "../stores/pricesStore";
+import { DerivedPricesPanel } from "./DerivedPricesPanel";
 import { Field } from "./Field";
 import type { Config, EnumParam } from "../lib/types";
+import { Btn } from "./Btn";
 
 /**
  * Model pricing: the fal price fetch, and a per-model (or per-resolution)
@@ -31,6 +43,8 @@ export function CostSettings() {
 
   const [pricesBusy, setPricesBusy] = useState(false);
   const [pricesStatus, setPricesStatus] = useState<string | null>(null);
+  const [sharedBusy, setSharedBusy] = useState(false);
+  const [sharedStatus, setSharedStatus] = useState<string | null>(null);
   const [costProvider, setCostProvider] = useState<string>("fal");
   const [priceTableHeight, setPriceTableHeight] = useState(256);
 
@@ -128,6 +142,31 @@ export function CostSettings() {
     } catch (e) {
       setPricesStatus(`Could not save override: ${String(e)}`);
     }
+    // Publish to the team's sheet. One row, not the whole map — see
+    // lib/sharedPricing.ts for why a clear has to be its own delete.
+    if (overrideKey in next) {
+      void pushSharedPricing({}, { [overrideKey]: next[overrideKey] });
+    } else {
+      void forgetSharedOverride(overrideKey);
+    }
+  }
+
+  /** Adopt the team's sheet on demand. The same pull runs once at startup;
+   *  this is for picking up someone else's edit without a restart. */
+  async function syncShared() {
+    if (sharedBusy) return;
+    setSharedBusy(true);
+    setSharedStatus("Syncing…");
+    const result = await pullSharedPricing();
+    setSharedStatus(
+      result.status === "unconfigured"
+        ? "No shared database configured — prices are local to this machine."
+        : result.status === "error"
+          ? `Error: ${result.message}`
+          : `${result.prices} prices, ${result.overrides} overrides` +
+            (result.updatedBy ? ` · last written by ${result.updatedBy}` : ""),
+    );
+    setSharedBusy(false);
   }
 
   async function fetchPrices() {
@@ -150,7 +189,13 @@ export function CostSettings() {
       await patchConfig({ falPrices: fetched, falPricesFetchedAt: fetchedAt });
       usePricesStore.getState().setPrices(fetched, fetchedAt);
       const pricedCount = unique.filter((e) => e in fetched).length;
-      setPricesStatus(`${pricedCount} of ${unique.length} fal models priced.`);
+      // Publish so the rest of the team gets this fetch without re-spending
+      // their own API call. Last write wins per endpoint.
+      const pushed = await pushSharedPricing(fetched, {});
+      setPricesStatus(
+        `${pricedCount} of ${unique.length} fal models priced.` +
+          (pushed != null ? ` Shared with the team (${pushed} rows).` : ""),
+      );
     } catch (e) {
       setPricesStatus(`Error: ${String(e)}`);
     } finally {
@@ -179,14 +224,9 @@ export function CostSettings() {
     <div className="flex flex-col gap-4">
       <Field label="fal.ai prices">
         <div className="flex gap-1 items-center">
-          <button
-            type="button"
-            className="px-2 bg-bg text-xs disabled:opacity-50"
-            onClick={() => void fetchPrices()}
-            disabled={pricesBusy}
-          >
+          <Btn onClick={() => void fetchPrices()} disabled={pricesBusy}>
             {pricesBusy ? "Fetching…" : "Fetch prices"}
-          </button>
+          </Btn>
           <span className="text-xs text-dim">
             {pricesCount > 0
               ? `${pricesCount} cached${
@@ -200,6 +240,24 @@ export function CostSettings() {
         <div className="text-xs text-dim mt-1">
           {pricesStatus ??
             "Pulls per-model prices from fal's official pricing API (requires the fal API key, set in Settings → APIs)."}
+        </div>
+      </Field>
+
+      <Field label="Derived from spend">
+        <DerivedPricesPanel />
+      </Field>
+
+      <Field label="Shared price sheet">
+        <Btn
+          className="self-start"
+          onClick={() => void syncShared()}
+          disabled={sharedBusy}
+        >
+          {sharedBusy ? "Syncing…" : "Sync from team"}
+        </Btn>
+        <div className="text-xs text-dim mt-1">
+          {sharedStatus ??
+            "Prices and overrides are shared through the Turso database, so everyone prices from the same sheet. Pulled at startup and after every fetch or override edit; last write wins per model."}
         </div>
       </Field>
 
@@ -245,6 +303,28 @@ export function CostSettings() {
                     </td>
                     <td className="py-1 pr-2 font-mono text-dim">
                       {prices[row.endpoint] ?? "—"}
+                      {/* A token-billed price ("per units", "per 1000
+                          tokens") says nothing you can compare against the
+                          $/sec models beside it. Converting at this row's
+                          resolution and 24fps makes the column readable — and
+                          gives a starting figure for the override input to
+                          its right, which is already in $/sec. */}
+                      {row.isVideo &&
+                        (() => {
+                          const perSec = effectiveDollarsPerSecond(
+                            prices[row.endpoint] ?? "",
+                            row.resolution,
+                          );
+                          return perSec == null ? null : (
+                            <span
+                              className="text-accent"
+                              title={`Effective rate at ${row.resolution} / ${ASSUMED_PREVIEW_FPS}fps, 16:9. The billed cost uses the delivered file's real dimensions and frame rate.`}
+                            >
+                              {" "}
+                              ≈ ${formatCost(perSec)}/sec
+                            </span>
+                          );
+                        })()}
                     </td>
                     <td className="py-1">
                       <div className="flex items-center gap-1">

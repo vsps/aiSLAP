@@ -26,6 +26,7 @@ import {
   ingestIntoRefPanel,
   subscribeOsDragTarget,
 } from "../lib/osDragDrop";
+import { Btn } from "./Btn";
 
 const GROUP_PALETTE = [
   "#e74c3c",
@@ -313,20 +314,19 @@ export function RefImagesColumn() {
             toggleCollapsed("refImages");
           }}
         >
-          <span>REFERENCES</span>
-          <span className="flex-1" />
-          <span className="text-xs opacity-60 font-mono">
+          REFERENCES
+          <span className="ml-auto text-xs opacity-60 font-mono">
             {refImages.length}
           </span>
-          <button
-            type="button"
+          <Btn
+            variant="ghost"
             onClick={removeAllRefs}
             disabled={refImages.length === 0}
-            className="ml-2 px-1 text-xs font-mono text-red-500 hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+            className="ml-2 px-1 text-xs"
             title="Clear all references"
           >
             [clear]
-          </button>
+          </Btn>
         </div>
         <div className="flex flex-col gap-prompt-column-gap overflow-y-auto thin-scroll bg-inset p-prompt-panel flex-1 min-h-0">
           {visibleKinds.map((kind) => (
@@ -457,15 +457,13 @@ const RefThumb = memo(function RefThumb({
         />
       )}
       {isAudio && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span
-            aria-hidden
-            className="material-symbols-outlined opacity-70"
-            style={{ fontSize: 48 }}
-          >
-            graphic_eq
-          </span>
-        </div>
+        <span
+          aria-hidden
+          className="material-symbols-outlined absolute inset-0 flex items-center justify-center pointer-events-none opacity-70"
+          style={{ fontSize: 48 }}
+        >
+          graphic_eq
+        </span>
       )}
       <div
         className="relative z-10 flex items-start bg-bg/90 hover:bg-bg px-1 text-xs leading-tight truncate max-w-full cursor-pointer"
@@ -507,10 +505,9 @@ const RefThumb = memo(function RefThumb({
             onRemove();
           }}
         />
-        <div className="flex-1" />
         <span
           aria-hidden
-          className="material-symbols-outlined opacity-60 pointer-events-none"
+          className="material-symbols-outlined ml-auto opacity-60 pointer-events-none"
           style={{ fontSize: 18 }}
         >
           drag_indicator

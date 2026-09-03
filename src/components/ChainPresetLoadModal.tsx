@@ -1,6 +1,7 @@
 import { usePresetsStore } from "../stores/presetsStore";
 import { IconBtn } from "./IconBtn";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
 
 type Props = {
   onClose: () => void;
@@ -69,15 +70,9 @@ export function ChainPresetLoadModal({ onClose }: Props) {
           ))}
         </div>
       )}
-      <div className="flex justify-end mt-1">
-        <button
-          type="button"
-          className="px-2 py-[2px] text-sm hover:bg-accent"
-          onClick={onClose}
-        >
-          Close
-        </button>
-      </div>
+      <Btn className="ml-auto mt-1" onClick={onClose}>
+        Close
+      </Btn>
     </ModalDialog>
   );
 }

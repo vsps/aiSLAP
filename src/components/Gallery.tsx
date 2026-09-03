@@ -650,11 +650,18 @@ export function Gallery({ selectable }: Props = {}) {
     }
   }
 
+  // The toolbar is a contiguous vertical strip, so these stay square rather
+  // than becoming capsules — pills would break the run. `on` is the selected
+  // state: full accent, like every other toggle in the app.
+  const tool = (on = false) =>
+    `${on ? "bg-accent text-on-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`;
+
   const splitButtons = (
     <div className="flex flex-col shrink-0 self-stretch overflow-hidden">
       {viewMode === "columns" && shotPath && (
         <button
-          className="accent-hover px-3 py-2 flex items-center justify-center"
+          type="button"
+          className={tool()}
           title="Add new version"
           onClick={onAddNewVersion}
         >
@@ -663,9 +670,9 @@ export function Gallery({ selectable }: Props = {}) {
       )}
       {sequencePath && (
         <button
-          className={`${
-            viewMode === "tagged" ? "bg-accent" : "accent-hover"
-          } px-3 py-2 flex items-center justify-center`}
+          type="button"
+          className={tool(viewMode === "tagged")}
+          aria-pressed={viewMode === "tagged"}
           title={viewMode === "tagged" ? "Back to versions" : "Tagged media"}
           onClick={() =>
             setViewMode(viewMode === "tagged" ? "columns" : "tagged")
@@ -676,7 +683,9 @@ export function Gallery({ selectable }: Props = {}) {
       )}
       {viewMode === "columns" && shotPath && (
         <button
-          className={`${listMode ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
+          type="button"
+          className={tool(listMode)}
+          aria-pressed={listMode}
           title={listMode ? "Show thumbnails" : "Show filenames only"}
           onClick={toggleListMode}
         >
@@ -685,9 +694,9 @@ export function Gallery({ selectable }: Props = {}) {
       )}
       {sequencePath && (
         <button
-          className={`${
-            viewMode === "stacked" ? "bg-accent" : "accent-hover"
-          } px-3 py-2 flex items-center justify-center`}
+          type="button"
+          className={tool(viewMode === "stacked")}
+          aria-pressed={viewMode === "stacked"}
           title={viewMode === "stacked" ? "Back to versions" : "Stacked view"}
           onClick={() =>
             setViewMode(viewMode === "stacked" ? "columns" : "stacked")
@@ -698,7 +707,9 @@ export function Gallery({ selectable }: Props = {}) {
       )}
       {viewMode === "columns" && shotPath && (
         <button
-          className={`${allCollapsed ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
+          type="button"
+          className={tool(allCollapsed)}
+          aria-pressed={allCollapsed}
           title={allCollapsed ? "Expand all columns" : "Collapse all columns"}
           onClick={toggleAllCollapsed}
         >
@@ -712,7 +723,9 @@ export function Gallery({ selectable }: Props = {}) {
       )}
       {selectedImagePath && (
         <button
-          className={`${traceActive ? "bg-accent" : "accent-hover"} px-3 py-2 flex items-center justify-center`}
+          type="button"
+          className={tool(!!traceActive)}
+          aria-pressed={!!traceActive}
           title={traceActive ? "Exit trace" : "Trace origins"}
           onClick={() => onImageAction("trace", selectedImagePath)}
         >
@@ -721,7 +734,8 @@ export function Gallery({ selectable }: Props = {}) {
       )}
       {selectedImagePath && !prism && (
         <button
-          className="accent-hover px-3 py-2 flex items-center justify-center"
+          type="button"
+          className={tool()}
           title="Move selected to TRASH"
           onClick={() => onImageAction("delete", selectedImagePath)}
         >
@@ -730,7 +744,8 @@ export function Gallery({ selectable }: Props = {}) {
       )}
       {shotPath && (
         <button
-          className="accent-hover px-3 py-2 flex items-center justify-center"
+          type="button"
+          className={tool()}
           title="Rescan shot from disk"
           onClick={() => void rescanShot()}
         >
@@ -758,61 +773,48 @@ export function Gallery({ selectable }: Props = {}) {
     <div className="flex flex-col flex-1 min-h-0 min-w-0 bg-gallery-surface">
       {!traceActive && <TagFilterBar />}
       <div className="flex flex-1 min-h-0 min-w-0 gap-gallery-surface">
+        {splitButtons}
         {traceActive ? (
-          <>
-            {splitButtons}
-            <TraceView onDragStart={onDragStart} />
-          </>
+          <TraceView onDragStart={onDragStart} />
         ) : viewMode === "tagged" ? (
-          <>
-            {splitButtons}
-            <TagView
-              onDragStart={onDragStart}
-              selectable={selectable}
-              excludedSet={excludedSet}
-              onToggleExcluded={toggleExcluded}
-            />
-          </>
+          <TagView
+            onDragStart={onDragStart}
+            selectable={selectable}
+            excludedSet={excludedSet}
+            onToggleExcluded={toggleExcluded}
+          />
         ) : viewMode === "stacked" ? (
-          <>
-            {splitButtons}
-            <StackedView onDragStart={onDragStart} />
-          </>
+          <StackedView onDragStart={onDragStart} />
         ) : (
-          <>
-            {splitButtons}
-            <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
-              {columnsWithPlaceholders.length === 0 ? (
-                <div className="text-sm text-dim p-4">
-                  Open a shot to see its versions.
-                </div>
-              ) : (
-                <>
-                  {columnsWithPlaceholders.map((c) => (
-                    <GalleryColumn
-                      key={c.version}
-                      column={c}
-                      width={galleryColumnWidths[c.version] ?? thumbColWidth}
-                      destDir={destDirFor(c)}
-                      dragState={dragState}
-                      collapsed={collapsedSet.has(c.version)}
-                      onToggleCollapsed={() => toggleCollapsed(c.version)}
-                      onFolderDelete={() => onFolderDelete(c.version)}
-                      hasFiles={(rawImageCounts.get(c.version) ?? 0) > 0}
-                      listMode={listMode}
-                      deleteDisabled={!!prism}
-                      onImageAction={onImageAction}
-                      onRefresh={c.isSrc ? () => rescanShot() : undefined}
-                      onDragStart={onDragStart}
-                      selectable={selectable}
-                      excludedSet={excludedSet}
-                      onToggleExcluded={toggleExcluded}
-                    />
-                  ))}
-                </>
-              )}
-            </div>
-          </>
+          <div className="flex flex-1 min-w-0 overflow-x-auto overflow-y-hidden thin-scroll min-h-0">
+            {columnsWithPlaceholders.length === 0 ? (
+              <div className="text-sm text-dim p-4">
+                Open a shot to see its versions.
+              </div>
+            ) : (
+              columnsWithPlaceholders.map((c) => (
+                <GalleryColumn
+                  key={c.version}
+                  column={c}
+                  width={galleryColumnWidths[c.version] ?? thumbColWidth}
+                  destDir={destDirFor(c)}
+                  dragState={dragState}
+                  collapsed={collapsedSet.has(c.version)}
+                  onToggleCollapsed={() => toggleCollapsed(c.version)}
+                  onFolderDelete={() => onFolderDelete(c.version)}
+                  hasFiles={(rawImageCounts.get(c.version) ?? 0) > 0}
+                  listMode={listMode}
+                  deleteDisabled={!!prism}
+                  onImageAction={onImageAction}
+                  onRefresh={c.isSrc ? () => rescanShot() : undefined}
+                  onDragStart={onDragStart}
+                  selectable={selectable}
+                  excludedSet={excludedSet}
+                  onToggleExcluded={toggleExcluded}
+                />
+              ))
+            )}
+          </div>
         )}
       </div>
 
@@ -843,9 +845,9 @@ export function Gallery({ selectable }: Props = {}) {
                 className="w-16 h-16 object-cover border border-accent shadow-lg bg-bg"
               />
               <span
-                className={`text-[10px] font-mono px-1 py-[1px] ${
+                className={`text-[10px] font-mono rounded-full px-1.5 py-[1px] ${
                   dragState.shiftHeld
-                    ? "bg-accent text-text"
+                    ? "bg-accent text-on-accent"
                     : "bg-panel text-text"
                 }`}
               >

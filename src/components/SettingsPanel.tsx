@@ -17,14 +17,19 @@ import type {
 import { classifyMedia } from "../lib/media";
 import { ToggleGroup } from "./ToggleGroup";
 import { SamPromptModal } from "./SamPromptModal";
+import { Btn } from "./Btn";
 
-export function SettingsPanel() {
+export function SettingsPanel({ className = "" }: { className?: string }) {
   const currentModel = useGenerationStore(selectCurrentModel);
   const settings = useGenerationStore(selectSettings);
   const setSetting = useGenerationStore((s) => s.setSetting);
 
   if (!currentModel) {
-    return <div className="text-text opacity-60 text-xs">Select a model.</div>;
+    return (
+      <div className={`text-text opacity-60 text-xs ${className}`}>
+        Select a model.
+      </div>
+    );
   }
 
   const visibleParams = currentModel.parameters.filter((p: Parameter) => {
@@ -34,7 +39,9 @@ export function SettingsPanel() {
   });
 
   return (
-    <div className="flex flex-col gap-[10px] overflow-y-auto thin-scroll pr-1">
+    <div
+      className={`flex flex-col gap-[10px] overflow-y-auto thin-scroll pr-1 ${className}`}
+    >
       {visibleParams.map((p) => (
         <ParamRow
           key={p.api_field}
@@ -113,14 +120,9 @@ function PromptsControl() {
   return (
     <div className="flex flex-col gap-[4px]">
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={!pickable}
-          onClick={() => setOpen(true)}
-          className="text-xs px-2 py-[2px] bg-bg text-text hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
+        <Btn disabled={!pickable} onClick={() => setOpen(true)}>
           Edit on preview
-        </button>
+        </Btn>
         <span className="text-xs font-mono opacity-70">
           {points.length} pt · {boxes.length} box
         </span>

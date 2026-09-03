@@ -236,9 +236,11 @@ export function TimelineClip({
       {resolved ? (
         resolved.isVideo ? (
           thumbTry >= thumbCandidates.length ? (
-            <div className="absolute inset-0 flex items-center justify-center text-dim">
-              <Icon name="videocam" size={20} />
-            </div>
+            <Icon
+              name="videocam"
+              size={20}
+              className="absolute inset-0 flex items-center justify-center text-dim"
+            />
           ) : (
             <TiledThumb
               src={fileSrc(thumbCandidates[thumbTry])}

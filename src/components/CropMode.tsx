@@ -6,6 +6,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
 import { dirname, basename } from "../lib/paths";
 import { FullscreenModal } from "./FullscreenModal";
+import { Btn } from "./Btn";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Handle = "tl" | "tc" | "tr" | "ml" | "mr" | "bl" | "bc" | "br" | "move";
@@ -273,41 +274,36 @@ export function CropMode({ image, onSave, onCancel }: Props) {
         )}
         <span className="text-xs text-dim">hold Shift for free aspect</span>
         <div className="w-px h-4 bg-dim/40 mx-1" />
-        <button
+        <Btn
+          variant="toggle"
+          active={!!rotation}
           title="Rotate 90° CCW"
           onClick={() => setRotation((r) => (r === 270 ? 0 : 270))}
-          className={`text-xs px-2 py-0.5 border ${rotation ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
         >
           ↺ 90°
-        </button>
-        <button
+        </Btn>
+        <Btn
+          variant="toggle"
+          active={flipH}
           title="Flip horizontal"
           onClick={() => setFlipH((v) => !v)}
-          className={`text-xs px-2 py-0.5 border ${flipH ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
         >
           ↔
-        </button>
-        <button
+        </Btn>
+        <Btn
+          variant="toggle"
+          active={flipV}
           title="Flip vertical"
           onClick={() => setFlipV((v) => !v)}
-          className={`text-xs px-2 py-0.5 border ${flipV ? "border-accent text-accent" : "border-dim text-dim hover:border-text hover:text-text"}`}
         >
           ↕
-        </button>
-        <div className="flex-1" />
-        <button
-          onClick={() => void save()}
-          disabled={saving}
-          className="text-xs px-3 py-0.5 bg-accent text-text hover:opacity-80 disabled:opacity-40"
-        >
+        </Btn>
+        <Btn className="ml-auto" onClick={() => void save()} disabled={saving}>
           {saving ? "saving…" : "crop & save"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text"
-        >
+        </Btn>
+        <Btn onClick={onCancel}>
           cancel
-        </button>
+        </Btn>
       </div>
     </FullscreenModal>
   );

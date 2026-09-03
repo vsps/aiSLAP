@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::commands::config::provider_key_get;
 use crate::commands::fsutil::{as_str, is_video_ext, sidecar_path, SEQUENCE_SIDECAR, SHOT_SIDECAR};
+use crate::commands::media::{video_info_probe_impl, VideoInfo};
 use crate::commands::session::with_shot_sidecar;
 use crate::commands::walk;
 use crate::db;
@@ -63,7 +64,7 @@ pub async fn project_cost_scan(project_path: String) -> AppResult<ProjectCostSca
     // succeeded and the sidecars are already written, a DB push failure
     // here shouldn't fail the command the user is waiting on. One batched call:
     // this used to open, bootstrap and close the database once per asset.
-    if let Err(e) = db::assets_cost_update(&root, &db_updates).await {
+    if let Err(e) = db::assets_cost_update(&root, &db_updates, false).await {
         tracing::warn!("cost scan: DB cost backfill failed: {e}");
     }
     Ok(scan)
@@ -74,6 +75,9 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
     let config: Config = read_json_or_default(&crate::paths::config_path()?)?;
     let prices = config.fal_prices.unwrap_or_default();
     let overrides = config.price_overrides.unwrap_or_default();
+    // Only used to probe videos that would otherwise be unpriced; an empty
+    // path simply means those stay unpriced, exactly as before.
+    let ffmpeg_path = config.ffmpeg_path;
 
     let mut project_total = 0.0f64;
     let mut project_known = 0u32;
@@ -98,7 +102,7 @@ fn project_cost_scan_impl(project_path: String) -> AppResult<(ProjectCostScan, C
         for shot in walk.shots(seq_dir)? {
             let shot_dir = shot.media_root;
             let (shot_total, shot_known, shot_unknown, shot_backfilled, shot_db_updates) =
-                scan_shot_cost(&shot_dir, &prices, &overrides)?;
+                scan_shot_cost(&shot_dir, &prices, &overrides, &ffmpeg_path)?;
             db_updates.extend(shot_db_updates);
 
             with_shot_sidecar(&as_str(&shot_dir), |sidecar: &mut ShotSidecar| {
@@ -241,6 +245,7 @@ fn scan_shot_cost(
     shot_dir: &Path,
     prices: &HashMap<String, String>,
     overrides: &HashMap<String, f64>,
+    ffmpeg_path: &str,
 ) -> AppResult<(f64, u32, u32, u32, CostDbUpdates)> {
     let mut total = 0.0f64;
     let mut known = 0u32;
@@ -255,7 +260,14 @@ fn scan_shot_cost(
             continue;
         }
         let is_video = is_video_ext(&media_path);
-        match process_image_sidecar(&sidecar_path, prices, overrides, is_video) {
+        match process_image_sidecar(
+            &sidecar_path,
+            &media_path,
+            prices,
+            overrides,
+            is_video,
+            ffmpeg_path,
+        ) {
             Ok(Some(cost)) => {
                 total += cost.amount;
                 known += 1;
@@ -292,9 +304,11 @@ struct SidecarCost {
 /// it; on failure, leave the sidecar untouched and report None.
 fn process_image_sidecar(
     sidecar_path: &Path,
+    media_path: &Path,
     prices: &HashMap<String, String>,
     overrides: &HashMap<String, f64>,
     is_video: bool,
+    ffmpeg_path: &str,
 ) -> AppResult<Option<SidecarCost>> {
     let text = std::fs::read_to_string(sidecar_path)?;
     let mut value: Value = serde_json::from_str(&text)?;
@@ -328,16 +342,32 @@ fn process_image_sidecar(
         v.as_f64()
             .or_else(|| v.as_str().and_then(parse_duration_seconds))
     });
-    // megapixels is None here — this is a retroactive, offline scan over
-    // already-written sidecars; real dimension reading (see
-    // media::image_dimensions_read) only happens at generation time in
-    // output.ts. An area-billed model's pre-existing sidecar with no costUsd
-    // stays unpriced through this path, same as before this field existed.
+    // megapixels stays None: this is a retroactive, offline scan, and real
+    // dimension reading (media::image_dimensions_read) only happens at
+    // generation time in output.ts. An area-billed model's pre-existing
+    // sidecar with no costUsd stays unpriced through this path.
+    //
+    // Video geometry, by contrast, IS probed — because without it a
+    // token-billed model (Seedance: "$0.0214 per 1000 tokens") can't be priced
+    // at all, and those are exactly the files that reach here with no cost. It
+    // costs one ffmpeg spawn per *unpriced* video, and only once: the sidecar
+    // is written below, so the next scan takes the `costUsd` fast path above
+    // and never probes again.
+    let probed = if is_video && !ffmpeg_path.trim().is_empty() {
+        video_info_probe_impl(as_str(media_path), ffmpeg_path.to_string()).unwrap_or_default()
+    } else {
+        VideoInfo::default()
+    };
     let ctx = CostContext {
         is_video,
-        duration_sec,
+        // The measured length beats the requested one — a model may deliver
+        // 8.04s for a requested 8, and a token-billed model bills that.
+        duration_sec: probed.duration_sec.or(duration_sec),
         resolution,
         megapixels: None,
+        width: probed.width.map(f64::from),
+        height: probed.height.map(f64::from),
+        fps: probed.fps,
     };
     let amount = match per_item_price(provider, endpoint, prices, overrides, &ctx) {
         Some(a) => a,
@@ -558,7 +588,7 @@ pub async fn reconcile_actual_costs(project_path: String) -> AppResult<Reconcile
     let (db_updates, reconciled) =
         run_blocking(move || write_reconciled_costs(pending, costs)).await?;
 
-    if let Err(e) = db::assets_cost_update(&root2, &db_updates).await {
+    if let Err(e) = db::assets_cost_update(&root2, &db_updates, true).await {
         tracing::warn!("cost reconcile: DB cost update failed: {e}");
     }
 

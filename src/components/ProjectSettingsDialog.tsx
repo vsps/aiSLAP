@@ -16,6 +16,7 @@ import type {
   ReconcileReport,
   ThumbsReport,
 } from "../lib/types";
+import { Btn } from "./Btn";
 
 type Props = {
   onClose: () => void;
@@ -274,17 +275,13 @@ export function ProjectSettingsDialog({ onClose }: Props) {
               className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
               placeholder={DEFAULT_FILENAME_TEMPLATE}
             />
-            <button
-              type="button"
-              className="px-2 bg-bg text-xs"
+            <Btn
               onClick={() =>
-                setConfig((c) =>
-                  c ? { ...c, filenameTemplate: undefined } : c,
-                )
+                setConfig((c) => (c ? { ...c, filenameTemplate: undefined } : c))
               }
             >
               reset
-            </button>
+            </Btn>
           </div>
           <div className="text-xs text-dim mt-1">
             Tokens: <code>&lt;date&gt;</code> <code>&lt;time&gt;</code>{" "}
@@ -316,13 +313,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
               placeholder={VERSION_PREFIX_DEFAULT}
               spellCheck={false}
             />
-            <button
-              type="button"
-              className="px-2 bg-bg text-xs"
-              onClick={() => setVersionPrefix(VERSION_PREFIX_DEFAULT)}
-            >
+            <Btn onClick={() => setVersionPrefix(VERSION_PREFIX_DEFAULT)}>
               reset
-            </button>
+            </Btn>
           </div>
           <div className="text-xs text-dim mt-1">
             {versionPrefixValid ? (
@@ -351,21 +344,12 @@ export function ProjectSettingsDialog({ onClose }: Props) {
               Script (script.md)
             </div>
             <div className="flex gap-1">
-              <button
-                type="button"
-                className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-                disabled={!projectPath}
-                onClick={reloadScript}
-              >
+              <Btn disabled={!projectPath} onClick={reloadScript}>
                 Reload
-              </button>
-              <button
-                type="button"
-                className="px-2 py-0.5 bg-bg text-xs"
-                onClick={importScript}
-              >
+              </Btn>
+              <Btn onClick={importScript}>
                 Import…
-              </button>
+              </Btn>
             </div>
           </div>
           <textarea
@@ -390,14 +374,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             <div className="text-xs font-semibold text-dim uppercase tracking-wide">
               Asset index
             </div>
-            <button
-              type="button"
-              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-              disabled={reconcileBusy || !projectPath}
-              onClick={reconcileAssetIndex}
-            >
+            <Btn disabled={reconcileBusy || !projectPath} onClick={reconcileAssetIndex}>
               {reconcileBusy ? "Scanning…" : "Reconcile"}
-            </button>
+            </Btn>
           </div>
           <div className="text-xs text-dim">
             Scans every generated file: assigns an id to anything from before
@@ -420,14 +399,9 @@ export function ProjectSettingsDialog({ onClose }: Props) {
             <div className="text-xs font-semibold text-dim uppercase tracking-wide">
               Thumbnails
             </div>
-            <button
-              type="button"
-              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-              disabled={thumbsBusy || !projectPath}
-              onClick={rebuildThumbs}
-            >
+            <Btn disabled={thumbsBusy || !projectPath} onClick={rebuildThumbs}>
               {thumbsBusy ? "Building…" : "Rebuild"}
-            </button>
+            </Btn>
           </div>
           <div className="text-xs text-dim">
             Gallery tiles render small cached copies from{" "}
@@ -450,23 +424,18 @@ export function ProjectSettingsDialog({ onClose }: Props) {
       </div>
 
       <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-        <button className="px-3 py-1 bg-bg text-xs" onClick={onClose}>
+        <Btn onClick={onClose}>
           Cancel
-        </button>
-        <button
-          className="px-3 py-1 bg-bg text-xs disabled:opacity-50"
+        </Btn>
+        <Btn
           disabled={busy || !projectPath || scriptCounts.sequences === 0}
           onClick={promptCreateDirs}
         >
           CREATE DIRS
-        </button>
-        <button
-          className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
-          disabled={busy || !config || !versionPrefixValid}
-          onClick={save}
-        >
+        </Btn>
+        <Btn disabled={busy || !config || !versionPrefixValid} onClick={save}>
           Save
-        </button>
+        </Btn>
       </div>
 
       {pendingDirs && (
@@ -493,18 +462,12 @@ export function ProjectSettingsDialog({ onClose }: Props) {
               ))}
             </ul>
             <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-              <button
-                className="px-3 py-1 bg-bg text-xs"
-                onClick={() => setPendingDirs(null)}
-              >
+              <Btn onClick={() => setPendingDirs(null)}>
                 Cancel
-              </button>
-              <button
-                className="px-3 py-1 bg-accent text-bg text-xs"
-                onClick={confirmCreateDirs}
-              >
+              </Btn>
+              <Btn onClick={confirmCreateDirs}>
                 Create
-              </button>
+              </Btn>
             </div>
           </div>
         </div>

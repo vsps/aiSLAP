@@ -13,6 +13,7 @@ import {
 import { usePopupDismiss, useClampedPosition } from "../lib/popup";
 import { basename } from "../lib/paths";
 import { Icon } from "../lib/icon";
+import { Chip } from "./Chip";
 
 /** Tags on the target image, from whichever loaded view holds it. Reading
  *  from the store rather than a prop keeps the popover in sync with the
@@ -108,20 +109,16 @@ function Editor({ target }: { target: Target }) {
       {tags.length > 0 && (
         <div className="flex flex-wrap gap-1 p-1.5 border-b border-dim">
           {tags.map((t) => (
-            <button
+            <Chip
               key={t}
-              type="button"
+              color={tagColor(defs, t)}
+              active
               onClick={() => remove(t)}
               title={`Remove "${t}"`}
-              className="flex items-center gap-1 px-1 py-[1px] bg-inset hover:bg-accent hover:text-bg"
             >
-              <span
-                className="w-[6px] h-[6px] shrink-0"
-                style={{ background: tagColor(defs, t) }}
-              />
               {t}
               <Icon name="close" size={11} />
-            </button>
+            </Chip>
           ))}
         </div>
       )}
@@ -155,7 +152,7 @@ function Editor({ target }: { target: Target }) {
             className="w-full text-left px-1.5 py-[2px] hover:bg-accent flex items-center gap-1.5"
           >
             <span
-              className="w-[6px] h-[6px] shrink-0"
+              className="w-[6px] h-[6px] rounded-full shrink-0"
               style={{ background: d.color }}
             />
             <span className="truncate">{d.name}</span>

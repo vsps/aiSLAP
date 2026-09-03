@@ -27,6 +27,9 @@ import type {
   ThumbsReport,
   AssetRecord,
   AssetRefRecord,
+  AssetTrace,
+  DerivedPricing,
+  SharedPricing,
   SyncReport,
   ReconcileReport,
 } from "./types";
@@ -248,11 +251,20 @@ export const cmd = {
   ): Promise<boolean> =>
     rawInvoke("video_thumbnail_extract", { videoPath, thumbPath, ffmpegPath }),
 
+  /** fps / duration / coded frame size, parsed from ffmpeg's own `-i` banner.
+   *  Every field is null rather than an error when ffmpeg is missing or the
+   *  banner doesn't parse. Width and height were already returned by the Rust
+   *  side (`VideoInfo`) but missing from this signature — they are what prices
+   *  the token-billed video models, see falPrices.ts. */
   video_info_probe: (
     videoPath: string,
     ffmpegPath: string,
-  ): Promise<{ fps: number | null; durationSec: number | null }> =>
-    rawInvoke("video_info_probe", { videoPath, ffmpegPath }),
+  ): Promise<{
+    fps: number | null;
+    durationSec: number | null;
+    width: number | null;
+    height: number | null;
+  }> => rawInvoke("video_info_probe", { videoPath, ffmpegPath }),
 
   /** Build any missing thumbnails under `root` into the project's cache.
    *  `recursive` walks the whole project and prunes orphans — that's the
@@ -333,12 +345,35 @@ export const cmd = {
     contentHash: string | null,
   ): Promise<AssetRecord | null> =>
     rawInvoke("asset_lookup", { projectPath, assetId, contentHash }),
+  /** Cross-project: identifies a loose file (embedded id → content hash →
+   *  file name) and returns every index row that describes it. Takes no
+   *  project path — the file may belong to any project this machine has
+   *  opened, or only to the shared Turso db. */
+  asset_trace: (path: string, ffmpegPath: string): Promise<AssetTrace> =>
+    rawInvoke("asset_trace", { path, ffmpegPath }),
   asset_refs_set: (
     projectPath: string,
     assetId: string,
     refs: AssetRefRecord[],
   ): Promise<void> =>
     rawInvoke("asset_refs_set", { projectPath, assetId, refs }),
+  /** The team's shared price sheet (Turso). Null when no Turso is
+   *  configured — callers stay on the local config.json cache. */
+  pricing_pull: (): Promise<SharedPricing | null> => rawInvoke("pricing_pull"),
+  /** Upsert prices/overrides into the shared sheet; last write wins per row.
+   *  Null when no Turso is configured, else the row count written. */
+  pricing_push: (
+    prices: Record<string, string>,
+    overrides: Record<string, number>,
+  ): Promise<number | null> => rawInvoke("pricing_push", { prices, overrides }),
+  /** Read a price table out of what fal actually billed, grouped by endpoint
+   *  and resolution. Only reconciled rows (Reconcile actual) are averaged —
+   *  deriving from our own estimates would be circular. */
+  pricing_derive: (): Promise<DerivedPricing> => rawInvoke("pricing_derive"),
+  /** Remove one override from the shared sheet — a push only ever upserts, so
+   *  clearing the field locally would otherwise leave the row standing. */
+  pricing_forget: (key: string): Promise<boolean | null> =>
+    rawInvoke("pricing_forget", { key }),
   db_sync_outbox: (projectPath: string): Promise<SyncReport> =>
     rawInvoke("db_sync_outbox", { projectPath }),
   project_reconcile: (
