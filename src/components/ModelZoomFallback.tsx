@@ -1,4 +1,6 @@
 import { FullscreenModal } from "./FullscreenModal";
+import { Btn } from "./Btn";
+import { IconBtn } from "./IconBtn";
 
 type Props = {
   filename: string;
@@ -35,13 +37,7 @@ export function ModelZoomFallback({
         <span className="font-mono text-xs text-dim truncate flex-1">
           {filename}
         </span>
-        <button
-          className="accent-hover px-2 py-1 text-xs font-mono"
-          title="Close (Esc)"
-          onClick={onClose}
-        >
-          ✕
-        </button>
+        <IconBtn name="close" size={18} title="Close (Esc)" onClick={onClose} />
       </div>
 
       <div className="flex-1 min-h-0 flex items-center justify-center">
@@ -50,9 +46,7 @@ export function ModelZoomFallback({
             <div className="text-bad mb-2">3D viewer failed to load</div>
             <div className="text-dim mb-3 max-w-md break-words">{error}</div>
             {onRetry && (
-              <button className="accent-hover px-3 py-1" onClick={onRetry}>
-                retry
-              </button>
+              <Btn onClick={onRetry}>retry</Btn>
             )}
           </div>
         ) : (

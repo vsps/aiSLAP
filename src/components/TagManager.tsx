@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Btn } from "./Btn";
 import { cmd } from "../lib/tauri";
 import { confirmAction, showMessage } from "../lib/dialog";
 import { useSessionStore } from "../stores/sessionStore";
@@ -80,14 +81,9 @@ export function TagManager() {
         <div className="text-xs font-semibold text-dim uppercase tracking-wide">
           Tags
         </div>
-        <button
-          type="button"
-          className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-          disabled={busy || !projectPath}
-          onClick={reindex}
-        >
+        <Btn disabled={busy || !projectPath} onClick={reindex}>
           {busy ? "Working…" : "Rebuild tag index"}
-        </button>
+        </Btn>
       </div>
       <div className="text-xs text-dim">
         Tags live in each image's <code>.json</code> sidecar, so they follow the
@@ -135,24 +131,19 @@ export function TagManager() {
                   className="flex-1 min-w-0 bg-inset px-1 py-[1px] outline-none"
                 />
               ) : (
-                <button
-                  type="button"
+                <Btn
+                  variant="ghost"
                   disabled={busy}
                   onClick={() => setEditing({ name: d.name, draft: d.name })}
                   title="Rename (rewrites every sidecar using this tag)"
-                  className="flex-1 min-w-0 text-left px-1 py-[1px] truncate hover:bg-panel"
+                  className="flex-1 min-w-0 justify-start px-1 py-[1px] truncate"
                 >
                   {d.name}
-                </button>
+                </Btn>
               )}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void removeTag(d.name)}
-                className="px-1.5 py-[1px] bg-bg hover:bg-panel disabled:opacity-50"
-              >
+              <Btn disabled={busy} onClick={() => void removeTag(d.name)}>
                 DELETE
-              </button>
+              </Btn>
             </div>
           ))}
         </div>

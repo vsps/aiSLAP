@@ -40,14 +40,14 @@ export function SelectPickerPopup({
   return (
     <div
       ref={ref}
-      className="fixed z-50 bg-panel text-text border border-dim shadow-xl p-1.5"
-      style={{ left: pos.left, top: pos.top }}
+      className="fixed z-50 bg-panel text-text border border-dim shadow-xl p-1.5 grid gap-1"
+      style={{
+        left: pos.left,
+        top: pos.top,
+        gridTemplateColumns: `repeat(${cols}, ${THUMB}px)`,
+      }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div
-        className="grid gap-1"
-        style={{ gridTemplateColumns: `repeat(${cols}, ${THUMB}px)` }}
-      >
         {images.map((img) => {
           const isSelect = img.filename === selectedFilename;
           // Cached thumbnail first for every kind; a still with none yet falls
@@ -97,7 +97,7 @@ export function SelectPickerPopup({
                   {(img.tags ?? []).map((t) => (
                     <span
                       key={t}
-                      className="w-[6px] h-[6px]"
+                      className="w-[6px] h-[6px] rounded-full"
                       style={{ background: tagColor(defs, t) }}
                     />
                   ))}
@@ -106,7 +106,6 @@ export function SelectPickerPopup({
             </button>
           );
         })}
-      </div>
     </div>
   );
 }

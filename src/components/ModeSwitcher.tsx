@@ -1,3 +1,4 @@
+import { Btn } from "./Btn";
 import { useLayoutStore, type AppMode } from "../stores/layoutStore";
 import { useTimelineStore } from "../stores/timelineStore";
 
@@ -29,24 +30,18 @@ export function ModeSwitcher() {
 
   return (
     <div className="flex justify-center gap-[2px] shrink-0 text-xs font-mono">
-      {MODES.map((m) => {
-        const active = m.value === mode;
-        return (
-          <button
-            key={m.value}
-            type="button"
-            title={m.title}
-            onClick={() => pick(m.value)}
-            className={`px-4 py-[3px] tracking-wide whitespace-nowrap ${
-              active
-                ? "bg-accent text-text"
-                : "bg-src-bg text-dim hover:bg-panel hover:text-text"
-            }`}
-          >
-            {m.label}
-          </button>
-        );
-      })}
+      {MODES.map((m) => (
+        <Btn
+          key={m.value}
+          variant="toggle"
+          active={m.value === mode}
+          title={m.title}
+          onClick={() => pick(m.value)}
+          className="px-4 py-[3px] tracking-wide"
+        >
+          {m.label}
+        </Btn>
+      ))}
     </div>
   );
 }

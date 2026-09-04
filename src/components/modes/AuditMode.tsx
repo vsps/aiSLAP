@@ -12,12 +12,15 @@ import {
   linesToCsv,
   summarize,
 } from "../../lib/costReport";
+import { AssetTraceLookup } from "../AssetTraceLookup";
 import { CollapsibleSection } from "../CollapsibleSection";
 import { CostSettings } from "../CostSettings";
 import { SankeyChart } from "../SankeyChart";
 import { useCostReportStore } from "../../stores/costReportStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import type { ProjectCostScan } from "../../lib/types";
+import { Btn } from "../Btn";
+import { Chip } from "../Chip";
 
 /**
  * Costs, usage and reports.
@@ -146,27 +149,20 @@ export function AuditMode() {
     <div className="flex-1 min-h-0 overflow-y-auto thin-scroll p-4 flex flex-col gap-4 bg-panel border border-border">
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+          <div className="text-xs font-bold text-white uppercase tracking-wide">
             Project costs
           </div>
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+            <Btn
               disabled={costReconcileBusy || !projectPath}
               title="Look up fal's billing-events API for the real amount charged for each generation, replacing the estimate below. Needs a fal key with billing-events access."
               onClick={reconcileCosts}
             >
               {costReconcileBusy ? "Reconciling…" : "Reconcile actual"}
-            </button>
-            <button
-              type="button"
-              className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-              disabled={costBusy || !projectPath}
-              onClick={recalculateCosts}
-            >
+            </Btn>
+            <Btn disabled={costBusy || !projectPath} onClick={recalculateCosts}>
               {costBusy ? "Calculating…" : "Recalculate"}
-            </button>
+            </Btn>
           </div>
         </div>
         {costReconcileStatus && (
@@ -246,17 +242,12 @@ export function AuditMode() {
 
       <div className="flex flex-col gap-2 border-t border-dim pt-3">
         <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+          <div className="text-xs font-bold text-white uppercase tracking-wide">
             Reports
           </div>
-          <button
-            type="button"
-            className="px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
-            disabled={reportBusy || !projectPath}
-            onClick={generateReport}
-          >
+          <Btn disabled={reportBusy || !projectPath} onClick={generateReport}>
             {reportBusy ? "Generating…" : "Generate report"}
-          </button>
+          </Btn>
         </div>
 
         {reportData === null ? (
@@ -272,23 +263,18 @@ export function AuditMode() {
                 <span className="text-xs text-dim">User:</span>
                 <div className="flex flex-wrap gap-1">
                   {reportUsers.map((u) => (
-                    <button
+                    <Chip
                       key={u}
-                      type="button"
+                      active={reportFilter.user === u}
                       onClick={() =>
                         setReportFilter((f) => ({
                           ...f,
                           user: f.user === u ? null : u,
                         }))
                       }
-                      className={`px-1.5 py-[1px] text-xs border ${
-                        reportFilter.user === u
-                          ? "bg-accent text-bg border-accent"
-                          : "bg-bg border-dim hover:bg-panel"
-                      }`}
                     >
                       {u}
-                    </button>
+                    </Chip>
                   ))}
                   {reportUsers.length === 0 && (
                     <span className="text-xs text-dim">none attributed</span>
@@ -328,15 +314,14 @@ export function AuditMode() {
                   ({reportSummary.unknownCount} unpriced)
                 </span>
               )}
-              <button
-                type="button"
-                className="ml-auto px-2 py-0.5 bg-bg text-xs disabled:opacity-50"
+              <Btn
+                className="ml-auto"
                 disabled={filteredLines.length === 0}
                 title="Export the rows currently shown (respects the user/model filter above) as CSV."
                 onClick={exportReportCsv}
               >
                 Export CSV
-              </button>
+              </Btn>
             </div>
 
             <SankeyChart nodes={sankeyData.nodes} links={sankeyData.links} width={900} />
@@ -372,6 +357,10 @@ export function AuditMode() {
           </>
         )}
       </div>
+      <div className="border-t border-dim pt-3">
+        <AssetTraceLookup />
+      </div>
+
       <CollapsibleSection label="Cost settings">
         <CostSettings />
       </CollapsibleSection>

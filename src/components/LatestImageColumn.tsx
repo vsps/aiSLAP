@@ -190,12 +190,11 @@ export function LatestImageColumn() {
   return (
     <div className="bg-surface border border-border p-prompt-column text-text flex-1 min-w-0 flex flex-col gap-prompt-column-gap shrink">
       <div className="flex items-center text-sm font-semibold">
-        <span>{timelineActive ? "TIMELINE" : "PREVIEW"}</span>
+        {timelineActive ? "TIMELINE" : "PREVIEW"}
         {!timelineActive && image && (
           <>
-            <span className="flex-1" />
             <span
-              className="text-xs opacity-60 font-mono truncate"
+              className="ml-auto text-xs opacity-60 font-mono truncate"
               title={image.path}
             >
               {image.filename}
@@ -264,10 +263,10 @@ export function LatestImageColumn() {
               onChange={setCmpOffsetA}
             />
           )}
-          <div className="flex-1" />
           <IconBtn
             name="compare"
             size={22}
+            className="ml-auto"
             fill={compareMode}
             title={compareMode ? "Exit compare mode" : "Compare mode"}
             onClick={() => setCompareMode(!compareMode)}

@@ -194,7 +194,7 @@ export function GalleryColumn({
 
   const isTarget = targetVersion === column.version;
   const headerClass = isTarget
-    ? "bg-accent text-text"
+    ? "bg-accent text-on-accent"
     : column.isSrc
       ? "bg-surface text-text"
       : "accent-hover text-text";

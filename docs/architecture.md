@@ -84,7 +84,7 @@ SplashScreen        overlays everything until `ready`
 |---|---|
 | **GENERATE** | `Workbench` (the chain editor), `Gallery`, `QueueChecklist` \| `LogWindow` |
 | **DELIVER** | `LatestImageColumn` as a preview, `Timeline` as the edit strip, `Gallery selectable` + `TagManager` + `DeliverExportBar` |
-| **AUDIT** | the project cost tree, the per-image report and Sankey, and `CostSettings` in a collapsible |
+| **AUDIT** | the project cost tree, the per-image report and Sankey, `AssetTraceLookup` (the cross-project file lookup — see [storage.md](storage.md)), and `CostSettings` in a collapsible |
 
 `ResizeBar`s between the panels are driven by `layoutStore`, which persists sizes to
 `localStorage`.
@@ -112,7 +112,7 @@ Rather than an alphabetical inventory (53 files, and they move):
 
 | Role | Components |
 |---|---|
-| **Shell** | `App`, `ModeSwitcher`, `GenerateMode`, `DeliverMode`, `AuditMode`, `SessionBar`, `Workbench`, `SplashScreen`, `ResizeBar`, `ColumnResizeHandle`, `CollapsedColumnBar` |
+| **Shell** | `App`, `ModeSwitcher`, `GenerateMode`, `DeliverMode`, `AuditMode`, `AssetTraceLookup`, `SessionBar`, `Workbench`, `SplashScreen`, `ResizeBar`, `ColumnResizeHandle`, `CollapsedColumnBar` |
 | **Chain columns** | `ModelSettingsColumn`, `PromptColumn`, `RefImagesColumn`, `LatestImageColumn`, `RunColumn`, `CollapsedLinkColumn`, `ChainAddBar` |
 | **Gallery** | `Gallery`, `GalleryColumn`, `Thumbnail`, `VersionStack`, `StackedView`, `TagView`, `TagFilterBar`, `TagEditorPopup`, `SelectPickerPopup`; filtering is shared with DELIVER via `lib/galleryFilter.ts` |
 | **Viewers / editors** | `ImageZoomModal` (hosts `DrawMode`, `CropMode`), `ModelZoomModal` (GLB), `SamPromptModal`, `LlmPromptModal`, `ComparePreview`, `FullscreenModal` |

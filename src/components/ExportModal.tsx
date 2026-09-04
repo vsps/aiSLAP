@@ -6,6 +6,7 @@ import type { InterchangeFormat } from "../lib/types";
 import { useSessionStore } from "../stores/sessionStore";
 import { basename } from "../lib/paths";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
 
 type Props = {
   onClose: () => void;
@@ -153,18 +154,16 @@ export function ExportModal({ onClose }: Props) {
           <label className="self-center text-dim">Format</label>
           <div className="flex items-center gap-1">
             {FORMATS.map((f) => (
-              <button
+              <Btn
                 key={f.label}
-                type="button"
+                variant="toggle"
+                active={f.value === format}
                 title={f.hint}
                 disabled={busy}
                 onClick={() => onPickFormat(f.value)}
-                className={`px-2 py-[2px] text-xs disabled:opacity-50 ${
-                  f.value === format ? "bg-accent text-text" : "bg-dim text-text"
-                }`}
               >
                 {f.label}
-              </button>
+              </Btn>
             ))}
           </div>
 
@@ -198,13 +197,9 @@ export function ExportModal({ onClose }: Props) {
               className="flex-1 min-w-0 bg-bg border border-border text-text px-1 py-[1px] text-xs font-mono truncate"
               title={outputPath ?? ""}
             />
-            <button
-              type="button"
-              className="bg-dim text-text px-2 py-[2px] text-xs"
-              onClick={onPickPath}
-            >
+            <Btn onClick={onPickPath}>
               Choose…
-            </button>
+            </Btn>
           </div>
         </div>
 
@@ -220,22 +215,12 @@ export function ExportModal({ onClose }: Props) {
         )}
 
         <div className="px-4 py-2 flex justify-end gap-2 border-t border-border">
-          <button
-            type="button"
-            className="bg-dim text-text px-3 py-1"
-            onClick={onClose}
-            disabled={busy}
-          >
+          <Btn onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="bg-accent text-text px-3 py-1 disabled:opacity-50"
-            onClick={onExport}
-            disabled={busy || !outputPath}
-          >
+          </Btn>
+          <Btn onClick={onExport} disabled={busy || !outputPath}>
             {busy ? (isRender ? "Exporting…" : "Writing…") : isRender ? "Export" : "Write"}
-          </button>
+          </Btn>
         </div>
     </ModalDialog>
   );

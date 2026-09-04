@@ -4,6 +4,7 @@ import type { ImageMetadata } from "../lib/types";
 import { basename } from "../lib/paths";
 import { assemblePromptFromMetadata } from "../lib/actions";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
 
 type Props = {
   path: string;
@@ -50,7 +51,7 @@ export function ImageInfoModal({ path, onClose }: Props) {
       )}
 
       <div className="px-4 py-2 flex justify-end border-t border-dim shrink-0">
-        <button className="px-3 py-1 bg-bg text-xs" onClick={onClose}>Close</button>
+        <Btn onClick={onClose}>Close</Btn>
       </div>
     </ModalDialog>
   );

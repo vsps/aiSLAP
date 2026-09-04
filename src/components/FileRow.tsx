@@ -69,7 +69,7 @@ export const FileRow = memo(function FileRow({
     <div
       ref={rootRef}
       className={`px-1 py-[2px] text-xs font-mono truncate cursor-pointer select-none ${
-        selected ? "bg-accent text-text" : "text-text hover:bg-panel"
+        selected ? "bg-accent text-on-accent" : "text-text hover:bg-panel"
       } ${isDragSource ? "opacity-40" : ""}`}
       title={image.filename}
       onPointerDown={onPointerDown}

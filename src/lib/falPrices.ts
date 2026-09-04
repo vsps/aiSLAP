@@ -178,6 +178,48 @@ export function isPerAreaUnit(unit: string): boolean {
   return /^megapixels?\b/.test(unit);
 }
 
+/** ByteDance's video token divisor. Their video models bill on
+ *  `tokens = width × height × fps × duration / 1024`, and fal resells that
+ *  billing verbatim — spelled out as "per 1000 tokens" for Seedance 2.5, and
+ *  as the vaguer "per units" for Seedance 2.0. */
+const TOKEN_DIVISOR = 1024;
+
+/** Tokens in one billed unit, or null when the unit isn't token-billed.
+ *
+ *  `"units"` is the ambiguous one. For an image or 3D output a fal "unit" is
+ *  one output — sam-3, seedream v5 and gpt-image-2 all report it and are
+ *  billed flat — but for a *video* output it is 1000 ByteDance tokens. So
+ *  callers must only consult this for video; see perItemPrice, where the
+ *  video-token branch is tested before the flat one for exactly this reason.
+ *
+ *  The 1000 is established by arithmetic, not documentation: Seedance 2.0 at
+ *  $0.014/unit, 720p/24fps/5s, gives 108 kilotokens = $1.512 against a real
+ *  billed $1.515. If a model's numbers ever look wrong, Reconcile actual
+ *  (AUDIT) reads fal's billing ledger and settles it. */
+export function tokensPerBilledUnit(unit: string): number | null {
+  const explicit = unit.match(/^(?:(\d+)\s+)?tokens?\b/);
+  if (explicit) return explicit[1] ? Number(explicit[1]) : 1;
+  return /^units?\b/.test(unit) ? 1000 : null;
+}
+
+/** Frames in one billed unit ("16 frames" for sam-3 video), else null. */
+export function framesPerBilledUnit(unit: string): number | null {
+  const m = unit.match(/^(?:(\d+)\s+)?frames?\b/);
+  return m ? (m[1] ? Number(m[1]) : 1) : null;
+}
+
+/** ByteDance video tokens for one output. Every factor has to be known — a
+ *  guessed frame rate is a guessed invoice — so a missing one yields null and
+ *  the output stays unpriced. */
+export function videoTokens(ctx: CostContext): number | null {
+  const { width, height, fps, durationSec } = ctx;
+  const factors = [width, height, fps, durationSec];
+  if (!factors.every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)) {
+    return null;
+  }
+  return (width! * height! * fps! * durationSec!) / TOKEN_DIVISOR;
+}
+
 /** Parse a `duration` setting value to seconds. Handles the numeric,
  *  numeric-string, and suffixed-string ("8s") shapes used across the model
  *  registry. Returns null for non-numeric values (e.g. seedance-2's "auto"),
@@ -210,7 +252,55 @@ export type CostContext = {
    *  lib/generation/output.ts), never guessed from a named size preset.
    *  Null/undefined when unknown. */
   megapixels?: number | null;
+  /** Coded frame size and frame rate of the output video, for token- and
+   *  frame-billed units. Measured with `video_info_probe` once the file is on
+   *  disk — there is no `fps` parameter anywhere in the model registry, so
+   *  settings alone cannot supply this. RunColumn's pre-submit preview is the
+   *  one caller that estimates them (`estimateVideoGeometry` /
+   *  `ASSUMED_PREVIEW_FPS`), having no file to measure yet. */
+  width?: number | null;
+  height?: number | null;
+  fps?: number | null;
 };
+
+/** Frame rate assumed by the pre-submit preview: Seedance's native output
+ *  rate. The preview is explicitly an estimate — the sidecar takes the exact
+ *  number from the probe seconds later — so a wrong guess self-corrects. */
+export const ASSUMED_PREVIEW_FPS = 24;
+
+/** Pixel dimensions for a named resolution preset, at 16:9. Preview-only, for
+ *  the same reason as ASSUMED_PREVIEW_FPS: a model's `ratio` setting can make
+ *  the real frame taller than it is wide, and only the written file knows. */
+export function estimateVideoGeometry(
+  resolution: string | null | undefined,
+): { width: number; height: number } | null {
+  // Lowercased first: the registry's resolution vocabularies disagree on case
+  // — Seedance offers "4k" while others offer "4K", and "480P" sits beside
+  // "480p". A case-sensitive match silently dropped whole rows.
+  switch (resolution?.toLowerCase()) {
+    case "360p":
+      return { width: 640, height: 360 };
+    case "480p":
+      return { width: 854, height: 480 };
+    case "540p":
+      return { width: 960, height: 540 };
+    case "720p":
+      return { width: 1280, height: 720 };
+    case "768p":
+      return { width: 1366, height: 768 };
+    case "1080p":
+    case "1k":
+      return { width: 1920, height: 1080 };
+    case "2k":
+      return { width: 2560, height: 1440 };
+    case "4k":
+      return { width: 3840, height: 2160 };
+    // "auto", "512px", "0.5K" and anything unrecognised: no dimensions worth
+    // guessing. The output probe still prices these exactly once written.
+    default:
+      return null;
+  }
+}
 
 /** Per-output price for one endpoint, from the local cache. A user-entered
  *  override (Settings -> Costs) always wins when present — it's the only way
@@ -248,6 +338,18 @@ export function perItemPrice(
   if (!text) return null;
   const parsed = parseFalPrice(text);
   if (!parsed) return null;
+  // Video token billing is tested FIRST, because "units" would otherwise be
+  // swallowed by isPerItemUnit's `unit` alternative and priced flat — which
+  // for Seedance 2.0 meant $0.014 a video instead of ~$1.50. On an image or 3D
+  // output "units" really does mean one output, so the flat branch below still
+  // gets it; only video takes this road.
+  if (ctx?.isVideo) {
+    const perUnit = tokensPerBilledUnit(parsed.unit);
+    if (perUnit != null) {
+      const tokens = videoTokens(ctx);
+      return tokens != null ? (parsed.amount * tokens) / perUnit : null;
+    }
+  }
   if (isPerItemUnit(parsed.unit)) return parsed.amount;
   if (ctx?.isVideo && isPerSecondUnit(parsed.unit) && ctx.durationSec != null) {
     return parsed.amount * ctx.durationSec;
@@ -255,7 +357,36 @@ export function perItemPrice(
   if (isPerAreaUnit(parsed.unit) && ctx?.megapixels != null) {
     return parsed.amount * ctx.megapixels;
   }
+  // Frame-billed (sam-3 video: "$0.005 per 16 frames"). Frame count comes from
+  // the same probe as the token math — fps × duration, both measured.
+  const perFrameUnit = framesPerBilledUnit(parsed.unit);
+  if (perFrameUnit != null && ctx?.fps != null && ctx.durationSec != null) {
+    return (parsed.amount * ctx.fps * ctx.durationSec) / perFrameUnit;
+  }
   return null;
+}
+
+/** Effective $/second for a token-billed video model at one resolution — the
+ *  number that makes it comparable to the per-second models beside it in the
+ *  price table. Constant per resolution, because tokens scale linearly with
+ *  duration: `amount × w × h × fps / 1024 / tokensPerUnit`.
+ *
+ *  Returns null for anything not token-billed, which includes per-second
+ *  models (already $/s, nothing to convert) and "compute seconds" — that one
+ *  is GPU time, unknowable from an output at any resolution. */
+export function effectiveDollarsPerSecond(
+  priceText: string,
+  resolution: string | null | undefined,
+  fps: number = ASSUMED_PREVIEW_FPS,
+): number | null {
+  const parsed = parseFalPrice(priceText);
+  if (!parsed) return null;
+  const perUnit = tokensPerBilledUnit(parsed.unit);
+  if (perUnit == null) return null;
+  const geometry = estimateVideoGeometry(resolution);
+  if (!geometry) return null;
+  const tokensPerSecond = (geometry.width * geometry.height * fps) / TOKEN_DIVISOR;
+  return (parsed.amount * tokensPerSecond) / perUnit;
 }
 
 type EstimateResponse = { total_cost?: number };

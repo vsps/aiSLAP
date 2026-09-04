@@ -102,17 +102,15 @@ export function VersionStack({
         style={{ top: padTotal, left: padTotal, width: size, height: size }}
       >
         {selectImg ? (
-          <div className="w-full" style={{ height: size }}>
-            <Thumbnail
-              image={selectImg}
-              selected={selectedGlobally}
-              columnVersion={stack.version}
-              onSelect={handleSelect}
-              onEditTags={handleEditTags}
-              onDragStart={handleThumbDragStart}
-              maxAspect={1}
-            />
-          </div>
+          <Thumbnail
+            image={selectImg}
+            selected={selectedGlobally}
+            columnVersion={stack.version}
+            onSelect={handleSelect}
+            onEditTags={handleEditTags}
+            onDragStart={handleThumbDragStart}
+            maxAspect={1}
+          />
         ) : (
           <div
             className="w-full h-full flex items-center justify-center text-xs text-dim bg-bg border border-border"

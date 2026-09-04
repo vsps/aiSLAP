@@ -3,6 +3,7 @@ import { cmd } from "../lib/tauri";
 import { DEFAULT_CONFIG } from "../lib/types";
 import { installUpdate, type Update } from "../lib/updater";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
 
 type Props = {
   update: Update;
@@ -56,20 +57,12 @@ export function UpdateAvailableDialog({ update, onClose }: Props) {
         {status && <div className="text-dim">{status}</div>}
       </div>
       <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-        <button
-          className="px-3 py-1 bg-bg text-xs disabled:opacity-50"
-          disabled={busy}
-          onClick={later}
-        >
+        <Btn disabled={busy} onClick={later}>
           Later
-        </button>
-        <button
-          className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
-          disabled={busy}
-          onClick={updateAndRestart}
-        >
+        </Btn>
+        <Btn disabled={busy} onClick={updateAndRestart}>
           {busy ? status ?? "Updating…" : "Update & Restart"}
-        </button>
+        </Btn>
       </div>
     </ModalDialog>
   );

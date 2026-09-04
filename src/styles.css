@@ -13,6 +13,16 @@
 
     /* Derived / semantic / non-editable. */
     --color-inset: #353535; /* mirrors src-bg at runtime */
+
+    /* Control surfaces, all derived from --color-accent by lib/colors.ts at
+       runtime. Buttons carry the accent at half saturation; a selected toggle
+       carries it at full strength. The two `on-*` foregrounds are picked for
+       contrast independently and can differ — see readableOn(). These defaults
+       are what the derivation yields for the default accent #9b31f2, so the
+       first paint matches before applyColors() runs. */
+    --color-accent-muted: #9661c2;
+    --color-on-accent: #ffffff;
+    --color-on-accent-muted: #000000;
     --color-dim: #666666;
     --color-edge: #8a8a8a;
     --color-ok: #4ade80;

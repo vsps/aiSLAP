@@ -118,21 +118,17 @@ export function StackedView({ onDragStart }: Props) {
               <div className="text-xs text-dim self-center pl-2">No refs</div>
             ) : (
               sequenceStacks.globalSrcImages.map((img) => (
-                <div
+                <Thumbnail
                   key={img.path}
-                  className="shrink-0"
-                  style={{ width: thumbColWidth, height: thumbColWidth }}
-                >
-                  <Thumbnail
-                    image={img}
-                    selected={selectedImagePath === img.path}
-                    columnVersion="GLOBAL SRC"
-                    onSelect={selectImagePath}
-                    onEditTags={editTagsAt}
-                    onDragStart={onDragStart}
-                    maxAspect={1}
-                  />
-                </div>
+                  style={{ width: thumbColWidth }}
+                  image={img}
+                  selected={selectedImagePath === img.path}
+                  columnVersion="GLOBAL SRC"
+                  onSelect={selectImagePath}
+                  onEditTags={editTagsAt}
+                  onDragStart={onDragStart}
+                  maxAspect={1}
+                />
               ))
             )}
           </div>

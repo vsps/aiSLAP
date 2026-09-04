@@ -8,6 +8,7 @@ import { cmd } from "../lib/tauri";
 import { basename, normalizeDir } from "../lib/paths";
 import { normalizeTitle } from "../lib/script";
 import { renameSequence, renameShot } from "../lib/actions";
+import { Btn } from "./Btn";
 
 type Props = {
   onOpenSettings?: () => void;
@@ -114,7 +115,7 @@ export function SessionBar({
     <div className="flex items-center gap-[5px] text-sm">
       <div className="flex flex-1 items-center gap-[6px] min-w-0 bg-panel px-[5px] py-[5px]">
         {/* PROJECT */}
-        <span>PROJECT DIR:</span>
+        PROJECT DIR:
         <IconBtn name="folder_open" size={22} title="Pick project directory" onClick={pickProject} />
         <Pill
           value={projectPath ?? "—"}
@@ -145,18 +146,14 @@ export function SessionBar({
             title={`PRISM project${prism.projectName ? `: ${prism.projectName}` : ""}`}
           >
             {(["shot", "asset"] as const).map((t) => (
-              <button
+              <Btn
                 key={t}
-                type="button"
+                variant="toggle"
+                active={entityType === t}
                 onClick={() => void setEntityType(t)}
-                className={
-                  entityType === t
-                    ? "px-2 py-[2px] bg-accent text-bg"
-                    : "px-2 py-[2px] bg-src-bg text-text hover:opacity-80"
-                }
               >
                 {t.toUpperCase()}
-              </button>
+              </Btn>
             ))}
           </div>
         )}

@@ -138,7 +138,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const target = joinPath(ctx.versionDir, filename);
     await cmd.write_text_file(target, firstInline.inlineText ?? "");
     const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, {});
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
@@ -159,7 +159,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       await cmd.download_to_path(firstModel3d.thumbUrl, thumbPath).catch(() => {});
     }
     const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, {});
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
@@ -171,8 +171,11 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, 1, ext, false, tokensFor(0));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(firstVideo.url, target);
+    // Before identifyMedia: its ffmpeg remux rewrites the container, and the
+    // numbers wanted here are the ones the provider actually delivered.
+    const geometry = await readVideoGeometry(target, ctx.ffmpegPath);
     const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
-    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, null);
+    const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, geometry);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
@@ -190,12 +193,12 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const filename = resolveFilename(ctx, i + 1, ext, multipleFiles, tokensFor(i));
     const target = joinPath(ctx.versionDir, filename);
     await cmd.download_to_path(f.url, target);
-    const megapixels = await readMegapixels(target);
+    const geometry = await readImageGeometry(target);
     const identity = await identifyMedia(target, ctx.projectId, ctx.ffmpegPath);
     const iterIdx = ctx.expandToIterations
       ? Math.min(ctx.iterationBase + i, ctx.iterationTotal)
       : ctx.iterationBase;
-    const meta = buildMetadataRecord(ctx, iterIdx, identity, costPerFile, megapixels);
+    const meta = buildMetadataRecord(ctx, iterIdx, identity, costPerFile, geometry);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
@@ -225,15 +228,47 @@ async function ensureThumbs(ctx: DownloadCtx): Promise<void> {
     });
 }
 
-/** Real output pixel count / 1,000,000, read from the downloaded file's own
- *  header — used to price per-megapixel-billed models (e.g. FLUX, Topaz
- *  upscale) exactly, per isPerAreaUnit in falPrices.ts. Never guessed from a
- *  named size preset or an upscale model's input-dependent output size.
- *  Null for anything imagesize doesn't recognize (non-image outputs) —
- *  best-effort, never blocks the write. */
-async function readMegapixels(target: string): Promise<number | null> {
+/** What the written file itself says about its own geometry — the input to
+ *  every size-, token- and frame-billed price in falPrices.ts. Always
+ *  measured, never inferred from a named size preset or an upscale model's
+ *  input-dependent output size. Every field is best-effort: a probe that
+ *  fails leaves the model unpriced, it never blocks the write. */
+type OutputGeometry = {
+  megapixels?: number | null;
+  width?: number | null;
+  height?: number | null;
+  fps?: number | null;
+  durationSec?: number | null;
+};
+
+/** Stills: pixel count for the per-megapixel models (FLUX, Topaz upscale).
+ *  Null for anything imagesize doesn't recognise. */
+async function readImageGeometry(target: string): Promise<OutputGeometry> {
   const dims = await cmd.image_dimensions_read(target).catch(() => null);
-  return dims ? (dims.width * dims.height) / 1_000_000 : null;
+  if (!dims) return {};
+  return {
+    megapixels: (dims.width * dims.height) / 1_000_000,
+    width: dims.width,
+    height: dims.height,
+  };
+}
+
+/** Video: frame size, rate and duration, for the token-billed ByteDance
+ *  models and the frame-billed sam-3 ones. This probe is the *only* source of
+ *  frame rate anywhere in the app — no model in the registry declares one —
+ *  so without it a token-billed video cannot be priced at all. */
+async function readVideoGeometry(
+  target: string,
+  ffmpegPath: string,
+): Promise<OutputGeometry> {
+  const info = await cmd.video_info_probe(target, ffmpegPath).catch(() => null);
+  if (!info) return {};
+  return {
+    width: info.width,
+    height: info.height,
+    fps: info.fps,
+    durationSec: info.durationSec,
+  };
 }
 
 /** fal's own authoritative per-output cost for this job (see
@@ -343,7 +378,7 @@ function buildMetadataRecord(
   iterationIndex: number,
   identity: OutputIdentity,
   estimatedCostPerFile: number | null,
-  megapixels: number | null,
+  geometry: OutputGeometry,
 ): ImageMetadata {
   const cleaned: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(ctx.settings)) {
@@ -375,10 +410,16 @@ function buildMetadataRecord(
     estimatedCostPerFile ??
     perItemPrice(ctx.node.provider, ctx.node.endpoint, ctx.prices, ctx.priceOverrides, {
       isVideo: ctx.node.kind === "video",
-      durationSec: parseDurationSeconds(ctx.settings.duration),
+      // Measured duration wins over the requested one: a model may round 8s to
+      // 8.04, and for a token-billed model that difference is billed.
+      durationSec:
+        geometry.durationSec ?? parseDurationSeconds(ctx.settings.duration),
       resolution:
         typeof ctx.settings.resolution === "string" ? ctx.settings.resolution : null,
-      megapixels,
+      megapixels: geometry.megapixels,
+      width: geometry.width,
+      height: geometry.height,
+      fps: geometry.fps,
     }) ??
     undefined;
   return {

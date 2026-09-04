@@ -4,6 +4,11 @@
 
 use std::path::PathBuf;
 
+use std::collections::HashMap;
+
+use crate::db::derive::DerivedPricing;
+use crate::db::pricing::SharedPricing;
+use crate::db::trace::AssetTrace;
 use crate::db::{self, AssetRecord, AssetRefRecord, ReconcileReport, SyncReport};
 use crate::error::AppResult;
 
@@ -21,6 +26,13 @@ pub async fn asset_lookup(
     db::asset_lookup(&PathBuf::from(project_path), asset_id, content_hash).await
 }
 
+/// Identify a loose media file and report every index row that describes it.
+/// Takes no project path on purpose — see `db::trace`.
+#[tauri::command]
+pub async fn asset_trace(path: String, ffmpeg_path: String) -> AppResult<AssetTrace> {
+    db::trace::asset_trace(&PathBuf::from(path), &ffmpeg_path).await
+}
+
 #[tauri::command]
 pub async fn asset_refs_set(
     project_path: String,
@@ -28,6 +40,37 @@ pub async fn asset_refs_set(
     refs: Vec<AssetRefRecord>,
 ) -> AppResult<()> {
     db::asset_refs_set(&PathBuf::from(project_path), &asset_id, &refs).await
+}
+
+/// Read the team's shared price sheet. `None` means no Turso is configured —
+/// the caller stays on its local `config.json` cache.
+#[tauri::command]
+pub async fn pricing_pull() -> AppResult<Option<SharedPricing>> {
+    db::pricing::pricing_pull().await
+}
+
+/// Upsert prices/overrides into the shared sheet, last write wins per row.
+/// `None` when no Turso is configured; otherwise the row count written.
+#[tauri::command]
+pub async fn pricing_push(
+    prices: HashMap<String, String>,
+    overrides: HashMap<String, f64>,
+) -> AppResult<Option<u32>> {
+    db::pricing::pricing_push(prices, overrides).await
+}
+
+/// Read a price table out of what fal actually billed, grouped by endpoint
+/// and resolution. Only reconciled rows are averaged — see `db::derive`.
+#[tauri::command]
+pub async fn pricing_derive() -> AppResult<DerivedPricing> {
+    db::derive::pricing_derive().await
+}
+
+/// Remove one override from the shared sheet — clearing the field locally is
+/// not enough, since a push only ever upserts what it was given.
+#[tauri::command]
+pub async fn pricing_forget(key: String) -> AppResult<Option<bool>> {
+    db::pricing::pricing_forget(key).await
 }
 
 #[tauri::command]

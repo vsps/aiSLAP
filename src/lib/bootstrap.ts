@@ -18,6 +18,7 @@ import { loadSystemUsername } from "./systemUser";
 import { useModelsStore } from "../stores/modelsStore";
 import { usePresetsStore } from "../stores/presetsStore";
 import { usePricesStore } from "../stores/pricesStore";
+import { pullSharedPricing } from "./sharedPricing";
 import { useLayoutStore } from "../stores/layoutStore";
 import { createTab, useTabsStore, type Tab } from "../stores/tabsStore";
 
@@ -263,6 +264,12 @@ export async function bootstrap(): Promise<() => void> {
     .getState()
     .setPrices(config?.falPrices ?? {}, config?.falPricesFetchedAt ?? null);
   usePricesStore.getState().setOverrides(config?.priceOverrides ?? {});
+
+  // Then adopt the team's shared sheet on top, if there is one. Fire-and-
+  // forget: it crosses the network, and startup must not wait on it — the
+  // config cache seeded above is already a working answer, and the store
+  // updates in place when the pull lands. See lib/sharedPricing.ts.
+  void pullSharedPricing();
 
   const entries = useModelsStore.getState().entries;
 

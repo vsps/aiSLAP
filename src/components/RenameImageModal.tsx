@@ -5,6 +5,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { showMessage } from "../lib/dialog";
 import { isFilenameExists } from "../lib/errors";
 import { ModalDialog } from "./ModalDialog";
+import { Btn } from "./Btn";
 
 type Props = {
   image: GalleryImage;
@@ -100,22 +101,12 @@ export function RenameImageModal({ image, onClose }: Props) {
         </div>
         {error && <div className="text-xs text-red-500">{error}</div>}
         <div className="flex justify-end gap-2 mt-1">
-          <button
-            type="button"
-            className="px-2 py-[2px] text-sm hover:bg-accent"
-            onClick={onClose}
-            disabled={busy}
-          >
+          <Btn onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="px-2 py-[2px] text-sm bg-accent hover:opacity-80"
-            onClick={() => void confirm()}
-            disabled={busy}
-          >
+          </Btn>
+          <Btn onClick={() => void confirm()} disabled={busy}>
             Rename
-          </button>
+          </Btn>
         </div>
     </ModalDialog>
   );

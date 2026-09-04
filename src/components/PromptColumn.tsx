@@ -17,6 +17,7 @@ import { IconBtn } from "./IconBtn";
 import { LlmPromptModal } from "./LlmPromptModal";
 import { ColumnResizeHandle } from "./ColumnResizeHandle";
 import { CollapsedColumnBar } from "./CollapsedColumnBar";
+import { Btn } from "./Btn";
 
 // Clicking a column header toggles collapse, except when the click lands on
 // an interactive control inside it (history nav, AI rewrite, clear, etc.).
@@ -299,14 +300,14 @@ function ShotPromptColumn({ title }: { title: string }) {
             {atLive ? entries.length : `${safeCursor + 1}/${entries.length}`}
           </span>
         )}
-        <div className="flex-1" />
-        <button
-          className="text-xs opacity-50 hover:opacity-100 px-1"
+        <Btn
+          variant="ghost"
+          className="ml-auto text-xs px-1"
           title="Clear all shot prompts"
           onClick={() => setShotPrompts([""])}
         >
           clear
-        </button>
+        </Btn>
         <IconBtn
           name="keyboard_arrow_left"
           size={18}

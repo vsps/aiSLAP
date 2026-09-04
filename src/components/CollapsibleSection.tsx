@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { Btn } from "./Btn";
 
 type Props = {
   label: string;
@@ -19,17 +20,17 @@ export function CollapsibleSection({ label, defaultOpen, children }: Props) {
   const [open, setOpen] = useState(!!defaultOpen);
   return (
     <div className="flex flex-col gap-1">
-      <button
-        type="button"
+      <Btn
+        variant="ghost"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 text-xs font-semibold text-dim uppercase tracking-wide hover:text-text self-start"
+        className="text-xs font-bold uppercase tracking-wide self-start"
       >
         <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
           {open ? "expand_more" : "chevron_right"}
         </span>
         {label}
-      </button>
+      </Btn>
       {open && children}
     </div>
   );

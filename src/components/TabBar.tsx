@@ -136,6 +136,9 @@ function TabChip({
         ? `${unseen} new result${unseen > 1 ? "s" : ""} — not looked at yet`
         : null;
 
+  // The active tab is marked with an accent underline rather than an accent
+  // fill: `stateClass` colours the label to report queued/unseen work, and a
+  // filled tab would fight those. Same idiom as the Settings tab strip.
   return (
     <div
       role="tab"
@@ -157,8 +160,8 @@ function TabChip({
           ? `${shotPath ?? sequencePath ?? projectTitle ?? "No project"} — ${stateTitle}`
           : (shotPath ?? sequencePath ?? projectTitle ?? "No project")
       }
-      className={`group flex items-center gap-1 px-2 py-[3px] max-w-[240px] cursor-pointer shrink-0 ${
-        active ? "bg-panel" : "bg-src-bg"
+      className={`group flex items-center gap-1 px-2 py-[3px] max-w-[240px] cursor-pointer shrink-0 border-b-2 ${
+        active ? "bg-panel border-accent" : "bg-src-bg border-transparent"
       } ${stateClass}`}
     >
       <span className="truncate">{label}</span>

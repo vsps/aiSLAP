@@ -53,10 +53,10 @@ export function ChainAddBar() {
             onClick={() => expandLink(null)}
           />
         )}
-        <div className="flex-1" />
         <IconBtn
           name="bookmark"
           size={20}
+          className="ml-auto"
           title="Save chain as preset"
           onClick={() => setSaving(true)}
         />

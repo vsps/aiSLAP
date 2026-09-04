@@ -19,6 +19,7 @@ import {
   type Config,
   type FalLifecycle,
 } from "../lib/types";
+import { Btn } from "./Btn";
 
 const TABS = ["General", "Appearance", "APIs"] as const;
 type Tab = (typeof TABS)[number];
@@ -333,14 +334,9 @@ export function SettingsDialog({ onClose }: Props) {
 
             <Field label="Pending submissions">
               <div className="flex gap-1 items-center">
-                <button
-                  type="button"
-                  className="px-2 bg-bg text-xs disabled:opacity-50"
-                  onClick={() => void checkOrphans()}
-                  disabled={orphanBusy}
-                >
+                <Btn onClick={() => void checkOrphans()} disabled={orphanBusy}>
                   {orphanBusy ? "Checking…" : "Check for orphans"}
-                </button>
+                </Btn>
                 <span className="text-xs text-dim">
                   {pendingCount === null
                     ? "—"
@@ -365,22 +361,17 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
                   placeholder="ffmpeg.exe (optional)"
                 />
-                <button className="px-2 bg-bg text-xs" onClick={browseFfmpeg}>
+                <Btn onClick={browseFfmpeg}>
                   browse
-                </button>
+                </Btn>
               </div>
             </Field>
 
             <Field label="Updates">
               <div className="flex gap-1 items-center">
-                <button
-                  type="button"
-                  className="px-2 bg-bg text-xs disabled:opacity-50"
-                  onClick={() => void checkUpdatesNow()}
-                  disabled={updateBusy}
-                >
+                <Btn onClick={() => void checkUpdatesNow()} disabled={updateBusy}>
                   {updateBusy ? "Checking…" : "Check for updates"}
-                </button>
+                </Btn>
                 <span className="text-xs text-dim">
                   {appVersion ? `Current: v${appVersion}` : ""}
                 </span>
@@ -415,13 +406,9 @@ export function SettingsDialog({ onClose }: Props) {
                   onChange={(v) => setColor(key, v)}
                 />
               ))}
-              <button
-                type="button"
-                onClick={resetColors}
-                className="self-start text-xs text-accent hover:underline mt-1"
-              >
+              <Btn className="self-start mt-1" onClick={resetColors}>
                 reset to defaults
-              </button>
+              </Btn>
             </div>
           </Field>
         )}
@@ -437,12 +424,9 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                   placeholder="fal-…"
                 />
-                <button
-                  className="px-2 bg-bg text-xs"
-                  onClick={() => setRevealKey((v) => !v)}
-                >
+                <Btn onClick={() => setRevealKey((v) => !v)}>
                   {revealKey ? "hide" : "show"}
-                </button>
+                </Btn>
               </div>
               <div className="text-xs text-dim mt-1">
                 Stored in <code>%APPDATA%/aiSLAP/.env</code>.
@@ -482,12 +466,9 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                   placeholder="r8_…"
                 />
-                <button
-                  className="px-2 bg-bg text-xs"
-                  onClick={() => setRevealReplicate((v) => !v)}
-                >
+                <Btn onClick={() => setRevealReplicate((v) => !v)}>
                   {revealReplicate ? "hide" : "show"}
-                </button>
+                </Btn>
               </div>
             </Field>
 
@@ -500,12 +481,9 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                   placeholder="Ark API key…"
                 />
-                <button
-                  className="px-2 bg-bg text-xs"
-                  onClick={() => setRevealBytedance((v) => !v)}
-                >
+                <Btn onClick={() => setRevealBytedance((v) => !v)}>
                   {revealBytedance ? "hide" : "show"}
-                </button>
+                </Btn>
               </div>
             </Field>
 
@@ -518,12 +496,9 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                   placeholder="AI MediaKit API key…"
                 />
-                <button
-                  className="px-2 bg-bg text-xs"
-                  onClick={() => setRevealMediaKit((v) => !v)}
-                >
+                <Btn onClick={() => setRevealMediaKit((v) => !v)}>
                   {revealMediaKit ? "hide" : "show"}
-                </button>
+                </Btn>
               </div>
               <div className="text-xs text-dim mt-1">
                 Separate from the Ark key above — used for AI MediaKit video
@@ -541,12 +516,9 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                   placeholder="Beeble API key…"
                 />
-                <button
-                  className="px-2 bg-bg text-xs"
-                  onClick={() => setRevealBeeble((v) => !v)}
-                >
+                <Btn onClick={() => setRevealBeeble((v) => !v)}>
                   {revealBeeble ? "hide" : "show"}
-                </button>
+                </Btn>
               </div>
               <div className="text-xs text-dim mt-1">
                 Powers SwitchX relighting. Create one at{" "}
@@ -571,12 +543,9 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                   placeholder="Secret Access Key"
                 />
-                <button
-                  className="px-2 bg-bg text-xs"
-                  onClick={() => setRevealTosSk((v) => !v)}
-                >
+                <Btn onClick={() => setRevealTosSk((v) => !v)}>
                   {revealTosSk ? "hide" : "show"}
-                </button>
+                </Btn>
               </div>
               <div className="flex gap-1 mt-1">
                 <input
@@ -649,12 +618,9 @@ export function SettingsDialog({ onClose }: Props) {
                   className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
                   placeholder="ey…"
                 />
-                <button
-                  className="px-2 bg-bg text-xs"
-                  onClick={() => setRevealTursoToken((v) => !v)}
-                >
+                <Btn onClick={() => setRevealTursoToken((v) => !v)}>
                   {revealTursoToken ? "hide" : "show"}
-                </button>
+                </Btn>
               </div>
             </Field>
           </>
@@ -663,16 +629,12 @@ export function SettingsDialog({ onClose }: Props) {
       </div>
 
       <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-        <button className="px-3 py-1 bg-bg text-xs" onClick={handleClose}>
+        <Btn onClick={handleClose}>
           Cancel
-        </button>
-        <button
-          className="px-3 py-1 bg-accent text-bg text-xs disabled:opacity-50"
-          disabled={busy}
-          onClick={save}
-        >
+        </Btn>
+        <Btn disabled={busy} onClick={save}>
           Save
-        </button>
+        </Btn>
       </div>
     </ModalDialog>
   );

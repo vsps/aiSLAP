@@ -7,6 +7,7 @@ import { useTagsStore } from "../stores/tagsStore";
 import { showMessage } from "../lib/dialog";
 import { dirname, basename } from "../lib/paths";
 import { FullscreenModal } from "./FullscreenModal";
+import { Btn } from "./Btn";
 
 type Tool = "brush" | "line";
 
@@ -381,20 +382,22 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
       >
         {/* Tool: freehand brush vs straight line */}
         <div className="flex items-center gap-1">
-          <button
+          <Btn
+            variant="toggle"
+            active={tool === "brush"}
             title="Brush"
             onClick={() => setTool("brush")}
-            className={`text-xs px-2 py-0.5 border ${tool === "brush" ? "border-white text-white" : "border-dim text-dim"} hover:border-text hover:text-text`}
           >
             brush
-          </button>
-          <button
+          </Btn>
+          <Btn
+            variant="toggle"
+            active={tool === "line"}
             title="Line — click+drag to draw a straight line"
             onClick={() => setTool("line")}
-            className={`text-xs px-2 py-0.5 border ${tool === "line" ? "border-white text-white" : "border-dim text-dim"} hover:border-text hover:text-text`}
           >
             line
-          </button>
+          </Btn>
         </div>
 
         <div className="w-px h-5 bg-dim" />
@@ -411,7 +414,10 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
                 background: c,
                 width: 18,
                 height: 18,
-                borderColor: !erase && color === c ? "white" : "transparent",
+                borderColor:
+                  !erase && color === c
+                    ? "var(--color-accent)"
+                    : "transparent",
                 transform: !erase && color === c ? "scale(1.25)" : "scale(1)",
               }}
             />
@@ -419,13 +425,14 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
         </div>
 
         {/* Eraser */}
-        <button
+        <Btn
+          variant="toggle"
+          active={erase}
           title="Eraser"
           onClick={() => setErase(true)}
-          className={`text-xs px-2 py-0.5 border ${erase ? "border-white text-white" : "border-dim text-dim"} hover:border-text hover:text-text`}
         >
           eraser
-        </button>
+        </Btn>
 
         <div className="w-px h-5 bg-dim" />
 
@@ -440,7 +447,7 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
               style={{
                 width: 24,
                 height: 24,
-                borderColor: size === s ? "white" : "transparent",
+                borderColor: size === s ? "var(--color-accent)" : "transparent",
               }}
             >
               <span
@@ -475,38 +482,19 @@ export function DrawMode({ image, onSave, onCancel }: Props) {
           <span className="w-5 text-right">{smoothing}</span>
         </label>
 
-        <div className="flex-1" />
-
         {/* Undo / Clear */}
-        <button
-          onClick={undo}
-          className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text"
-        >
+        <Btn className="ml-auto" onClick={undo}>
           undo
-        </button>
-        <button
-          onClick={clear}
-          className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text"
-        >
-          clear
-        </button>
+        </Btn>
+        <Btn onClick={clear}>clear</Btn>
 
         <div className="w-px h-5 bg-dim" />
 
         {/* Save / Cancel */}
-        <button
-          onClick={() => void save()}
-          disabled={saving}
-          className="text-xs px-3 py-0.5 bg-accent text-text hover:opacity-80 disabled:opacity-40"
-        >
+        <Btn onClick={() => void save()} disabled={saving}>
           {saving ? "saving…" : "save"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="text-xs px-2 py-0.5 border border-dim text-dim hover:border-text hover:text-text"
-        >
-          cancel
-        </button>
+        </Btn>
+        <Btn onClick={onCancel}>cancel</Btn>
       </div>
     </FullscreenModal>
   );

@@ -32,6 +32,17 @@ use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{read_json_or_default, write_json_atomic};
 use crate::paths::appdata_dir;
 
+/// Cross-project lookup for an orphaned file — the one query in here that is
+/// deliberately not scoped to a single project.
+pub mod trace;
+
+/// The shared fal price sheet. Remote-only and app-global — not scoped to a
+/// project at all.
+pub mod pricing;
+
+/// Reading a price table back out of what fal actually billed.
+pub mod derive;
+
 const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS assets (
         id TEXT PRIMARY KEY,
@@ -45,6 +56,7 @@ const SCHEMA: &[&str] = &[
         combined_prompt TEXT,
         settings_json TEXT,
         cost_usd REAL,
+        cost_usd_actual INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         deleted_at TEXT,
@@ -160,6 +172,12 @@ pub struct AssetRecord {
     pub settings_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_usd: Option<f64>,
+    /// True once `reconcile_actual_costs` has replaced the estimate with the
+    /// figure fal actually billed. The distinction is load-bearing for
+    /// `pricing::derive`: deriving a price table from our own estimates would
+    /// be circular, so only rows with this set are ever averaged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd_actual: Option<bool>,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
@@ -376,6 +394,29 @@ async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
             "ALTER TABLE assets ADD COLUMN generated_by TEXT",
         )
         .await?;
+        // Cost provenance. NULL on every row written before this existed,
+        // which reads as "estimate" — correct, since nothing had reconciled
+        // them. `project_reconcile` restores the real value from the sidecar,
+        // which has carried `costUsdActual` all along.
+        ensure_column(
+            &conn,
+            "assets",
+            "cost_usd_actual",
+            "ALTER TABLE assets ADD COLUMN cost_usd_actual INTEGER",
+        )
+        .await?;
+        // Local-only, and deliberately not in SCHEMA: an absolute path means
+        // nothing in the shared remote database, where the same project is
+        // mounted at a different place on every machine. Locally it is what
+        // lets `trace` answer "which project" with a folder the user can open
+        // rather than a bare uuid.
+        ensure_column(
+            &conn,
+            "projects",
+            "root_path",
+            "ALTER TABLE projects ADD COLUMN root_path TEXT",
+        )
+        .await?;
         // Not in SCHEMA: on a legacy db this index would be created before the
         // column-add above ever ran, and `CREATE INDEX ... (generated_by)`
         // against a table that doesn't have it yet fails outright.
@@ -434,12 +475,25 @@ async fn open_remote(url: String, token: String) -> AppResult<Connection> {
     );
     {
         let conn = db.connect().map_err(db_err)?;
-        bootstrap(&conn, &[]).await?;
+        // `pricing` is remote-only: a price belongs to an endpoint, not to a
+        // project, so there is nothing for a per-project local file to hold.
+        bootstrap(&conn, pricing::SCHEMA_PRICING).await?;
         ensure_column(
             &conn,
             "assets",
             "generated_by",
             "ALTER TABLE assets ADD COLUMN generated_by TEXT",
+        )
+        .await?;
+        // Cost provenance. NULL on every row written before this existed,
+        // which reads as "estimate" — correct, since nothing had reconciled
+        // them. `project_reconcile` restores the real value from the sidecar,
+        // which has carried `costUsdActual` all along.
+        ensure_column(
+            &conn,
+            "assets",
+            "cost_usd_actual",
+            "ALTER TABLE assets ADD COLUMN cost_usd_actual INTEGER",
         )
         .await?;
         conn.execute(
@@ -467,9 +521,12 @@ macro_rules! asset_columns {
     () => {
         "id, project_id, rel_path, content_hash, kind, provider, model_id, \
          endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
-         generated_by"
+         generated_by, cost_usd_actual"
     };
 }
+// Re-exported by path so `trace` can splice the same column list into its own
+// `concat!`-built SELECTs; textual macro scope alone wouldn't reach it.
+pub(crate) use asset_columns;
 
 fn row_to_asset(row: &Row) -> AppResult<AssetRecord> {
     Ok(AssetRecord {
@@ -488,6 +545,7 @@ fn row_to_asset(row: &Row) -> AppResult<AssetRecord> {
         updated_at: opt_string(row, 12)?,
         deleted_at: opt_string(row, 13)?,
         generated_by: opt_string(row, 14)?,
+        cost_usd_actual: row.get::<Option<i64>>(15).map_err(db_err)?.map(|n| n != 0),
     })
 }
 
@@ -550,15 +608,16 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
     conn.execute(
         "INSERT INTO assets (id, project_id, rel_path, content_hash, kind, provider, model_id, \
              endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
-             generated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14)
+             generated_by, cost_usd_actual)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?15)
          ON CONFLICT(id) DO UPDATE SET
            project_id=excluded.project_id, rel_path=excluded.rel_path,
            content_hash=excluded.content_hash, kind=excluded.kind, provider=excluded.provider,
            model_id=excluded.model_id, endpoint=excluded.endpoint,
            combined_prompt=excluded.combined_prompt, settings_json=excluded.settings_json,
            cost_usd=excluded.cost_usd, updated_at=excluded.updated_at, deleted_at=NULL,
-           generated_by=excluded.generated_by",
+           generated_by=excluded.generated_by,
+           cost_usd_actual=excluded.cost_usd_actual",
         params!(
             record.id.clone(),
             record.project_id.clone(),
@@ -573,7 +632,8 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
             record.cost_usd,
             record.created_at.clone(),
             record.updated_at.clone().unwrap_or_default(),
-            record.generated_by.clone()
+            record.generated_by.clone(),
+            record.cost_usd_actual.map(i64::from)
         ),
     )
     .await
@@ -755,7 +815,17 @@ pub async fn assets_relink(project_root: &Path, moves: &[(String, String)]) -> A
 
 /// Batched cost backfill. The project cost scan produces one of these per
 /// asset it repaired, which on a large project is thousands.
-pub async fn assets_cost_update(project_root: &Path, costs: &[(String, f64)]) -> AppResult<()> {
+///
+/// `actual` says whether these figures came from fal's billing ledger
+/// (`reconcile_actual_costs`) or from our own price table
+/// (`project_cost_scan`'s backfill). It is recorded rather than inferred
+/// because `pricing::derive` may only ever average the former — see
+/// `cost_usd_actual`.
+pub async fn assets_cost_update(
+    project_root: &Path,
+    costs: &[(String, f64)],
+    actual: bool,
+) -> AppResult<()> {
     if costs.is_empty() {
         return Ok(());
     }
@@ -763,9 +833,17 @@ pub async fn assets_cost_update(project_root: &Path, costs: &[(String, f64)]) ->
     let tx = conn.transaction().await.map_err(db_err)?;
     let now = chrono::Utc::now().to_rfc3339();
     for (asset_id, cost_usd) in costs {
+        // An estimate never clears an actual already on the row: reconcile is
+        // the authority, and a later scan must not downgrade what it wrote.
         let changed = tx
             .execute(
-                "UPDATE assets SET cost_usd = ?1, updated_at = ?2 WHERE id = ?3",
+                if actual {
+                    "UPDATE assets SET cost_usd = ?1, updated_at = ?2, cost_usd_actual = 1 \
+                     WHERE id = ?3"
+                } else {
+                    "UPDATE assets SET cost_usd = ?1, updated_at = ?2 \
+                     WHERE id = ?3 AND COALESCE(cost_usd_actual, 0) = 0"
+                },
                 params!(*cost_usd, now.clone(), asset_id.clone()),
             )
             .await
@@ -1112,6 +1190,16 @@ pub async fn sync_outbox(project_root: &Path) -> AppResult<SyncReport> {
             &chrono::Utc::now().to_rfc3339(),
         )
         .await?;
+        // Local only — see the `root_path` column note in `local_db`. Written
+        // here rather than in the upsert because the remote copy of that row
+        // has no such column.
+        local
+            .execute(
+                "UPDATE projects SET root_path = ?2 WHERE project_id = ?1",
+                params!(project_id.clone(), as_str(project_root)),
+            )
+            .await
+            .map_err(db_err)?;
     }
 
     let Some((url, token)) = turso_config()? else {
@@ -1450,6 +1538,7 @@ fn reconcile_one_file(
                     .map(String::from),
                 settings_json: obj.get("settings").map(|v| v.to_string()),
                 cost_usd: obj.get("costUsd").and_then(|v| v.as_f64()),
+                cost_usd_actual: obj.get("costUsdActual").and_then(|v| v.as_bool()),
                 created_at: obj
                     .get("timestamp")
                     .and_then(|v| v.as_str())
@@ -1640,6 +1729,7 @@ mod tests {
                 ("no-such-asset".to_string(), 1.0),
                 ("asset-cost-2".to_string(), 0.5),
             ],
+            false,
         )
         .await
         .unwrap();

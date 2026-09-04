@@ -225,8 +225,8 @@ function RoleOption({
     <button
       type="button"
       onClick={onClick}
-      className={`text-left px-2 py-[3px] rounded ${
-        active ? "bg-accent text-text" : "hover:bg-panel"
+      className={`text-left px-2 py-[3px] ${
+        active ? "bg-accent text-on-accent" : "hover:bg-panel"
       }`}
     >
       {label}

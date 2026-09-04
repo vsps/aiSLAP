@@ -52,7 +52,10 @@ pub async fn video_info_probe(video_path: String, ffmpeg_path: String) -> AppRes
     run_blocking(move || video_info_probe_impl(video_path, ffmpeg_path)).await
 }
 
-fn video_info_probe_impl(video_path: String, ffmpeg_path: String) -> AppResult<VideoInfo> {
+pub(crate) fn video_info_probe_impl(
+    video_path: String,
+    ffmpeg_path: String,
+) -> AppResult<VideoInfo> {
     let exe = ffmpeg_path.trim();
     if exe.is_empty() {
         return Ok(VideoInfo::default());
