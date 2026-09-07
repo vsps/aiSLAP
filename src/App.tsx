@@ -14,6 +14,7 @@ import { GenerateMode } from "./components/modes/GenerateMode";
 import { DeliverMode } from "./components/modes/DeliverMode";
 import { AuditMode } from "./components/modes/AuditMode";
 import { ErrorPopup } from "./components/ErrorPopup";
+import { Toaster } from "./components/Toaster";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { SplashScreen } from "./components/SplashScreen";
@@ -123,6 +124,7 @@ export default function App() {
 
       <StatusBar ready={ready} bootError={bootError} />
       <ErrorPopup />
+      <Toaster />
       {pendingUpdate && (
         <UpdateAvailableDialog
           update={pendingUpdate}

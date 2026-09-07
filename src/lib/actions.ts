@@ -14,6 +14,7 @@ import { activeStores, allTabs } from "../stores/tabsStore";
 import type { TabStores } from "../stores/tabStores";
 import { useModelsStore } from "../stores/modelsStore";
 import { findLoadedImage, useSessionStore } from "../stores/sessionStore";
+import { showToast } from "../stores/toastStore";
 import { useTimelineStore } from "../stores/timelineStore";
 import type { ChainLink, ImageMetadata, RefImage, RefSnapshot } from "./types";
 
@@ -630,13 +631,21 @@ export async function performImageAction(
           `Prompt and settings reused, but "${missingModel}" is no longer in the model registry — pick a model before generating.`,
           { kind: "warning" },
         );
-      } else if (restoredRefs > 0 || skippedRefs > 0) {
-        const skip = skippedRefs
-          ? `, ${skippedRefs} skipped (files missing)`
-          : "";
-        await showMessage(`Reused. Restored ${restoredRefs} ref(s)${skip}.`, {
-          kind: "info",
-        });
+      } else if (skippedRefs > 0) {
+        // Refs that could not be found are a real gap in what was restored —
+        // worth stopping for, since the next generation runs without them.
+        await showMessage(
+          `Prompt and settings reused. ${skippedRefs} ref(s) skipped — the files are missing.`,
+          { kind: "warning" },
+        );
+      } else {
+        // Plain success. Confirm it without making anyone click OK — and
+        // confirm it even with no refs, which used to say nothing at all.
+        showToast(
+          restoredRefs > 0
+            ? `Reused — ${restoredRefs} ref(s) restored`
+            : "Prompt and settings reused",
+        );
       }
       return;
     }
@@ -662,8 +671,10 @@ export async function performImageAction(
         parts.push(`${skippedRefs} ref(s) skipped (missing files)`);
       if (parts.length > 0) {
         await showMessage(`Chain restored. ${parts.join(" · ")}.`, {
-          kind: "info",
+          kind: "warning",
         });
+      } else {
+        showToast(`Chain restored — ${meta.chain.linkCount} links`);
       }
       return;
     }
