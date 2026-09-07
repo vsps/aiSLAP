@@ -41,13 +41,13 @@ project/
   project.json           project id, title, tagDefs, tagsMigrated, version prefix
   script.md              optional
   .aislap/thumbs/        gallery thumbnail cache — derived, see below
-  SRC/                   project-wide inputs
+  SRC/                   project-wide inputs (PRISM: 04_Resources/, with SRC/ inside)
   TRASH/                 trashed media — see below
   <sequence>/
     sequence.json
     <shot>/
       shot.json          prompt history, version selects, minor counters, clip media
-      SRC/               shot inputs
+      SRC/               shot inputs (PRISM: <entity>/Resources/, with SRC/ inside)
       SEL/               legacy — see below
       v001/ gen001/ …    one folder per generation batch
 ```

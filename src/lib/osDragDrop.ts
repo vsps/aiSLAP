@@ -12,9 +12,16 @@ import { cmd } from "./tauri";
 import { showMessage } from "./dialog";
 import { basename } from "./paths";
 import { enrichRefIdentity } from "./actions";
+import type { RefScope } from "./types";
 
 export type OsDragTarget =
-  | { kind: "column"; version: string; isSrc: boolean; destDir: string }
+  | {
+      kind: "column";
+      version: string;
+      isSrc: boolean;
+      destDir: string;
+      refScope?: RefScope;
+    }
   | { kind: "ref" }
   | { kind: "trace" }
   | null;
@@ -52,20 +59,25 @@ function resolveTarget(x: number, y: number): OsDragTarget {
     const version = col.dataset.columnVersion ?? "";
     const destDir = col.dataset.columnDest ?? "";
     const isSrc = col.dataset.columnIsSrc === "true";
-    if (version && destDir) return { kind: "column", version, isSrc, destDir };
+    const refScope = col.dataset.columnRefScope as RefScope | undefined;
+    if (version && destDir)
+      return { kind: "column", version, isSrc, destDir, refScope };
   }
   return null;
 }
 
 // OS file drag-drop onto a column → copy each file in, then rescan so it
 // appears. The GLOBAL SRC column uses ref_copy_to_global_src (project-level,
-// overwrite-on-collision). The per-shot SRC and version columns copy directly
-// into their destDir.
+// overwrite-on-collision). The per-shot reference and version columns copy
+// directly into their destDir.
+//
+// The global branch keys off the column's `refScope`, not its label: the label
+// is a display string that also keys persisted widths and collapse state, and
+// under PRISM it no longer says anything about where the folder is.
 export async function ingestIntoColumn(
   paths: string[],
   destDir: string,
-  isSrc: boolean,
-  version: string,
+  refScope: RefScope | undefined,
 ): Promise<void> {
   const shot = useSessionStore.getState().shotPath;
   if (!shot) {
@@ -77,7 +89,7 @@ export async function ingestIntoColumn(
   let any = false;
   for (const p of media) {
     try {
-      if (isSrc && version === "GLOBAL SRC") {
+      if (refScope === "global") {
         await cmd.ref_copy_to_global_src(shot, p);
       } else {
         await cmd.dir_ensure(destDir);
@@ -100,10 +112,10 @@ export async function ingestIntoRefPanel(paths: string[]): Promise<void> {
     await showMessage("Open a shot first", { kind: "warning" });
     return;
   }
-  const destDir = `${shotPath}/SRC`;
-  // Ensure the per-shot SRC folder exists (created at shot creation,
-  // but guard against legacy shots that don't have it yet).
-  await cmd.dir_ensure(destDir);
+  // Resolves *and* creates it. Not `${shotPath}/SRC` any more: under PRISM the
+  // shot's reference folder is `<entity>/Resources/SRC`, which is not below the
+  // shot path at all, so only the backend can work it out.
+  const destDir = await cmd.ref_dir_ensure(shotPath, "shot");
   const media = paths.filter((p) => classifyMedia(p) !== null);
   if (media.length === 0) return;
   const copied: string[] = [];
@@ -152,12 +164,7 @@ export function installOsDragDropListener(): void {
           } else if (hit?.kind === "ref") {
             await ingestIntoRefPanel(p.paths);
           } else if (hit?.kind === "column") {
-            await ingestIntoColumn(
-              p.paths,
-              hit.destDir,
-              hit.isSrc,
-              hit.version,
-            );
+            await ingestIntoColumn(p.paths, hit.destDir, hit.refScope);
           }
         }
       })

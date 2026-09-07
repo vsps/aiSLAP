@@ -13,6 +13,7 @@ pub mod models;
 pub mod pending;
 pub mod prism;
 pub mod prompt_history;
+pub mod refroots;
 pub mod rename;
 pub mod session;
 pub mod system;

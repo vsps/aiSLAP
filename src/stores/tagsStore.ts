@@ -234,6 +234,28 @@ export function createTagsStore(tab: TabStores) {
       };
     });
     if (hit) tab.session.setState({ columns } as never);
+
+    // Reference-column subfolder sections hold their own separately fetched
+    // contents, so a tile in one repaints only if it is patched here too. There
+    // is no rescan to fall back on: `shot_rescan` replaces `columns`, and a
+    // section's images are not in it.
+    const children = session().refFolderChildren;
+    let sectionHit = false;
+    const patched: typeof children = {};
+    for (const [dir, entry] of Object.entries(children)) {
+      if (!entry.images.some((i) => i.path === path)) {
+        patched[dir] = entry;
+        continue;
+      }
+      sectionHit = true;
+      patched[dir] = {
+        ...entry,
+        images: entry.images.map((i) =>
+          i.path === path ? { ...i, tags } : i,
+        ),
+      };
+    }
+    if (sectionHit) tab.session.setState({ refFolderChildren: patched } as never);
   };
 
   /** The tag view is server-filtered, so a filter change has to re-query it.

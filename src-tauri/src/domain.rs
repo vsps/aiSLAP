@@ -364,8 +364,52 @@ pub struct GalleryColumn {
     pub is_src: bool,
     pub images: Vec<GalleryImage>,
     pub src_images: Vec<GalleryImage>,
+    /// Absolute paths of the folders directly inside this column's directory,
+    /// which the gallery renders as collapsible sections. Only reference
+    /// columns get these — a version folder holds one batch of output and has
+    /// no business growing a tree. Contents are *not* included: a section is
+    /// scanned by `dir_children_scan` when it is opened, so a resources folder
+    /// pointing at a texture library costs nothing until someone asks for it.
+    #[serde(default)]
+    pub subdirs: Vec<String>,
+    /// Where a new reference dropped on this column is written, when that
+    /// differs from `id`. Under PRISM a reference column's directory is a
+    /// browsing root that other people also keep files in (`04_Resources`), so
+    /// aiSLAP's own copies go into a `SRC` folder inside it rather than being
+    /// scattered through it. `None` for version columns and for native
+    /// projects, where the column directory already is `SRC`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub dest_dir: Option<String>,
+    /// Which reference root this column is, for the frontend paths that need
+    /// to tell them apart. `None` for version columns and for `SEL`.
+    ///
+    /// This exists so those paths stop matching on the *label*: `version` is a
+    /// display string that also keys persisted column widths and collapse
+    /// state, and two drop handlers were comparing it to `"GLOBAL SRC"`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ref_scope: Option<RefScope>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub model_name: Option<String>,
+}
+
+/// Which of the two reference roots a column shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RefScope {
+    Global,
+    Shot,
+}
+
+/// One directory's worth of a reference column, fetched when a section opens.
+///
+/// The same shape a column carries, minus the column's identity — recursion is
+/// the frontend rendering a section per `subdirs` entry, each of which fetches
+/// its own children only when opened.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirChildren {
+    pub images: Vec<GalleryImage>,
+    pub subdirs: Vec<String>,
 }

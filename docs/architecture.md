@@ -256,10 +256,11 @@ direct, not via the store proxies, so a background tab still gets written.
 ## 7. Domain model
 
 ```
-project/                     project.json · script.md · SRC/
+project/                     project.json · script.md · SRC/ (PRISM: 04_Resources/)
   <sequence>/                sequence.json
     <shot>/                  shot.json
-      SRC/                   inputs dragged in from outside
+      SRC/                   inputs dragged in from outside; subfolders render as
+                             collapsible sections, read only when opened
       v001/ gen001/ …        version folders — one per generation batch
         <media>              the output
         <media>.json         its sidecar
@@ -310,6 +311,18 @@ A checklist to test a change against:
    separate gate: `fsutil.rs::list_dirs`, which fills the SEQUENCE dropdown rather than
    walking. A new exclusion has to land in both, or the folder is invisible to every
    scan and still offered as a sequence.
+
+   Two deliberate exceptions, both about reference folders. `prism.rs::is_ignored_entity_name`
+   is a *third* gate — it also drops `Resources`, so the folder aiSLAP creates beside an
+   entity's `Renders` is never offered as a shot or an asset category. And `list_dirs`
+   deliberately does **not** drop `SRC` or `Resources`: it is what enumerates a reference
+   column's subfolder sections, and excluding them there would make the folder new
+   references land in invisible. One gate answers "is this a shot?", the other "is this a
+   folder of pictures?" — they are allowed to disagree, and here they must.
+
+   The reference roots themselves need no exclusion: `04_Resources` sits at the project
+   root, which PRISM never walks for sequences, and `<entity>/Resources` sits inside an
+   entity, which is never walked for entities.
 8. **Read-modify-write of `project.json` uses the strict read** (`read_json_strict`).
    The lenient read invents a default that the following write would commit, erasing
    the project id and tag vocabulary.

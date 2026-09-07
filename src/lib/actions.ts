@@ -265,8 +265,9 @@ export async function addImageToRefs(imagePath: string): Promise<string> {
   const insideProject = !!projectPath && isChildOf(projectPath, imagePath);
   let finalPath = imagePath;
   if (!insideProject) {
-    const destDir = `${shotPath}/SRC`;
-    await cmd.dir_ensure(destDir);
+    // Resolves and creates it — under PRISM the shot's reference folder is
+    // `<entity>/Resources/SRC`, which isn't below `shotPath`.
+    const destDir = await cmd.ref_dir_ensure(shotPath, "shot");
     finalPath = await cmd.image_copy_to_dir(imagePath, destDir);
   }
   // The copy above can take a moment on a network drive — the ref belongs to

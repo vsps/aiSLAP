@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { cmd } from "./tauri";
-import { joinPath } from "./paths";
 import { getConfigCached } from "./metadataCache";
 import type { ThumbsReport } from "./types";
 
@@ -61,10 +60,16 @@ function sweepDirOnce(dir: string): Promise<ThumbsReport | null> {
 /**
  * Build any missing thumbnails for one shot, at most once per session.
  *
- * Two sweeps, not one: a shot's own folders, and the project-level `SRC` that
- * renders as the GLOBAL SRC column in every shot's gallery. That column holds
- * the plates, which are usually the largest files in the project, and it sits
- * outside the shot so a shot-scoped walk never reaches it.
+ * More than one sweep: a shot's own folders, plus each reference directory,
+ * which hold the plates — usually the largest files in the project — and which
+ * sit outside the shot, so a shot-scoped walk never reaches them.
+ *
+ * **`refDirs` must be the directories references are written *into*, not the
+ * reference columns' browsing roots.** A non-recursive sweep is not flat: the
+ * Rust side walks the directory *and one level of every subdirectory*. Pointed
+ * at a PRISM column root it would eagerly read `04_Resources/Textures/*` and
+ * `04_Resources/Libraries/*` — exactly the folders the sections exist to leave
+ * alone until someone opens them.
  *
  * Resolves to `null` when there was nothing to do (already swept, or the sweep
  * failed) and to a report otherwise — callers use `producedAnything` to decide
@@ -72,11 +77,11 @@ function sweepDirOnce(dir: string): Promise<ThumbsReport | null> {
  */
 export async function sweepShotOnce(
   shotPath: string,
-  projectPath: string | null,
+  refDirs: string[],
 ): Promise<ThumbsReport | null> {
   const reports = await Promise.all([
     sweepDirOnce(shotPath),
-    projectPath ? sweepDirOnce(joinPath(projectPath, "SRC")) : null,
+    ...refDirs.map((d) => sweepDirOnce(d)),
   ]);
   return reports.find(producedAnything) ?? reports.find(Boolean) ?? null;
 }

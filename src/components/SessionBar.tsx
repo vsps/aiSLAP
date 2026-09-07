@@ -3,9 +3,8 @@ import { IconBtn } from "./IconBtn";
 import { InlinePrompt } from "./InlinePrompt";
 import { useSessionStore } from "../stores/sessionStore";
 import { useScriptStore } from "../stores/scriptStore";
-import { confirmAction, pickDirectory, showMessage } from "../lib/dialog";
-import { cmd } from "../lib/tauri";
-import { basename, normalizeDir } from "../lib/paths";
+import { pickDirectory, showMessage } from "../lib/dialog";
+import { basename } from "../lib/paths";
 import { normalizeTitle } from "../lib/script";
 import { renameSequence, renameShot } from "../lib/actions";
 import { Btn } from "./Btn";
@@ -59,12 +58,9 @@ export function SessionBar({
     if (!p) return;
     try {
       await setProject(p);
-      const normalized = normalizeDir(p);
-      const [srcExists] = await cmd.dirs_exist([`${normalized}/SRC`]);
-      if (!srcExists) {
-        const ok = await confirmAction("No SRC folder found. Create it?", { title: "Global SRC" });
-        if (ok) await cmd.dir_ensure(`${normalized}/SRC`);
-      }
+      // `project_open` already resolved and created the project's reference
+      // folder — which under PRISM is `04_Resources`, not `SRC`. Asking here
+      // was how a dead `SRC` got created at a pipeline root that nothing reads.
     } catch (e) {
       const msg = String(e);
       await showMessage(msg.includes("NOT A PROJECT FOLDER") ? "NOT A PROJECT FOLDER" : msg, { kind: "error" });

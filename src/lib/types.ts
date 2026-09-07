@@ -235,16 +235,36 @@ export type SeqTaggedGroup = {
   shots: ShotTaggedGroup[];
 };
 
+/** Which of the two reference roots a column shows. Sent as data so the drop
+ *  handlers stop matching on the column's *label* — `version` is a display
+ *  string that also keys persisted widths and collapse state. */
+export type RefScope = "global" | "shot";
+
 export type GalleryColumn = {
   id: string;
   version: string;
   isSrc: boolean;
   images: GalleryImage[];
   srcImages: GalleryImage[];
+  /** Absolute paths of the folders inside this column's directory, rendered as
+   *  collapsible sections. Their contents are fetched by `dir_children_scan`
+   *  when a section is opened, never up front. Reference columns only. */
+  subdirs?: string[];
+  /** Where a new reference dropped on this column is written, when that differs
+   *  from `id` — under PRISM the column's directory is a shared browsing root
+   *  (`04_Resources`) and aiSLAP's own copies go into a `SRC` inside it. */
+  destDir?: string;
+  refScope?: RefScope;
   timestamp?: string;
   modelName?: string;
   /** True when the column doesn't exist on disk (pending-output placeholder). */
   synthetic?: boolean;
+};
+
+/** One directory's worth of a reference column, fetched when a section opens. */
+export type DirChildren = {
+  images: GalleryImage[];
+  subdirs: string[];
 };
 
 // ---------- Prompt history ----------
@@ -496,6 +516,9 @@ export type ShotStack = {
 };
 
 export type SequenceStacks = {
+  /** The resolved project-level reference root — `04_Resources` under PRISM.
+   *  Sent because the frontend can no longer derive it. */
+  globalSrcRoot: string;
   globalSrcImages: GalleryImage[];
   shots: ShotStack[];
 };

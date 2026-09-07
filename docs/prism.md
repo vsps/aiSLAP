@@ -76,13 +76,39 @@ the dropdowns cannot disagree.
 pipeline; resolving to that marker silently keyed version naming and the tag index to
 the wrong root.
 
-**aiSLAP's own files** — `project.json`, `script.md`, `SRC/` — sit at the PRISM
-project root, which is why `project_root_for` has to find `project.json` by walking up
-from a media path rather than assuming a fixed depth.
+**aiSLAP's own files** — `project.json` and `script.md` — sit at the PRISM project
+root, which is why `project_root_for` has to find `project.json` by walking up from a
+media path rather than assuming a fixed depth.
+
+**References live in the pipeline's own folders, not in `SRC/`.** `commands/refroots.rs`
+resolves both levels and every caller goes through it:
+
+| | native | PRISM |
+|---|---|---|
+| project-level | `<project>/SRC` | `<project>/04_Resources` |
+| shot-level | `<shot>/SRC` | `<entity>/Resources` |
+
+Each is a **browsing root**, not a bucket: the gallery lists its loose media and renders
+each subfolder as a collapsible section, read only when opened (`dir_children_scan`).
+New references go to `default_ref_dir` — a `SRC` folder *inside* the root under PRISM,
+the root itself natively, where it already is `SRC`.
+
+`04_Resources` is not declared in `folder_structure`. The stock name is used whenever
+that folder exists; only when it doesn't is the dir inferred from the `textures`
+template's first segment, and then only if that segment isn't one of the entity trees —
+see `resources_rel_from` for why a bare derivation fails silently. `<entity>/Resources`
+is aiSLAP's own convention; PRISM neither declares nor always creates it.
+
+**Nothing migrated.** Files at the old `<project>/SRC` and `<mediaRoot>/SRC` stay on
+disk and simply stop being listed — same policy as the `Renders/2dRender/AI` move, and
+for the same reason: relocating files inside a pipeline is PRISM's job.
 
 **PRISM owns entity creation.** `sequence_create` / `shot_create` refuse in a PRISM
-project and the UI greys them out. aiSLAP only ever creates `Renders/2dRender/AI` and
-its version folders, via `prism_media_root_ensure`, called by `setShot` on first visit.
+project and the UI greys them out. Inside an entity PRISM already made, aiSLAP creates
+`Renders/2dRender/AI` and its version folders plus `Resources/SRC`, via
+`prism_media_root_ensure`, called by `setShot` on first visit. The media root is fatal
+if it can't be made; the reference folder is best-effort, so a read-only share still
+opens the shot. `project_open` does the same for the project-level root.
 
 **PRISM owns removal too — aiSLAP never deletes or trashes inside a pipeline.**
 `image_trash` and `column_delete` both refuse with `PRISM_NO_DELETE` when
@@ -105,3 +131,8 @@ direction the frontend needs: entity ← media root, plus name resolution. There
 deliberately **no** TypeScript counterpart to `media_root_for`, because creating a
 media root also creates directories — `setShot` calls `cmd.prism_media_root_ensure`
 rather than deriving the path locally.
+
+The same rule covers reference roots, and there the frontend has no choice: the shot's
+is `<entity>/Resources`, which is not below `shotPath` at all, so no amount of joining
+gets there. `cmd.ref_dir_ensure(shotPath, scope)` resolves and creates it; the gallery
+columns carry their own `id` / `destDir` for everything else.
