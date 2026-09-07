@@ -198,9 +198,20 @@ export function Gallery({ selectable }: Props = {}) {
   };
 
   const destDirFor = useCallback(
-    (col: { isSrc: boolean; id: string; version: string }): string => {
+    (col: {
+      isSrc: boolean;
+      id: string;
+      version: string;
+      destDir?: string;
+    }): string => {
       // SRC columns store full path in `id`; version columns store the bare name.
-      if (col.isSrc) return col.id;
+      //
+      // `destDir` splits the two apart for a reference column: `id` is the
+      // directory it *shows*, which under PRISM is a browsing root other people
+      // keep files in (`04_Resources`), and `destDir` is the `SRC` inside it
+      // that aiSLAP writes to. Natively they are the same folder and Rust sends
+      // no `destDir` at all.
+      if (col.isSrc) return col.destDir ?? col.id;
       return shotPath ? `${shotPath}/${col.version}` : col.id;
     },
     [shotPath],
@@ -588,7 +599,14 @@ export function Gallery({ selectable }: Props = {}) {
       }
 
       // No current selection → first image of first non-empty column.
+      //
+      // But leave a selection that simply isn't in this grid alone. Arrow keys
+      // navigate the flat column lists; an image selected inside a reference
+      // column's subfolder section is real and loaded, just not part of that
+      // 2D model, and treating it as "nothing selected" would silently yank the
+      // selection to the first column on the first arrow press.
       if (colIdx < 0 || rowIdx < 0) {
+        if (selected) return;
         const firstCol = filtered.findIndex((c) => c.images.length > 0);
         if (firstCol < 0) return;
         setSelectedImage(filtered[firstCol].images[0].path);

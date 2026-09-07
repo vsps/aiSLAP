@@ -1,5 +1,6 @@
 import { createStore } from "zustand";
 import type {
+  DirChildren,
   GalleryColumn,
   GalleryImage,
   PrismEntityType,
@@ -78,6 +79,33 @@ type State = {
    *  only the live slice for whichever shot is currently open. */
   collapsedVersionsByShot: Record<string, string[]>;
 
+  /** Which reference-column subfolder sections are open, by absolute folder
+   *  path. An absent entry means the default, which is "open if it is the SRC
+   *  folder new references land in" — see `refFolderOpenDefault`.
+   *
+   *  Deliberately NOT persisted, unlike `collapsedVersions`. The incentive runs
+   *  the other way: a collapsed *column* is remembered because re-expanding it
+   *  re-reads a shot's thumbnails off a network drive, whereas an open
+   *  *section* is what costs the read. Remembering that `Libraries/PolyHaven`
+   *  was open would re-scan it on every launch and every tab switch. */
+  refFolderOpen: Record<string, boolean>;
+
+  /** Contents of the sections loaded so far, by absolute folder path — each
+   *  entry is one directory's media plus its own child folders, which is how
+   *  the tree nests without the backend ever recursing.
+   *
+   *  In the store rather than component state so section images reach
+   *  `imageIndexOf`: a miss there resolves to a synthetic stand-in with no
+   *  tags, and saving from the tag editor would then write that empty set back
+   *  over the file's real tags. */
+  refFolderChildren: Record<string, DirChildren>;
+
+  /** Bumped on every completed shot scan. Open sections watch it so a copy into
+   *  one repaints — the column list is replaced wholesale by a rescan, but a
+   *  section holds its own separately fetched contents and would otherwise sit
+   *  stale. */
+  columnsNonce: number;
+
   /** Media the user has un-ticked on DELIVER, by absolute path.
    *
    *  Stored as the *inverse* of a selection on purpose. DELIVER exports "what
@@ -149,6 +177,10 @@ type Actions = {
   /** Replace the whole per-shot collapse map. Session restore applies a saved
    *  map before `setShot`, so the reopened shot can pick up its own entry. */
   setCollapsedVersionsByShot: (byShot: Record<string, string[]>) => void;
+  /** Open or close one reference-column subfolder section. */
+  toggleRefFolder: (path: string) => void;
+  /** Store a section's freshly scanned contents. */
+  setRefFolderChildren: (path: string, children: DirChildren) => void;
   /** Flip one path in or out of the DELIVER export set. */
   toggleDeliverExcluded: (path: string) => void;
   /** Replace the whole exclusion list — select-all passes `[]`, select-none
@@ -221,6 +253,8 @@ function clearedSelection() {
     targetVersion: null,
     collapsedVersions: [],
     collapsedVersionsByShot: {},
+    refFolderOpen: {},
+    refFolderChildren: {},
     selectedImagePath: null,
     deliverExcluded: [],
     sequenceHistory: emptyChannel(),
@@ -261,12 +295,28 @@ function collapseMapForShot(
 // alternate between `columns` and `taggedGroups` and never hit.
 
 let columnsIndexSrc: unknown = null;
+let refFolderIndexSrc: unknown = null;
 let columnsIndex: Map<string, GalleryImage> = new Map();
 let taggedIndexSrc: unknown = null;
 let taggedIndex: Map<string, GalleryImage> = new Map();
 
+/** Whether a reference subfolder section starts open.
+ *
+ *  Only `SRC` does. It is where new references land, so a file the user just
+ *  dropped has to be visible without hunting for it; every other folder is a
+ *  browsing destination whose contents cost a scan of what is usually a network
+ *  share, and stays shut until asked for. */
+export function refFolderOpenDefault(path: string): boolean {
+  return basename(path) === "SRC";
+}
+
 /** Path -> image across every loaded column, `images` taking precedence over
  *  `srcImages` (the order the callers this replaced searched in).
+ *
+ *  Loaded subfolder sections are folded in too. They must be: a miss here
+ *  resolves to a synthetic stand-in carrying no tags and no `isModel3d`, which
+ *  would open a `.glb` in the 2D zoom modal and — worse — let the tag editor
+ *  save an empty tag set over the file's real one.
  *
  *  Pass the raw `columns` array only. A derived array — a filtered view, or one
  *  carrying pending placeholders — is rebuilt every render and would thrash the
@@ -275,15 +325,19 @@ let taggedIndex: Map<string, GalleryImage> = new Map();
  *  fallback. */
 export function imageIndexOf(
   columns: GalleryColumn[],
+  refFolderChildren: Record<string, DirChildren> = {},
 ): Map<string, GalleryImage> {
-  if (columns !== columnsIndexSrc) {
+  if (columns !== columnsIndexSrc || refFolderChildren !== refFolderIndexSrc) {
     const next = new Map<string, GalleryImage>();
     for (const c of columns) for (const i of c.images) next.set(i.path, i);
     for (const c of columns)
       for (const i of c.srcImages ?? [])
         if (!next.has(i.path)) next.set(i.path, i);
+    for (const c of Object.values(refFolderChildren))
+      for (const i of c.images) if (!next.has(i.path)) next.set(i.path, i);
     columnsIndex = next;
     columnsIndexSrc = columns;
+    refFolderIndexSrc = refFolderChildren;
   }
   return columnsIndex;
 }
@@ -303,7 +357,8 @@ export function taggedImageIndexOf(
 }
 
 /** Stable-reference selectors, safe to use directly without `useShallow`. */
-export const selectImageByPath = (s: State) => imageIndexOf(s.columns);
+export const selectImageByPath = (s: State) =>
+  imageIndexOf(s.columns, s.refFolderChildren);
 export const selectTaggedImageByPath = (s: State) =>
   taggedImageIndexOf(s.taggedGroups);
 
@@ -340,6 +395,7 @@ export function createSessionStore(tab: TabStores) {
     if (get().shotPath !== shotPath) return;
     set((s) => ({
       columns,
+      columnsNonce: s.columnsNonce + 1,
       targetVersion:
         s.targetVersion && columns.some((c) => c.version === s.targetVersion)
           ? s.targetVersion
@@ -364,7 +420,13 @@ export function createSessionStore(tab: TabStores) {
    *  the tab is still on the shot that was swept. `shotPath` is passed in
    *  rather than re-read so a tab switch mid-sweep can't retarget it. */
   const sweepThumbs = async (shotPath: string) => {
-    const report = await sweepShotOnce(shotPath, get().projectPath);
+    // The reference dirs come off the columns the scan just produced, so the
+    // sweep follows wherever the backend resolved them to — and it sweeps each
+    // column's *write* dir, never its browsing root. See `sweepShotOnce`.
+    const refDirs = get()
+      .columns.filter((c) => c.isSrc)
+      .map((c) => c.destDir ?? c.id);
+    const report = await sweepShotOnce(shotPath, refDirs);
     if (producedAnything(report) && get().shotPath === shotPath) {
       await coalescedRescanShot();
     }
@@ -395,6 +457,9 @@ export function createSessionStore(tab: TabStores) {
     targetVersion: null,
     collapsedVersions: [],
     collapsedVersionsByShot: {},
+    refFolderOpen: {},
+    refFolderChildren: {},
+    columnsNonce: 0,
     deliverExcluded: [],
 
     compareMode: false,
@@ -583,6 +648,7 @@ export function createSessionStore(tab: TabStores) {
         shotPath: resolved,
         shotEntityPath: entityPath,
         columns,
+        columnsNonce: get().columnsNonce + 1,
         targetVersion,
         // Same rule as `targetVersion` above: re-opening the shot you're
         // already on keeps your collapse state; a genuine move restores the
@@ -666,6 +732,22 @@ export function createSessionStore(tab: TabStores) {
 
     setCollapsedVersionsByShot(byShot) {
       set({ collapsedVersionsByShot: byShot });
+    },
+
+    toggleRefFolder(path) {
+      const cur = get().refFolderOpen;
+      set({
+        refFolderOpen: {
+          ...cur,
+          [path]: !(cur[path] ?? refFolderOpenDefault(path)),
+        },
+      });
+    },
+
+    setRefFolderChildren(path, children) {
+      set((s) => ({
+        refFolderChildren: { ...s.refFolderChildren, [path]: children },
+      }));
     },
 
     toggleDeliverExcluded(path) {

@@ -55,6 +55,11 @@ impl TestProject {
     /// A PRISM project: the same `project.json` marker plus a
     /// `00_Pipeline/pipeline.json` declaring the stock shot and asset roots and
     /// a 4-digit version padding.
+    ///
+    /// `textures` is here because it is the only thing a real `pipeline.json`
+    /// says about `04_Resources` — `prism::resources_rel_from` reads the
+    /// resources dir out of it. Without the key every PRISM fixture would
+    /// silently exercise only the fallback.
     pub fn prism(prefix: &str) -> Self {
         let project = Self::new(prefix);
         let pipeline = project.root.join("00_Pipeline");
@@ -64,7 +69,8 @@ impl TestProject {
             r#"{"globals":{"project_name":"TESTPRJ","versionFormat":"v#","versionPadding":4},
                 "folder_structure":{
                   "sequences":{"value":"@project_path@/03_Production/Shots/@sequence@"},
-                  "assets":{"value":"@project_path@/03_Production/Assets/@asset_path@"}}}"#,
+                  "assets":{"value":"@project_path@/03_Production/Assets/@asset_path@"},
+                  "textures":{"value":"@project_path@/04_Resources/Textures"}}}"#,
         )
         .unwrap();
         project

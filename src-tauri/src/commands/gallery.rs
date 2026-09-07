@@ -9,15 +9,16 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::commands::fsutil::{
-    as_str, existing_thumb_path, is_image_ext, is_model3d_ext, is_thumb, is_video_ext,
+    as_str, existing_thumb_path, is_image_ext, is_model3d_ext, is_thumb, is_video_ext, list_dirs,
     project_root_for, require_dir, sidecar_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
+use crate::commands::refroots;
 use crate::commands::tags::{generated_by_from_sidecar, tags_from_sidecar};
 use crate::commands::thumbs::ThumbCtx;
 use crate::commands::walk;
 use crate::db::TagIndex;
-use crate::domain::{GalleryColumn, GalleryImage, ShotSidecar};
-use crate::error::{run_blocking, AppResult};
+use crate::domain::{DirChildren, GalleryColumn, GalleryImage, RefScope, ShotSidecar};
+use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::read_json_or_default;
 
 /// Load the tag index for the project `path` belongs to. Best-effort: a
@@ -42,40 +43,33 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
     // called for every file in every column.
     let project_root = ProjectRoot::resolve(root).ok();
 
-    // Include the project-level SRC as "GLOBAL SRC". Resolved by walking up to
-    // project.json rather than by depth: a PRISM shot's media root sits several
-    // levels deeper (`<entity>/Renders/2dRender/AI`), so shot → seq → project
-    // doesn't hold there.
+    // Include the project-level reference root as "GLOBAL SRC". Resolved by
+    // walking up to project.json rather than by depth: a PRISM shot's media
+    // root sits several levels deeper (`<entity>/Renders/2dRender/AI`), so
+    // shot → seq → project doesn't hold there.
     if let Some(project) = project_root.as_ref() {
-        let global_src = project.path.join(SRC_DIR);
-        if global_src.is_dir() {
-            let images = scan_directory_images(&global_src, project_root.as_ref(), tags)?;
-            cols.push(GalleryColumn {
-                id: as_str(&global_src),
-                version: "GLOBAL SRC".to_string(),
-                is_src: true,
-                images,
-                src_images: Vec::new(),
-                timestamp: None,
-                model_name: None,
-            });
+        let global_src = refroots::global_ref_root(&project.path);
+        if let Some(col) = ref_column(
+            &global_src,
+            "GLOBAL SRC",
+            Some(RefScope::Global),
+            project_root.as_ref(),
+            tags,
+        )? {
+            cols.push(col);
         }
     }
 
-    // Per-shot SRC — sits to the right of GLOBAL SRC, holds shot-level
-    // reference images copied in by the ref panel or drag-drop.
-    let shot_src = root.join(SRC_DIR);
-    if shot_src.is_dir() {
-        let images = scan_directory_images(&shot_src, project_root.as_ref(), tags)?;
-        cols.push(GalleryColumn {
-            id: as_str(&shot_src),
-            version: "SHOT SRC".to_string(),
-            is_src: true,
-            images,
-            src_images: Vec::new(),
-            timestamp: None,
-            model_name: None,
-        });
+    // Per-shot reference root — sits to the right of GLOBAL SRC, holds
+    // shot-level reference images copied in by the ref panel or drag-drop.
+    if let Some(col) = ref_column(
+        &refroots::shot_ref_root(root),
+        "SHOT SRC",
+        Some(RefScope::Shot),
+        project_root.as_ref(),
+        tags,
+    )? {
+        cols.push(col);
     }
 
     // Version columns. SRC and SEL are handled separately above and below.
@@ -91,24 +85,26 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
             is_src: false,
             images,
             src_images: Vec::new(),
+            subdirs: Vec::new(),
+            dest_dir: None,
+            ref_scope: None,
             timestamp: None,
             model_name: None,
         });
     }
 
     // SEL column — sits at the far right, contains user-selected keeps.
+    // Deliberate legacy: nothing is written into one any more, so it gets no
+    // `dest_dir`, but it still lists subfolders like any other ref column.
     let shot_sel = root.join(SEL_DIR);
     if shot_sel.is_dir() {
-        let images = scan_directory_images(&shot_sel, project_root.as_ref(), tags)?;
-        cols.push(GalleryColumn {
-            id: as_str(&shot_sel),
-            version: SEL_DIR.to_string(),
-            is_src: true,
-            images,
-            src_images: Vec::new(),
-            timestamp: None,
-            model_name: None,
-        });
+        cols.push(ref_column_at(
+            &shot_sel,
+            SEL_DIR,
+            None,
+            project_root.as_ref(),
+            tags,
+        )?);
     }
 
     cols.sort_by(|a, b| match (a.is_src, b.is_src) {
@@ -133,6 +129,124 @@ pub(crate) fn scan_shot_columns(root: &Path, tags: &TagIndex) -> AppResult<Vec<G
     }
 
     Ok(cols)
+}
+
+/// A reference column for `dir`, or `None` when that directory doesn't exist.
+///
+/// The directory is a *browsing root*: its loose media becomes the column's
+/// images and its immediate subfolders become sections the frontend can open.
+/// Their contents are deliberately not read here — see `dir_children_scan`.
+fn ref_column(
+    dir: &Path,
+    version: &str,
+    scope: Option<RefScope>,
+    project_root: Option<&ProjectRoot>,
+    tags: &TagIndex,
+) -> AppResult<Option<GalleryColumn>> {
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    Ok(Some(ref_column_at(
+        dir,
+        version,
+        scope,
+        project_root,
+        tags,
+    )?))
+}
+
+/// `ref_column` without the existence check, for callers that already made it.
+fn ref_column_at(
+    dir: &Path,
+    version: &str,
+    scope: Option<RefScope>,
+    project_root: Option<&ProjectRoot>,
+    tags: &TagIndex,
+) -> AppResult<GalleryColumn> {
+    let children = dir_children(dir, project_root, tags)?;
+    // Scope-gated, not computed for every reference column: `SEL` is deliberate
+    // legacy that nothing writes into any more, and it must not sprout a
+    // `SEL/SRC` to write into now. Only worth sending when it differs from the
+    // column directory — natively that directory already is `SRC`, and
+    // `default_ref_dir` hands it straight back.
+    let dest_dir = scope
+        .map(|_| refroots::default_ref_dir(dir))
+        .filter(|dest| dest != dir)
+        .map(|dest| as_str(&dest));
+    Ok(GalleryColumn {
+        id: as_str(dir),
+        version: version.to_string(),
+        is_src: true,
+        images: children.images,
+        src_images: Vec::new(),
+        subdirs: children.subdirs,
+        dest_dir,
+        ref_scope: scope,
+        timestamp: None,
+        model_name: None,
+    })
+}
+
+/// One directory's loose media plus its immediate subfolders. Two `read_dir`s,
+/// no descent — the whole point is that a resources folder pointing at a
+/// texture library costs nothing until a section is actually opened.
+fn dir_children(
+    dir: &Path,
+    project_root: Option<&ProjectRoot>,
+    tags: &TagIndex,
+) -> AppResult<DirChildren> {
+    Ok(DirChildren {
+        images: scan_directory_images(dir, project_root, tags)?,
+        subdirs: ref_subdirs(dir)?,
+    })
+}
+
+/// The folders a reference directory offers as sections, `SRC` first.
+///
+/// `list_dirs` already drops `.`/`$`-prefixed names and `TRASH`, which is
+/// exactly the filter wanted here. It does *not* drop `SRC` or `Resources` —
+/// and must not: under PRISM those are where aiSLAP's own references live, so
+/// they have to show up as sections. That is the opposite of what
+/// `prism::is_ignored_entity_name` does with the same names, deliberately: one
+/// gate answers "is this a shot?", this one answers "is this a folder of
+/// pictures?".
+///
+/// `SRC` is floated to the front rather than left in alphabetical order because
+/// it is where new references land — same reasoning as the `SEL` fixup in
+/// `scan_shot_columns`.
+fn ref_subdirs(dir: &Path) -> AppResult<Vec<String>> {
+    let mut dirs = list_dirs(dir)?;
+    if let Some(i) = dirs
+        .iter()
+        .position(|p| p.file_name().and_then(|n| n.to_str()) == Some(SRC_DIR))
+    {
+        let src = dirs.remove(i);
+        dirs.insert(0, src);
+    }
+    Ok(dirs.iter().map(|p| as_str(p)).collect())
+}
+
+/// Read one section of a reference column, when the user opens it.
+///
+/// The path comes from the frontend, so it is checked against the project it
+/// claims to be in: a section path left over from a previously-open project
+/// would otherwise read an arbitrary directory off disk.
+#[tauri::command]
+pub async fn dir_children_scan(dir: String) -> AppResult<DirChildren> {
+    let path = PathBuf::from(&dir);
+    require_dir(&path)?;
+    let index = tag_index_for(&path).await;
+    run_blocking(move || {
+        let project_root = ProjectRoot::resolve(&path)?;
+        if project_root.rel(&path).is_none() {
+            return Err(AppError::Msg(format!(
+                "not inside a project: {}",
+                as_str(&path)
+            )));
+        }
+        dir_children(&path, Some(&project_root), &index)
+    })
+    .await
 }
 
 /// Classify a single file as a `GalleryImage`, or `None` if it's not a
@@ -267,6 +381,10 @@ pub struct ShotStack {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SequenceStacks {
+    /// The resolved project-level reference root — `04_Resources` under PRISM.
+    /// Sent so the stacked view's drop target doesn't have to rebuild a path
+    /// the frontend can no longer derive. Empty when there is no project root.
+    pub global_src_root: String,
     pub global_src_images: Vec<GalleryImage>,
     pub shots: Vec<ShotStack>,
 }
@@ -283,18 +401,16 @@ fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResul
 
     let project_root = ProjectRoot::resolve(&seq_root).ok();
 
-    // Project-level GLOBAL SRC.
-    let global_src_images = match project_root.as_ref() {
-        Some(root) => {
-            let global_src = root.path.join(SRC_DIR);
-            if global_src.is_dir() {
-                scan_directory_images(&global_src, project_root.as_ref(), tags)?
-            } else {
-                vec![]
-            }
-        }
-        None => vec![],
+    // Project-level GLOBAL SRC. Loose media only — the stacked view is one row
+    // per shot and has no room for the section tree the columns view gets.
+    let global_src = project_root
+        .as_ref()
+        .map(|root| refroots::global_ref_root(&root.path));
+    let global_src_images = match global_src.as_ref() {
+        Some(dir) if dir.is_dir() => scan_directory_images(dir, project_root.as_ref(), tags)?,
+        _ => vec![],
     };
+    let global_src_root = global_src.as_deref().map(as_str).unwrap_or_default();
 
     // Walk shots in this sequence. In a PRISM project the entity folder holds
     // pipeline dirs (Scenefiles/Export/...) and aiSLAP's versions live down in
@@ -340,6 +456,7 @@ fn sequence_stacks_scan_impl(sequence_path: String, tags: &TagIndex) -> AppResul
     shots.sort_by(|a, b| a.shot_name.cmp(&b.shot_name));
 
     Ok(SequenceStacks {
+        global_src_root,
         global_src_images,
         shots,
     })
@@ -388,5 +505,131 @@ mod tests {
                 "{suffix} must not scan as media"
             );
         }
+    }
+
+    fn col<'a>(cols: &'a [GalleryColumn], version: &str) -> &'a GalleryColumn {
+        cols.iter()
+            .find(|c| c.version == version)
+            .unwrap_or_else(|| panic!("no {version} column in {:?}", names(cols)))
+    }
+
+    fn names(cols: &[GalleryColumn]) -> Vec<&str> {
+        cols.iter().map(|c| c.version.as_str()).collect()
+    }
+
+    /// A native project's reference columns are unchanged by the PRISM work:
+    /// still `<project>/SRC` and `<shot>/SRC`, and each is its own write
+    /// target, so nothing acquires a nested `SRC/SRC`.
+    #[test]
+    fn native_reference_columns_keep_their_paths_and_need_no_dest_dir() {
+        let p = TestProject::new("gallery-native-src");
+        p.media("SRC/global.png", None);
+        p.media("SQ01/sh010/SRC/shot.png", None);
+        p.media("SQ01/sh010/v001/out.png", None);
+
+        let cols = scan_shot_columns(&p.root.join("SQ01/sh010"), &TagIndex::default()).unwrap();
+
+        let global = col(&cols, "GLOBAL SRC");
+        assert_eq!(global.id, as_str(&p.root.join("SRC")));
+        assert_eq!(global.dest_dir, None, "a native root already is SRC");
+        assert_eq!(global.ref_scope, Some(RefScope::Global));
+        assert_eq!(global.images.len(), 1);
+
+        let shot = col(&cols, "SHOT SRC");
+        assert_eq!(shot.id, as_str(&p.root.join("SQ01/sh010/SRC")));
+        assert_eq!(shot.dest_dir, None);
+        assert_eq!(shot.ref_scope, Some(RefScope::Shot));
+
+        // Version columns are untouched by any of this.
+        let v = col(&cols, "v001");
+        assert!(v.subdirs.is_empty() && v.dest_dir.is_none() && v.ref_scope.is_none());
+    }
+
+    /// The move itself: PRISM reference columns read the pipeline's own
+    /// resources folders, and write into an `SRC` inside each.
+    #[test]
+    fn prism_reference_columns_read_the_resources_folders() {
+        let p = TestProject::prism("gallery-prism-src");
+        let entity = p.root.join("03_Production/Shots/AMA/s0010");
+        let media_root = entity.join("Renders/2dRender/AI");
+        p.media("04_Resources/loose.png", None);
+        p.media("04_Resources/SRC/global.png", None);
+        p.media("04_Resources/clouds/sky.png", None);
+        p.media("03_Production/Shots/AMA/s0010/Resources/SRC/shot.png", None);
+        p.media(
+            "03_Production/Shots/AMA/s0010/Renders/2dRender/AI/v0001/out.png",
+            None,
+        );
+
+        let cols = scan_shot_columns(&media_root, &TagIndex::default()).unwrap();
+
+        let global = col(&cols, "GLOBAL SRC");
+        assert_eq!(global.id, as_str(&p.root.join("04_Resources")));
+        assert_eq!(
+            global.dest_dir.as_deref(),
+            Some(as_str(&p.root.join("04_Resources/SRC")).as_str()),
+        );
+        // Loose media at the root is the column's own list; the folders are
+        // sections, and their contents are NOT read here.
+        assert_eq!(global.images.len(), 1, "only the loose file");
+        assert_eq!(
+            global.subdirs,
+            vec![
+                as_str(&p.root.join("04_Resources/SRC")),
+                as_str(&p.root.join("04_Resources/clouds")),
+            ],
+            "SRC floats to the front, the rest stay alphabetical"
+        );
+
+        let shot = col(&cols, "SHOT SRC");
+        assert_eq!(shot.id, as_str(&entity.join("Resources")));
+        assert_eq!(
+            shot.dest_dir.as_deref(),
+            Some(as_str(&entity.join("Resources/SRC")).as_str()),
+        );
+    }
+
+    /// Nothing migrates: files at the pre-move PRISM locations stay on disk and
+    /// stop being listed. Pins the deliberate absence of a legacy fallback.
+    #[test]
+    fn the_old_prism_src_locations_are_no_longer_read() {
+        let p = TestProject::prism("gallery-prism-legacy-src");
+        let media_root = p
+            .root
+            .join("03_Production/Shots/AMA/s0010/Renders/2dRender/AI");
+        let old_global = p.media("SRC/stranded.png", None);
+        let old_shot = p.media(
+            "03_Production/Shots/AMA/s0010/Renders/2dRender/AI/SRC/stranded.png",
+            None,
+        );
+
+        let cols = scan_shot_columns(&media_root, &TagIndex::default()).unwrap();
+        let listed: Vec<&str> = cols
+            .iter()
+            .flat_map(|c| c.images.iter().map(|i| i.filename.as_str()))
+            .collect();
+        assert!(listed.is_empty(), "nothing from the old paths: {listed:?}");
+        assert!(old_global.is_file() && old_shot.is_file(), "left on disk");
+    }
+
+    /// A section is read only when asked for, and reports its own subfolders so
+    /// the frontend can nest without the backend recursing.
+    #[test]
+    fn dir_children_returns_one_level_and_its_own_subdirs() {
+        let p = TestProject::prism("gallery-sections");
+        p.media("04_Resources/Libraries/top.png", None);
+        p.media("04_Resources/Libraries/PolyHaven/deep.png", None);
+
+        let children = dir_children(
+            &p.root.join("04_Resources/Libraries"),
+            None,
+            &TagIndex::default(),
+        )
+        .unwrap();
+        assert_eq!(children.images.len(), 1, "own files only, no descent");
+        assert_eq!(
+            children.subdirs,
+            vec![as_str(&p.root.join("04_Resources/Libraries/PolyHaven"))],
+        );
     }
 }

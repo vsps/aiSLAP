@@ -4,7 +4,6 @@ import { useLayoutStore } from "../stores/layoutStore";
 import { cmd } from "../lib/tauri";
 import { editTagsAt, selectImagePath } from "../lib/actions";
 import { showMessage } from "../lib/dialog";
-import { joinPath } from "../lib/paths";
 import { VersionStack } from "./VersionStack";
 import { SelectPickerPopup } from "./SelectPickerPopup";
 import { Thumbnail } from "./Thumbnail";
@@ -27,7 +26,6 @@ type PickerState = {
 };
 
 export function StackedView({ onDragStart }: Props) {
-  const projectPath = useSessionStore((s) => s.projectPath);
   const sequencePath = useSessionStore((s) => s.sequencePath);
   const shotPath = useSessionStore((s) => s.shotPath);
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
@@ -103,12 +101,13 @@ export function StackedView({ onDragStart }: Props) {
     <>
       <div className="flex-1 min-h-0 overflow-y-auto thin-scroll bg-surface p-gallery-column">
         {/* GLOBAL SRC fixed row — Thumbnails so RMB + indicators come for free.
-            The drop target is the project root's SRC, taken from the session
-            rather than the sequence's parent: a PRISM sequence sits under
-            03_Production/Shots, so depth doesn't get you there. */}
+            The drop target is the project's reference root, resolved by the
+            scan rather than joined here: a PRISM project's is `04_Resources`,
+            and a PRISM sequence sits under 03_Production/Shots, so neither the
+            name nor the depth gets you there from the frontend. */}
         <div
           className="flex items-stretch gap-gallery-column-gap mb-gallery-column-gap"
-          data-stacked-global-src={joinPath(projectPath, "SRC")}
+          data-stacked-global-src={sequenceStacks.globalSrcRoot}
         >
           <div className="shrink-0 w-[140px] bg-src-bg border border-border px-2 py-1 text-sm font-semibold">
             GLOBAL SRC

@@ -216,8 +216,17 @@ one without is priced now, **backfilled** into the sidecar and pushed to the ind
 That backfill probes unpriced *videos* (one ffmpeg spawn each, once — they take the
 fast path forever after) but not stills, where `megapixels` stays `None`. Shot and
 sequence totals are cached into their sidecars, which is what `project_cost_scan_cached`
-reloads instantly on project open. `project_cost_lines` (Reports) is read-only and
-never computes, so it cannot disagree with the tree.
+reloads instantly on project open. In the UI this is the AUDIT page's **BACKFILL
+PRICES** button, and it is the only control there that writes: everything else on
+that page reads back what it produced.
+
+`project_cost_lines` (Reports) is read-only and never computes, so it cannot
+disagree with the tree. It reads `db::assets_cost_index` first — one query for the
+whole project — and opens a sidecar only for a media file the index has no row for,
+so a reconciled project pays no per-file JSON parse. Same bargain as `tags_all`:
+the sidecar is still the source of truth, and a sidecar edited outside the app
+needs a reconcile before the report sees it. AUDIT loads this by itself on entering
+the mode; `Refresh` re-runs it.
 
 `reconcile_actual_costs` is the only path that *replaces* a number: it reads fal's
 billing-events ledger for each `falRequestId` and writes the real charge plus

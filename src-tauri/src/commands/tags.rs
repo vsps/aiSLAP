@@ -675,6 +675,8 @@ pub async fn project_tag_scan(
         None => vec![],
     };
 
+    let prism_mode = !entity_prefixes.is_empty();
+
     // Keyed by project-relative dir rather than bare name, so the two PRISM
     // trees can't collide on a shared sequence name and the output paths can be
     // rebuilt exactly. In a native project these keys *are* the names.
@@ -690,12 +692,26 @@ pub async fn project_tag_scan(
         if !matches(image_tags, &wanted, mode) {
             continue;
         }
-        // Expect at least <seq>/<shot>/<file>; project-level SRC has no shot
-        // to group under and is left out, same as the starred view before it.
-        let (prefix, grouping) = entity_prefixes
+        // Expect at least <seq>/<shot>/<file>; project-level references have no
+        // shot to group under and are left out, same as the starred view before
+        // it.
+        //
+        // In a PRISM project that exclusion has to be by *prefix*, not by depth.
+        // The project-level reference root is `04_Resources`, and a tagged file
+        // in `04_Resources/SRC/x.png` is three segments deep — deep enough to
+        // pass the length check and be grouped as a sequence named
+        // "04_Resources", whose shot path `media_root_for` would then resolve to
+        // `04_Resources/SRC/Renders/2dRender/AI`. That folder does not exist, so
+        // clicking the group would open nothing.
+        let matched = entity_prefixes
             .iter()
-            .find_map(|p| rel.strip_prefix(p.as_str()).map(|rest| (p.as_str(), rest)))
-            .unwrap_or(("", rel.as_str()));
+            .find_map(|p| rel.strip_prefix(p.as_str()).map(|rest| (p.as_str(), rest)));
+        let (prefix, grouping) = match (matched, prism_mode) {
+            (Some(hit), _) => hit,
+            // Outside both entity trees in a pipeline: not a shot, skip.
+            (None, true) => continue,
+            (None, false) => ("", rel.as_str()),
+        };
         let parts: Vec<&str> = grouping.split('/').collect();
         if parts.len() < 3 {
             continue;
@@ -718,7 +734,6 @@ pub async fn project_tag_scan(
             .push(img);
     }
 
-    let prism_mode = !entity_prefixes.is_empty();
     let leaf = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_string();
     Ok(by_seq
         .into_iter()
@@ -1138,6 +1153,41 @@ mod tests {
 
         let props = groups.iter().find(|g| g.seq_name == "PROPS").unwrap();
         assert_eq!(props.shots[0].shot_name, "cube");
+    }
+
+    /// A tagged reference outside both entity trees is not a shot and must not
+    /// be grouped as one.
+    ///
+    /// This was latent until the project-level reference root moved to
+    /// `04_Resources`: at `SRC/x.png` such a file was two segments deep and the
+    /// `parts.len() < 3` check dropped it, but `04_Resources/SRC/x.png` is three
+    /// and passed. It would have become a sequence named "04_Resources" whose
+    /// shot path resolved to `04_Resources/SRC/Renders/2dRender/AI` — a folder
+    /// that does not exist, so clicking it opened nothing.
+    #[tokio::test]
+    async fn a_tagged_project_reference_is_not_a_prism_sequence() {
+        let project = TestProject::new("tags-prism-refs");
+        let root = project.root.clone();
+        fs::create_dir_all(root.join("00_Pipeline")).unwrap();
+        fs::write(
+            root.join("00_Pipeline/pipeline.json"),
+            r#"{"globals":{"versionPadding":4}}"#,
+        )
+        .unwrap();
+
+        let reference = media(&root, "04_Resources/SRC/plate.png", None);
+        let shot = media(
+            &root,
+            "03_Production/Shots/MOD/s0010/Renders/2dRender/AI/v0001/a.png",
+            None,
+        );
+        for p in [&reference, &shot] {
+            image_tags_set(as_str(p), vec!["fav".into()]).await.unwrap();
+        }
+
+        let groups = project_tag_scan(as_str(&root), vec![], None).await.unwrap();
+        let names: Vec<&str> = groups.iter().map(|g| g.seq_name.as_str()).collect();
+        assert_eq!(names, vec!["MOD"], "only the real entity tree");
     }
 
     /// The media triple has to survive an export intact. The thumbnail is the

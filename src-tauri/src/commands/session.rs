@@ -14,6 +14,7 @@ use crate::commands::fsutil::{
 };
 use crate::commands::gallery::{scan_shot_columns, tag_index_for};
 use crate::commands::prism;
+use crate::commands::refroots;
 use crate::domain::{GalleryColumn, ProjectSidecar, SequenceSidecar, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{ensure_dir, read_json_or_default, read_json_strict, write_json_atomic};
@@ -56,6 +57,15 @@ pub fn project_open(project_path: String, entity_type: Option<String>) -> AppRes
             },
         )?;
     }
+    // The project-level reference folder. A column is only emitted when its
+    // directory exists, so without this a project that has never had one shows
+    // no GLOBAL SRC column at all — and there is then nothing to drop onto to
+    // create it. Best-effort: a read-only share should still open.
+    let global_ref = refroots::default_ref_dir(&refroots::global_ref_root(&root));
+    if let Err(e) = ensure_dir(&global_ref) {
+        tracing::warn!("could not create {}: {e}", as_str(&global_ref));
+    }
+
     let dirs = match &prism {
         // The asset tree has no fixed depth — categories and assets sit at the
         // same level — so its "sequences" are resolved rather than listed.

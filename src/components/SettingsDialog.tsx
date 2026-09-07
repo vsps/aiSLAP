@@ -181,9 +181,10 @@ export function SettingsDialog({ onClose }: Props) {
   }
 
   async function browseFfmpeg() {
-    const paths = await pickFile("Pick ffmpeg executable", {
-      extensions: ["exe"],
-    });
+    // No extension filter: only Windows's build is named ffmpeg.exe — macOS
+    // and Linux builds are plain "ffmpeg", and an ["exe"] filter hid them
+    // from this picker entirely on those platforms.
+    const paths = await pickFile("Pick ffmpeg executable");
     if (paths?.[0]) setConfig((c) => ({ ...c, ffmpegPath: paths[0] }));
   }
 
@@ -349,7 +350,7 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="ffmpeg path (for video thumbnails)">
+            <Field label="ffmpeg path (optional — auto-detected if installed)">
               <div className="flex gap-1">
                 <input
                   type="text"
@@ -359,7 +360,7 @@ export function SettingsDialog({ onClose }: Props) {
                     setConfig((c) => ({ ...c, ffmpegPath: value }));
                   }}
                   className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
-                  placeholder="ffmpeg.exe (optional)"
+                  placeholder="auto-detected from PATH, or browse to a specific build"
                 />
                 <Btn onClick={browseFfmpeg}>
                   browse

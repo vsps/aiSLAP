@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::config::resolve_ffmpeg;
 use crate::error::{run_blocking, AppError, AppResult};
 
 #[derive(Debug, Serialize)]
@@ -56,15 +57,9 @@ pub(crate) fn video_info_probe_impl(
     video_path: String,
     ffmpeg_path: String,
 ) -> AppResult<VideoInfo> {
-    let exe = ffmpeg_path.trim();
-    if exe.is_empty() {
+    let Some(exe_path) = resolve_ffmpeg(&ffmpeg_path) else {
         return Ok(VideoInfo::default());
-    }
-    let exe_path = PathBuf::from(exe);
-    if !exe_path.is_file() {
-        tracing::warn!("configured ffmpeg path not found: {exe}");
-        return Ok(VideoInfo::default());
-    }
+    };
     // `-i` with no output makes ffmpeg print the input's stream info to
     // stderr and exit non-zero — that's expected, we only want the banner.
     let output = Command::new(&exe_path)
@@ -220,15 +215,9 @@ fn video_thumbnail_extract_impl(
     thumb_path: String,
     ffmpeg_path: String,
 ) -> AppResult<bool> {
-    let exe = ffmpeg_path.trim();
-    if exe.is_empty() {
+    let Some(exe_path) = resolve_ffmpeg(&ffmpeg_path) else {
         return Ok(false);
-    }
-    let exe_path = PathBuf::from(exe);
-    if !exe_path.is_file() {
-        tracing::warn!("configured ffmpeg path not found: {exe}");
-        return Ok(false);
-    }
+    };
     let thumb = PathBuf::from(&thumb_path);
     if let Some(parent) = thumb.parent() {
         std::fs::create_dir_all(parent)?;
@@ -248,6 +237,23 @@ fn video_thumbnail_extract_impl(
             tracing::warn!("ffmpeg thumbnail extract spawn failed: {e}");
             Ok(false)
         }
+    }
+}
+
+/// Message for the two commands that treat a missing ffmpeg as a hard error
+/// (export and trim — both would otherwise fail silently in a way nobody
+/// would notice until the output file just isn't there). Distinguishes
+/// "never configured" from "configured, but `resolve_ffmpeg` still couldn't
+/// find it" — the latter also names what was tried, since by the time this
+/// fires that may include a PATH search and not just the literal field value.
+fn ffmpeg_not_found_msg(configured: &str) -> String {
+    if configured.trim().is_empty() {
+        "ffmpeg not found — install it, or set its path in Settings".into()
+    } else {
+        format!(
+            "ffmpeg not found at '{}', and none was found on PATH either — fix the path in Settings",
+            configured.trim()
+        )
     }
 }
 
@@ -302,16 +308,9 @@ fn timeline_export_impl(params: TimelineExportParams) -> AppResult<()> {
     if params.segments.is_empty() {
         return Err(AppError::Msg("no segments to export".into()));
     }
-    let exe = params.ffmpeg_path.trim();
-    if exe.is_empty() {
-        return Err(AppError::Msg(
-            "ffmpeg path not configured — set it in Settings".into(),
-        ));
-    }
-    let exe_path = PathBuf::from(exe);
-    if !exe_path.is_file() {
-        return Err(AppError::Msg(format!("ffmpeg not found at: {exe}")));
-    }
+    let Some(exe_path) = resolve_ffmpeg(&params.ffmpeg_path) else {
+        return Err(AppError::Msg(ffmpeg_not_found_msg(&params.ffmpeg_path)));
+    };
 
     let w = params.width.max(2);
     let h = params.height.max(2);
@@ -532,16 +531,9 @@ pub async fn video_trim(params: VideoTrimParams) -> AppResult<()> {
 }
 
 fn video_trim_impl(params: VideoTrimParams) -> AppResult<()> {
-    let exe = params.ffmpeg_path.trim();
-    if exe.is_empty() {
-        return Err(AppError::Msg(
-            "ffmpeg path not configured — set it in Settings".into(),
-        ));
-    }
-    let exe_path = PathBuf::from(exe);
-    if !exe_path.is_file() {
-        return Err(AppError::Msg(format!("ffmpeg not found at: {exe}")));
-    }
+    let Some(exe_path) = resolve_ffmpeg(&params.ffmpeg_path) else {
+        return Err(AppError::Msg(ffmpeg_not_found_msg(&params.ffmpeg_path)));
+    };
     if !PathBuf::from(&params.input_path).is_file() {
         return Err(AppError::Msg(format!("not a file: {}", params.input_path)));
     }

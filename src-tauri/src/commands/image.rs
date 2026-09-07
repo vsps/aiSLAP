@@ -8,13 +8,14 @@ use std::path::{Path, PathBuf};
 use crate::commands::fsutil::{
     as_str, existing_thumb_path, is_media_ext, is_thumb, next_version_name, project_root_for,
     relativize, require_dir, sidecar_path, thumb_path_like, thumb_suffix_of,
-    validate_filename_stem, TransferMode, SHOT_SIDECAR, SRC_DIR, THUMB_SUFFIXES,
+    validate_filename_stem, TransferMode, SHOT_SIDECAR, THUMB_SUFFIXES,
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
+use crate::commands::refroots;
 use crate::commands::tags::tags_from_sidecar;
 use crate::commands::thumbs;
 use crate::db::{self, AssetRecord};
-use crate::domain::ShotSidecar;
+use crate::domain::{RefScope, ShotSidecar};
 use crate::error::{run_blocking, AppError, AppResult};
 use crate::fsjson::{ensure_dir, read_json_or_default, write_json_atomic};
 
@@ -348,7 +349,8 @@ fn ref_copy_to_global_src_impl(
     // Walk up to project.json rather than assuming shot → seq → project: a
     // PRISM shot's media root is `<entity>/Renders/2dRender/AI`, several levels
     // deeper.
-    let project_dir = project_root_for(&PathBuf::from(&shot_path))?.join(SRC_DIR);
+    let root = project_root_for(&PathBuf::from(&shot_path))?;
+    let project_dir = refroots::default_ref_dir(&refroots::global_ref_root(&root));
     ensure_dir(&project_dir)?;
     let dest = transfer_triple_to_dir(
         &src,
@@ -358,6 +360,26 @@ fn ref_copy_to_global_src_impl(
     )?;
     let new_asset = reidentify_copy(&dest);
     Ok((as_str(&dest), new_asset))
+}
+
+/// Resolve *and create* the directory new references are written into, for the
+/// project or the shot `shot_path` belongs to.
+///
+/// A command rather than a path getter because creating it is the point — and
+/// because the frontend can no longer derive it. Under PRISM the shot's
+/// reference folder is `<entity>/Resources/SRC`, which is not below the shot
+/// path at all, and `src/lib/prism.ts` deliberately has no counterpart to the
+/// forward resolution for exactly this reason (`docs/prism.md` § Mirroring).
+#[tauri::command]
+pub fn ref_dir_ensure(shot_path: String, scope: RefScope) -> AppResult<String> {
+    let shot = PathBuf::from(&shot_path);
+    let root = match scope {
+        RefScope::Global => refroots::global_ref_root(&project_root_for(&shot)?),
+        RefScope::Shot => refroots::shot_ref_root(&shot),
+    };
+    let dir = refroots::default_ref_dir(&root);
+    ensure_dir(&dir)?;
+    Ok(as_str(&dir))
 }
 
 #[tauri::command]

@@ -17,6 +17,7 @@ import { usePricesStore } from "../stores/pricesStore";
 import { perItemPrice, parseDurationSeconds, formatCost } from "../lib/falPrices";
 import { getImageMetadataCached } from "../lib/metadataCache";
 import { getOsDragTarget, subscribeOsDragTarget } from "../lib/osDragDrop";
+import { RefFolderSection } from "./RefFolderSection";
 
 export type DragState = {
   fromPath: string;
@@ -192,6 +193,11 @@ export function GalleryColumn({
         ? "grid grid-cols-2 gap-gallery-column-gap content-start"
         : "flex flex-col gap-gallery-column-gap";
 
+  // A column with subfolders becomes a vertical stack — its own loose media in
+  // a grid, then a section per folder — so `gridClass` moves off the scroll
+  // container and onto an inner div. Without sections the markup is unchanged.
+  const subdirs = column.subdirs ?? [];
+
   const isTarget = targetVersion === column.version;
   const headerClass = isTarget
     ? "bg-accent text-on-accent"
@@ -224,6 +230,7 @@ export function GalleryColumn({
       data-column-version={column.version}
       data-column-dest={destDir}
       data-column-is-src={column.isSrc ? "true" : undefined}
+      data-column-ref-scope={column.refScope}
       className={`${column.isSrc ? "bg-src-bg" : "bg-surface"} border ${
         isDropTarget || osDragTarget
           ? "outline outline-2 outline-accent border-transparent"
@@ -331,8 +338,11 @@ export function GalleryColumn({
             )}
           </div>
           <div
-            className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${gridClass}`}
+            className={`flex-1 min-h-0 overflow-y-auto thin-scroll pr-[3px] ${
+              subdirs.length > 0 ? "flex flex-col" : gridClass
+            }`}
           >
+            <div className={subdirs.length > 0 ? gridClass : "contents"}>
             {column.images.map((img) =>
               listMode ? (
                 <FileRow
@@ -361,13 +371,29 @@ export function GalleryColumn({
                 />
               ),
             )}
-            {column.images.length === 0 && (
+            {column.images.length === 0 && subdirs.length === 0 && (
               <div
                 className={`text-xs text-dim text-center py-2${!listMode && subCols > 1 ? ` col-span-${subCols}` : ""}`}
               >
                 {column.isSrc ? "No refs" : "Empty"}
               </div>
             )}
+            </div>
+            {subdirs.map((sub) => (
+              <RefFolderSection
+                key={sub}
+                path={sub}
+                depth={0}
+                listMode={!!listMode}
+                gridClass={gridClass}
+                maxAspect={maxAspect}
+                selectedImagePath={selectedImagePath}
+                columnVersion={column.version}
+                dragState={dragState}
+                onImageAction={onImageAction}
+                onDragStart={onDragStart}
+              />
+            ))}
           </div>
         </>
       )}

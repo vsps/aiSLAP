@@ -17,6 +17,7 @@ use img_parts::ImageEXIF;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::commands::config::resolve_ffmpeg;
 use crate::error::{run_blocking, AppError, AppResult};
 
 const PNG_KEYWORD: &[u8] = b"aiSLAP";
@@ -357,16 +358,15 @@ fn read_exif_user_comment(exif: &[u8]) -> Option<MediaId> {
 /// without erroring when ffmpeg is unavailable or the remux fails — the
 /// asset id/hash still land in the sidecar either way.
 fn embed_video(path: &Path, asset_id: &str, project_id: &str, ffmpeg_path: &str) -> bool {
-    let exe = ffmpeg_path.trim();
-    if exe.is_empty() || !PathBuf::from(exe).is_file() {
+    let Some(exe_path) = resolve_ffmpeg(ffmpeg_path) else {
         return false;
-    }
+    };
     let tmp = tmp_sibling(path);
     let is_mp4 = path
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("mp4"));
-    let mut cmd = Command::new(exe);
+    let mut cmd = Command::new(&exe_path);
     cmd.arg("-y").arg("-i").arg(path);
     // The mov/mp4 muxer otherwise only writes its fixed known-key atoms and
     // silently drops anything else — webm/matroska accepts arbitrary keys
@@ -400,11 +400,8 @@ fn embed_video(path: &Path, asset_id: &str, project_id: &str, ffmpeg_path: &str)
 /// `-i` stderr banner — mirrors `media::video_info_probe`'s no-ffprobe
 /// approach, so no extra binary dependency.
 fn read_video(path: &Path, ffmpeg_path: &str) -> Option<MediaId> {
-    let exe = ffmpeg_path.trim();
-    if exe.is_empty() || !PathBuf::from(exe).is_file() {
-        return None;
-    }
-    let output = Command::new(exe)
+    let exe_path = resolve_ffmpeg(ffmpeg_path)?;
+    let output = Command::new(&exe_path)
         .arg("-i")
         .arg(path)
         .stdout(Stdio::null())

@@ -13,6 +13,8 @@ import type {
   PrismInfo,
   SeqTaggedGroup,
   SequenceStacks,
+  DirChildren,
+  RefScope,
   TagDef,
   TagFilterMode,
   TagMigrationReport,
@@ -101,6 +103,10 @@ export const cmd = {
   // Stacked view
   sequence_stacks_scan: (sequencePath: string): Promise<SequenceStacks> =>
     rawInvoke("sequence_stacks_scan", { sequencePath }),
+
+  /** One section of a reference column, read when the user opens it. */
+  dir_children_scan: (dir: string): Promise<DirChildren> =>
+    rawInvoke("dir_children_scan", { dir }),
   shot_version_select_set: (
     shotPath: string,
     version: string,
@@ -208,6 +214,13 @@ export const cmd = {
     sourcePath: string,
   ): Promise<string> =>
     rawInvoke("ref_copy_to_global_src", { shotPath, sourcePath }),
+
+  /** Resolve *and create* the directory new references are written into.
+   *  A command rather than a path join because under PRISM the shot's
+   *  reference folder is `<entity>/Resources/SRC`, which isn't below the shot
+   *  path at all — see `docs/prism.md` § Mirroring. */
+  ref_dir_ensure: (shotPath: string, scope: RefScope): Promise<string> =>
+    rawInvoke("ref_dir_ensure", { shotPath, scope }),
 
   image_copy_to_dir: (sourcePath: string, destDir: string): Promise<string> =>
     rawInvoke("image_copy_to_dir", { sourcePath, destDir }),

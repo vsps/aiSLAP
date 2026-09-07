@@ -428,10 +428,25 @@ pub struct ProjectCostReport {
 
 #[tauri::command]
 pub async fn project_cost_lines(project_path: String) -> AppResult<ProjectCostReport> {
-    run_blocking(move || project_cost_lines_impl(project_path)).await
+    // The local index already holds cost, provider, model and attribution for
+    // every asset it knows about, so ask it once rather than opening a sidecar
+    // per media file. Best effort by design: an index that is empty, stale or
+    // unopenable simply leaves every file to the sidecar path below — which is
+    // what this command did before the index existed.
+    let index = match db::assets_cost_index(&PathBuf::from(&project_path)).await {
+        Ok(index) => index,
+        Err(e) => {
+            tracing::warn!("cost report: asset index unavailable, reading sidecars: {e}");
+            HashMap::new()
+        }
+    };
+    run_blocking(move || project_cost_lines_impl(project_path, &index)).await
 }
 
-fn project_cost_lines_impl(project_path: String) -> AppResult<ProjectCostReport> {
+fn project_cost_lines_impl(
+    project_path: String,
+    index: &HashMap<String, db::AssetCostRow>,
+) -> AppResult<ProjectCostReport> {
     let root = PathBuf::from(&project_path);
     let mut lines = Vec::new();
     let walk = walk::project_walk(&root)?;
@@ -454,7 +469,7 @@ fn project_cost_lines_impl(project_path: String) -> AppResult<ProjectCostReport>
                     .replace('\\', "/");
 
                 let mut line = CostReportLine {
-                    id: rel_id,
+                    id: rel_id.clone(),
                     sequence: seq_name.to_string(),
                     shot: shot.shot_name.clone(),
                     shot_key: format!("{seq_name}/{}", shot.shot_name),
@@ -466,8 +481,15 @@ fn project_cost_lines_impl(project_path: String) -> AppResult<ProjectCostReport>
                     cost_usd: None,
                 };
 
-                let sc_path = sidecar_path(&media_path);
-                if let Ok(text) = std::fs::read_to_string(&sc_path) {
+                // Index first; a sidecar is opened only for a file the index
+                // has no row for.
+                if let Some(row) = index.get(&rel_id) {
+                    line.id = row.id.clone();
+                    line.provider = row.provider.clone();
+                    line.model_id = row.model_id.clone();
+                    line.generated_by = row.generated_by.clone();
+                    line.cost_usd = row.cost_usd;
+                } else if let Ok(text) = std::fs::read_to_string(sidecar_path(&media_path)) {
                     if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(&text) {
                         line.provider = obj
                             .get("provider")
@@ -833,7 +855,7 @@ mod cost_lines_tests {
         // No sidecar at all — still counted, just unpriced.
         p.media("seq1/shot1/gen001/b.png", None);
 
-        let report = project_cost_lines_impl(p.root_str()).unwrap();
+        let report = project_cost_lines_impl(p.root_str(), &HashMap::new()).unwrap();
         assert_eq!(report.lines.len(), 2);
 
         let a = report.lines.iter().find(|l| l.id == "asset-a").unwrap();
@@ -863,11 +885,58 @@ mod cost_lines_tests {
             Some(serde_json::json!({ "costUsd": 1.5 })),
         );
 
-        let report = project_cost_lines_impl(p.root_str()).unwrap();
+        let report = project_cost_lines_impl(p.root_str(), &HashMap::new()).unwrap();
         assert_eq!(report.lines.len(), 1);
         assert_eq!(report.lines[0].shot, "s0010");
         assert_eq!(report.lines[0].version, "v0001");
         assert_eq!(report.lines[0].cost_usd, Some(1.5));
+    }
+
+    /// The whole point of the index path: a fully-indexed project reports
+    /// without opening a single sidecar. The sidecar here carries deliberately
+    /// wrong numbers so a passing test can only mean the index was read.
+    #[test]
+    fn an_indexed_asset_is_read_from_the_index_not_its_sidecar() {
+        let p = TestProject::new("cost-lines-indexed");
+        p.media(
+            "seq1/shot1/gen001/a.png",
+            Some(serde_json::json!({
+                "provider": "stale",
+                "modelId": "stale/model",
+                "generatedBy": "stale",
+                "costUsd": 999.0,
+            })),
+        );
+        // Not indexed — falls through to its sidecar, as an un-reconciled
+        // project's files all would.
+        p.media(
+            "seq1/shot1/gen001/b.png",
+            Some(serde_json::json!({ "modelId": "fal-ai/bar", "costUsd": 0.25 })),
+        );
+
+        let index = HashMap::from([(
+            "seq1/shot1/gen001/a.png".to_string(),
+            db::AssetCostRow {
+                id: "asset-a".to_string(),
+                provider: Some("fal".to_string()),
+                model_id: Some("fal-ai/foo".to_string()),
+                cost_usd: Some(0.05),
+                generated_by: Some("alice".to_string()),
+            },
+        )]);
+
+        let report = project_cost_lines_impl(p.root_str(), &index).unwrap();
+        assert_eq!(report.lines.len(), 2);
+
+        let a = report.lines.iter().find(|l| l.id == "asset-a").unwrap();
+        assert_eq!(a.provider.as_deref(), Some("fal"));
+        assert_eq!(a.model_id.as_deref(), Some("fal-ai/foo"));
+        assert_eq!(a.generated_by.as_deref(), Some("alice"));
+        assert_eq!(a.cost_usd, Some(0.05));
+
+        let b = report.lines.iter().find(|l| l.id != "asset-a").unwrap();
+        assert_eq!(b.model_id.as_deref(), Some("fal-ai/bar"));
+        assert_eq!(b.cost_usd, Some(0.25));
     }
 
     #[test]

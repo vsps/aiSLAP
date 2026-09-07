@@ -17,7 +17,9 @@ import { CollapsibleSection } from "../CollapsibleSection";
 import { CostSettings } from "../CostSettings";
 import { SankeyChart } from "../SankeyChart";
 import { useCostReportStore } from "../../stores/costReportStore";
+import { useModelsStore } from "../../stores/modelsStore";
 import { useSessionStore } from "../../stores/sessionStore";
+import { pushLog } from "../../stores/logStore";
 import type { ProjectCostScan } from "../../lib/types";
 import { Btn } from "../Btn";
 import { Chip } from "../Chip";
@@ -33,25 +35,27 @@ import { Chip } from "../Chip";
 export function AuditMode() {
   const projectPath = useSessionStore((s) => s.projectPath);
   const [costScan, setCostScan] = useState<ProjectCostScan | null>(null);
-  const [costBusy, setCostBusy] = useState(false);
+  const [backfillBusy, setBackfillBusy] = useState(false);
   const [costReconcileBusy, setCostReconcileBusy] = useState(false);
   const [costReconcileStatus, setCostReconcileStatus] = useState<string | null>(null);
 
   // Filterable per-image report + Sankey breakdown. Lives in a store (not
   // local state) so it survives leaving and returning to AUDIT — see
-  // costReportStore.ts for why (it's a full walk, not disk-cached like the
-  // totals below, so it can't just be reloaded cheaply on mount).
+  // costReportStore.ts. It is loaded once per project by the effect below;
+  // the store is what stops a mode switch from paying for that twice.
   const reportData = useCostReportStore((s) => s.reportData);
+  const reportProject = useCostReportStore((s) => s.reportProject);
   const setReportData = useCostReportStore((s) => s.setReportData);
   const reportFilter = useCostReportStore((s) => s.reportFilter);
   const setReportFilter = useCostReportStore((s) => s.setReportFilter);
   const [reportBusy, setReportBusy] = useState(false);
+  const modelEntries = useModelsStore((s) => s.entries);
 
   // The cost tree, unlike the per-image report, IS cheaply disk-cached
   // (project_cost_scan already persists shot/sequence totals into their
   // sidecars) — load the last computed numbers as soon as the project is
-  // known, so the page shows real data immediately instead of "not yet
-  // calculated" until Recalculate is clicked every session.
+  // known, so the page shows real data immediately instead of an empty
+  // state until BACKFILL PRICES is clicked again every session.
   useEffect(() => {
     if (!projectPath) return;
     void cmd
@@ -60,20 +64,48 @@ export function AuditMode() {
       .catch(() => {});
   }, [projectPath]);
 
-  async function recalculateCosts() {
+  // The per-image report loads itself too. It is not sidecar-cached the way
+  // the tree above is, but project_cost_lines now reads the local asset
+  // index and only falls back to a sidecar read for files the index has no
+  // row for — so on a reconciled project this is one SQL query plus a
+  // directory walk, cheap enough to just do. A failure is logged rather than
+  // popped: nothing asked for this, and Refresh is still there.
+  useEffect(() => {
+    if (!projectPath || reportProject === projectPath) return;
+    let cancelled = false;
+    setReportBusy(true);
+    void cmd
+      .project_cost_lines(projectPath)
+      .then((data) => {
+        if (!cancelled) setReportData(data, projectPath);
+      })
+      .catch((e) => pushLog("ERROR", `Cost report failed to load: ${String(e)}`))
+      .finally(() => {
+        if (!cancelled) setReportBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectPath, reportProject, setReportData]);
+
+  // Not a read — this is the write path. It walks the project, prices every
+  // image that has no costUsd yet (from the cached fal price table plus any
+  // overrides, probing video durations where it must), writes that back into
+  // the image sidecars, rolls the totals up into the shot/sequence sidecars
+  // and pushes the new figures into the asset index. Everything else on this
+  // page only ever reads what this produced.
+  async function backfillPrices() {
     if (!projectPath) return;
-    setCostBusy(true);
+    setBackfillBusy(true);
     try {
       setCostScan(await cmd.project_cost_scan(projectPath));
-      // The scan just walked the disk and may have backfilled costUsd —
-      // refresh the report too so it never silently disagrees with the tree.
-      if (reportData !== null) {
-        setReportData(await cmd.project_cost_lines(projectPath));
-      }
+      // The scan just backfilled costUsd on disk and in the index — refresh
+      // the report so it never silently disagrees with the tree.
+      setReportData(await cmd.project_cost_lines(projectPath), projectPath);
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
     } finally {
-      setCostBusy(false);
+      setBackfillBusy(false);
     }
   }
 
@@ -99,11 +131,14 @@ export function AuditMode() {
     }
   }
 
-  async function generateReport() {
+  // Manual refresh — the report loads itself on entering AUDIT, so this is
+  // for picking up generations made since, and the recovery path if that
+  // load failed.
+  async function refreshReport() {
     if (!projectPath) return;
     setReportBusy(true);
     try {
-      setReportData(await cmd.project_cost_lines(projectPath));
+      setReportData(await cmd.project_cost_lines(projectPath), projectPath);
     } catch (e) {
       await showMessage(String(e), { kind: "error" });
     } finally {
@@ -111,9 +146,28 @@ export function AuditMode() {
     }
   }
 
+  const modelLabels = useMemo(
+    () => new Map(modelEntries.map((e) => [e.node.id, e.node.name])),
+    [modelEntries],
+  );
+
+  // Lines only count as this project's once the store says so — the report
+  // for the previous project stays in memory while the new one loads.
+  //
+  // The label pass matters because index-sourced lines carry no `model`: the
+  // assets table stores modelId only. Resolving from the registry first (not
+  // just as a fallback) also keeps one label per modelId regardless of which
+  // source a line came from, and follows a model that has since been renamed.
+  const reportLines = useMemo(() => {
+    if (!reportData || reportProject !== projectPath) return null;
+    return reportData.lines.map((l) =>
+      l.modelId ? { ...l, model: modelLabels.get(l.modelId) ?? l.model } : l,
+    );
+  }, [reportData, reportProject, projectPath, modelLabels]);
+
   const filteredLines = useMemo(
-    () => (reportData ? applyFilter(reportData.lines, reportFilter) : []),
-    [reportData, reportFilter],
+    () => (reportLines ? applyFilter(reportLines, reportFilter) : []),
+    [reportLines, reportFilter],
   );
 
   // Exports exactly what's currently on screen (the active user/model
@@ -133,12 +187,12 @@ export function AuditMode() {
     }
   }
   const reportUsers = useMemo(
-    () => (reportData ? discoverUsers(reportData.lines) : []),
-    [reportData],
+    () => (reportLines ? discoverUsers(reportLines) : []),
+    [reportLines],
   );
   const reportModels = useMemo(
-    () => (reportData ? discoverModels(reportData.lines) : []),
-    [reportData],
+    () => (reportLines ? discoverModels(reportLines) : []),
+    [reportLines],
   );
   const reportSummary = useMemo(() => summarize(filteredLines), [filteredLines]);
   const reportByModel = useMemo(() => costByModel(filteredLines), [filteredLines]);
@@ -160,8 +214,12 @@ export function AuditMode() {
             >
               {costReconcileBusy ? "Reconciling…" : "Reconcile actual"}
             </Btn>
-            <Btn disabled={costBusy || !projectPath} onClick={recalculateCosts}>
-              {costBusy ? "Calculating…" : "Recalculate"}
+            <Btn
+              disabled={backfillBusy || !projectPath}
+              title="Price every image that has no cost yet, from the cached fal prices and overrides in Cost settings, and write it into the sidecars. The totals on this page are read back from what this writes."
+              onClick={backfillPrices}
+            >
+              {backfillBusy ? "BACKFILLING…" : "BACKFILL PRICES"}
             </Btn>
           </div>
         </div>
@@ -175,9 +233,9 @@ export function AuditMode() {
           </div>
         ) : costScan === null ? (
           <div className="text-xs text-dim">
-            Not yet calculated. Computed from cached fal prices (Cost settings,
-            below); older images without a stored cost are backfilled
-            automatically when a price is available.
+            Nothing priced yet. Run BACKFILL PRICES to compute costs from the
+            cached fal prices (Cost settings, below) for every image that has
+            none stored.
           </div>
         ) : (
           <>
@@ -245,16 +303,16 @@ export function AuditMode() {
           <div className="text-xs font-bold text-white uppercase tracking-wide">
             Reports
           </div>
-          <Btn disabled={reportBusy || !projectPath} onClick={generateReport}>
-            {reportBusy ? "Generating…" : "Generate report"}
+          <Btn disabled={reportBusy || !projectPath} onClick={refreshReport}>
+            {reportBusy ? "Refreshing…" : "Refresh"}
           </Btn>
         </div>
 
-        {reportData === null ? (
+        {reportLines === null ? (
           <div className="text-xs text-dim">
-            Per-user / per-model breakdown and a Sankey cost flow (Total →
-            Sequence → Shot → Version). For the most complete numbers, run
-            Recalculate above first.
+            {reportBusy
+              ? "Loading…"
+              : "Per-user / per-model breakdown and a Sankey cost flow (Total → Sequence → Shot → Version). Anything still unpriced needs BACKFILL PRICES above."}
           </div>
         ) : (
           <>

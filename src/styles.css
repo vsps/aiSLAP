@@ -103,6 +103,34 @@ textarea {
     resize: vertical;
 }
 
+/* Deliberately unlayered, for the opposite reason the comment above warns
+ * about: a select's own `px-*`/`bg-*` classes live in Tailwind's `@layer
+ * utilities`, and an unlayered rule beats every `@layer` rule on the same
+ * property regardless of selector specificity — which is exactly the
+ * override `padding-right` needs here, reliably, no matter which padding a
+ * given select picked.
+ *
+ * macOS/WebKit paints a <select> with the OS's own control chrome — an inset
+ * gradient that ignores every `bg-*` class — so before this rule every select
+ * in the app read differently from the flat `<input>`s beside it
+ * (docs/styling.md already treats select as one of "inputs stay square").
+ * `appearance: none` drops that chrome everywhere (a no-op on Windows/Linux,
+ * where the default was already flat); it also removes the OS's own arrow
+ * glyph, so a small one is drawn back in below — a flat hardcoded gray rather
+ * than `var(--color-dim)`, because a color inside a background-image data URI
+ * is resolved once and never sees this page's cascade the way an inline
+ * element's `currentColor` would.
+ */
+select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23888888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 10px 10px;
+    padding-right: 20px;
+}
+
 @keyframes splash-pulse {
     0%,
     100% {

@@ -6,7 +6,7 @@
   "nodes": [
     {
       "id": "topaz_upscale_image",
-      "name": "Topaz Upscale (image)",
+      "name": "Topaz Upscale (image, all modes)",
       "endpoint": "fal-ai/topaz/upscale/image",
       "inputs": [
         { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
@@ -18,13 +18,101 @@
         { "role": "source", "api_field": "image_url", "max": 1 }
       ],
       "parameters": [
-        { "name": "scale", "label": "Scale", "type": "int", "api_field": "scale", "default": 2, "min": 2, "max": 4 },
-        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "jpeg", "options": ["png", "jpeg", "webp"] }
+        { "name": "model", "label": "Mode", "type": "enum", "api_field": "model", "default": "Standard V2",
+          "options": ["Standard V2", "High Fidelity V2", "Low Resolution V2", "CGI", "Text Refine", "Wonder 3", "Wonder", "Standard MAX", "Redefine", "Recovery V2", "Recovery"] },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "jpeg", "options": ["jpeg", "png"] },
+        { "name": "subject_detection", "label": "Subject", "type": "enum", "api_field": "subject_detection", "default": "All", "options": ["All", "Foreground", "Background"] },
+        { "name": "face_enhancement", "label": "Face enhance", "type": "bool", "api_field": "face_enhancement", "default": true },
+        { "name": "face_enhancement_strength", "label": "Face strength", "type": "float", "api_field": "face_enhancement_strength", "default": 0.8, "min": 0, "max": 1, "step": 0.05 }
       ]
     },
     {
+      "id": "topaz_upscale_image_precision",
+      "name": "Topaz Precision (image)",
+      "endpoint": "topaz/upscale/image/precision",
+      "inputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "model", "label": "Mode", "type": "enum", "api_field": "model", "default": "Standard V2",
+          "options": ["Standard V2", "High Fidelity V3", "High Fidelity V2", "Low Resolution V2", "CGI", "Text Refine"] },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "jpeg", "options": ["jpeg", "png"] },
+        { "name": "subject_detection", "label": "Subject", "type": "enum", "api_field": "subject_detection", "default": "All", "options": ["All", "Foreground", "Background"] },
+        { "name": "face_enhancement", "label": "Face enhance", "type": "bool", "api_field": "face_enhancement", "default": true },
+        { "name": "face_enhancement_strength", "label": "Face strength", "type": "float", "api_field": "face_enhancement_strength", "default": 0.8, "min": 0, "max": 1, "step": 0.05 }
+      ]
+    },
+    {
+      "id": "topaz_upscale_image_generative",
+      "name": "Topaz Generative (image)",
+      "endpoint": "topaz/upscale/image/generative",
+      "inputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "model", "label": "Mode", "type": "enum", "api_field": "model", "default": "Wonder 3",
+          "options": ["Wonder 3.5", "Wonder 3", "Wonder 2", "Wonder", "Recover 3", "Standard MAX", "Redefine", "Recovery V2", "Recovery"] },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "jpeg", "options": ["jpeg", "png"] },
+        { "name": "subject_detection", "label": "Subject", "type": "enum", "api_field": "subject_detection", "default": "All", "options": ["All", "Foreground", "Background"] },
+        { "name": "face_enhancement", "label": "Face enhance", "type": "bool", "api_field": "face_enhancement", "default": true },
+        { "name": "face_enhancement_strength", "label": "Face strength", "type": "float", "api_field": "face_enhancement_strength", "default": 0.8, "min": 0, "max": 1, "step": 0.05 }
+      ]
+    },
+    {
+      "id": "topaz_upscale_image_creative",
+      "name": "Topaz Creative / Bloom (image)",
+      "endpoint": "topaz/upscale/image/creative",
+      "inputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "model", "label": "Mode", "type": "enum", "api_field": "model", "default": "Bloom 2",
+          "options": ["Bloom 2", "Bloom", "Bloom Realism"] },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "creativity", "label": "Creativity", "type": "int", "api_field": "creativity", "default": 5, "min": 1, "max": 9 },
+        { "name": "color_preservation", "label": "Preserve color", "type": "bool", "api_field": "color_preservation", "default": true },
+        { "name": "output_format", "label": "Format", "type": "enum", "api_field": "output_format", "default": "jpeg", "options": ["jpeg", "png"] }
+      ]
+    },
+    {
+      "id": "topaz_upscale_image_transparent",
+      "name": "Topaz Transparent 4x (image)",
+      "endpoint": "topaz/upscale/image/transparent",
+      "inputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ],
+      "parameters": []
+    },
+    {
       "id": "topaz_upscale_video",
-      "name": "Topaz Upscale (video)",
+      "name": "Topaz Upscale (video, all modes)",
       "endpoint": "fal-ai/topaz/upscale/video",
       "inputs": [
         { "name": "video", "data_type": "VIDEO", "api_field": "video_url", "required": true }
@@ -36,7 +124,70 @@
         { "role": "source", "api_field": "video_url", "max": 1 }
       ],
       "parameters": [
-        { "name": "scale", "label": "Scale", "type": "int", "api_field": "scale", "default": 2, "min": 2, "max": 4 }
+        { "name": "model", "label": "Mode", "type": "enum", "api_field": "model", "default": "Proteus",
+          "options": ["Proteus", "Artemis HQ", "Artemis MQ", "Artemis LQ", "Gaia HQ", "Gaia CG", "Gaia 2", "Nyx", "Nyx Fast", "Nyx XL", "Nyx HF", "Starlight Precise 2.5", "Starlight Precise 2", "Starlight Precise 1", "Starlight HQ", "Starlight Mini", "Starlight Sharp", "Starlight Fast 2", "Starlight Fast 1"] },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "H264_output", "label": "H.264", "type": "bool", "api_field": "H264_output", "default": false }
+      ]
+    },
+    {
+      "id": "topaz_upscale_video_precision",
+      "name": "Topaz Precision (video)",
+      "endpoint": "topaz/upscale/video/precision",
+      "inputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "video_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "model", "label": "Mode", "type": "enum", "api_field": "model", "default": "Proteus",
+          "options": ["Proteus", "Proteus Natural", "Iris", "Iris Low Quality", "Dione DV", "Dione TV", "Dione Robust", "Dione Dehalo", "Dione Robust Dehalo", "Artemis High Quality", "Artemis Medium Quality", "Artemis Low Quality", "Artemis Strong Halo", "Artemis Medium Halo", "Artemis Aliasing & Moire", "Gaia HQ", "Gaia CG", "Gaia 2", "Rhea", "Theia Fine Tune Detail", "Theia Fine Tune Fidelity"] },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "H264_output", "label": "H.264", "type": "bool", "api_field": "H264_output", "default": false }
+      ]
+    },
+    {
+      "id": "topaz_upscale_video_generative",
+      "name": "Topaz Starlight (video)",
+      "endpoint": "topaz/upscale/video/generative",
+      "inputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "video_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "model", "label": "Mode", "type": "enum", "api_field": "model", "default": "Starlight Precise 2.6",
+          "options": ["Starlight Precise 2.6", "Starlight HQ", "Starlight Mini", "Starlight Sharp", "Starlight Fast 2"] },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "H264_output", "label": "H.264", "type": "bool", "api_field": "H264_output", "default": false }
+      ]
+    },
+    {
+      "id": "topaz_upscale_video_creative",
+      "name": "Topaz Astra (video)",
+      "endpoint": "topaz/upscale/video/creative",
+      "inputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "video", "data_type": "VIDEO", "api_field": "video" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "video_url", "max": 1 }
+      ],
+      "parameters": [
+        { "name": "creativity", "label": "Creativity", "type": "float", "api_field": "creativity", "default": 0.5, "min": 0, "max": 1, "step": 0.05 },
+        { "name": "sharp", "label": "Sharpen", "type": "float", "api_field": "sharp", "default": 0.5, "min": 0, "max": 1, "step": 0.05 },
+        { "name": "upscale_factor", "label": "Scale", "type": "float", "api_field": "upscale_factor", "default": 2, "min": 1, "max": 4, "step": 0.25 },
+        { "name": "H264_output", "label": "H.264", "type": "bool", "api_field": "H264_output", "default": false }
       ]
     }
   ]

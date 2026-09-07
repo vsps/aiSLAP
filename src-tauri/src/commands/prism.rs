@@ -21,7 +21,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::commands::fsutil::{as_str, highest_version_number, list_dirs, VersionNaming, SRC_DIR};
+use crate::commands::fsutil::{
+    as_str, highest_version_number, list_dirs, VersionNaming, SEL_DIR, SRC_DIR,
+};
+use crate::commands::refroots;
 use crate::error::AppResult;
 use crate::fsjson::ensure_dir;
 
@@ -46,6 +49,15 @@ const DEFAULT_ASSETS_REL: &str = "03_Production/Assets";
 const DEFAULT_VERSION_PADDING: usize = 4;
 const DEFAULT_VERSION_PREFIX: &str = "v";
 
+/// Project-level reference material, PRISM's own folder for it.
+const DEFAULT_RESOURCES_REL: &str = "04_Resources";
+
+/// Reference material for a single entity. PRISM does not declare this in
+/// `folder_structure` and does not always create it — aiSLAP does, the same way
+/// it creates the `AI` render product. It is a sibling of `Renders`, not a
+/// child of the media root, so it stays out of the version scan entirely.
+pub(crate) const ENTITY_RESOURCES_DIR: &str = "Resources";
+
 #[derive(Clone, Debug)]
 pub(crate) struct PrismLayout {
     pub root: PathBuf,
@@ -53,6 +65,8 @@ pub(crate) struct PrismLayout {
     pub shots_rel: String,
     /// Project-relative dir holding asset category folders.
     pub assets_rel: String,
+    /// Project-relative dir holding reference material, e.g. "04_Resources".
+    pub resources_rel: String,
     /// Digits in a version folder name — PRISM's `globals.versionPadding`.
     pub version_padding: usize,
     /// Letters before the digits, from PRISM's `globals.versionFormat` ("v#").
@@ -70,6 +84,11 @@ impl PrismLayout {
             &self.shots_rel
         };
         self.root.join(rel)
+    }
+
+    /// Dir holding project-wide reference material.
+    pub fn resources_root(&self) -> PathBuf {
+        join_rel(&self.root, &self.resources_rel)
     }
 }
 
@@ -112,6 +131,44 @@ fn rel_dir_from_template(cfg: &serde_json::Value, key: &str, fallback: &str) -> 
     }
 }
 
+/// Where project-wide reference material lives, e.g. "04_Resources".
+///
+/// **The stock name wins whenever the folder is actually there.** PRISM's
+/// `folder_structure` has no key for this directory, so the only thing the
+/// config says about it is indirect: textures live inside it, as
+/// `"textures": "@project_path@/04_Resources/Textures"`. Reading the parent out
+/// of that template is a guess, and a guess that fails *silently* — a project
+/// with `"@project_path@/03_Production/Textures/@asset_path@"` would name
+/// `03_Production` the resources root, and since that is a real directory
+/// nothing downstream would notice: the reference column would quietly offer
+/// the whole production tree as browsable subfolders.
+///
+/// So the template is consulted only when the stock folder is absent, and only
+/// when it yields a single segment that is not one of the trees we already know
+/// about. Anything else falls back to the stock name, which at worst names a
+/// folder that doesn't exist yet — and `project_open` creates that one.
+fn resources_rel_from(
+    root: &Path,
+    cfg: &serde_json::Value,
+    shots_rel: &str,
+    assets_rel: &str,
+) -> String {
+    if root.join(DEFAULT_RESOURCES_REL).is_dir() {
+        return DEFAULT_RESOURCES_REL.to_string();
+    }
+    let textures = rel_dir_from_template(cfg, "textures", "");
+    let derived = textures.split('/').next().unwrap_or("");
+    let is_own_tree = |rel: &str| rel.split('/').next() == Some(derived);
+    if derived.is_empty()
+        || derived == textures
+        || is_own_tree(shots_rel)
+        || is_own_tree(assets_rel)
+    {
+        return DEFAULT_RESOURCES_REL.to_string();
+    }
+    derived.to_string()
+}
+
 /// Letters leading PRISM's `versionFormat` ("v#" -> "v"). Anything after the
 /// first non-letter is the number placeholder.
 fn prefix_from_format(format: &str) -> String {
@@ -135,10 +192,13 @@ pub(crate) fn detect(root: &Path) -> Option<PrismLayout> {
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or(serde_json::Value::Null);
     let globals = cfg.get("globals");
+    let shots_rel = rel_dir_from_template(&cfg, "sequences", DEFAULT_SHOTS_REL);
+    let assets_rel = rel_dir_from_template(&cfg, "assets", DEFAULT_ASSETS_REL);
     Some(PrismLayout {
         root: root.to_path_buf(),
-        shots_rel: rel_dir_from_template(&cfg, "sequences", DEFAULT_SHOTS_REL),
-        assets_rel: rel_dir_from_template(&cfg, "assets", DEFAULT_ASSETS_REL),
+        resources_rel: resources_rel_from(root, &cfg, &shots_rel, &assets_rel),
+        shots_rel,
+        assets_rel,
         version_padding: globals
             .and_then(|g| g.get("versionPadding"))
             .and_then(|v| v.as_u64())
@@ -192,13 +252,21 @@ pub(crate) fn is_asset_entity(dir: &Path) -> bool {
 }
 
 /// Names that are never entities or categories — aiSLAP's own leftovers from a
-/// folder that was once opened as a standalone project.
+/// folder that was once opened as a standalone project, plus the reference
+/// folder it now puts beside an entity's `Renders`.
+///
+/// `ENTITY_RESOURCES_DIR` matters most in the asset tree, where a category is
+/// just "a folder that isn't an asset": without this, the `Resources` folder
+/// aiSLAP creates for an asset would be offered as a category in the SEQUENCE
+/// dropdown. Note this is the opposite of what `fsutil::list_dirs` does with
+/// the same name — see the comment there.
 fn is_ignored_entity_name(name: &str) -> bool {
     name.starts_with('.')
         || name.starts_with('$')
         || name.starts_with('_')
         || name == SRC_DIR
-        || name == "SEL"
+        || name == SEL_DIR
+        || name == ENTITY_RESOURCES_DIR
 }
 
 /// The "sequence" level of the asset tree: every category folder, plus the
@@ -320,10 +388,15 @@ pub fn prism_detect(project_path: String) -> Option<PrismInfo> {
     })
 }
 
-/// Ensure `<entity>/Renders/AI` (plus its `SRC` and a first version folder)
-/// and return it. Creating this is always allowed — it's an output folder
-/// inside an entity PRISM already made, not a pipeline entity itself.
-/// Idempotent: handed a media root, it returns it unchanged.
+/// Ensure `<entity>/Renders/AI` (plus a first version folder) and return it,
+/// alongside the entity's `Resources/SRC`. Creating these is always allowed —
+/// they are folders inside an entity PRISM already made, not pipeline entities
+/// themselves. Idempotent: handed a media root, it returns it unchanged.
+///
+/// The reference folder is a sibling of `Renders`, not a child of the media
+/// root: reference *input* has no business being filed inside a render output
+/// tree. PRISM does not always create `Resources` itself, so aiSLAP does — the
+/// same bargain as the `AI` render product. See `commands/refroots.rs`.
 #[tauri::command]
 pub fn prism_media_root_ensure(entity_path: String) -> AppResult<String> {
     let entity = PathBuf::from(&entity_path);
@@ -333,7 +406,14 @@ pub fn prism_media_root_ensure(entity_path: String) -> AppResult<String> {
         media_root_for(&entity)
     };
     ensure_dir(&media_root)?;
-    ensure_dir(&media_root.join(SRC_DIR))?;
+    // Best-effort, unlike the media root above: `setShot` calls this on every
+    // shot open, and a pipeline on a read-only share would then fail to open a
+    // shot at all over a folder that is merely convenient. Without it the SHOT
+    // SRC column doesn't appear; with a hard error, nothing appears.
+    let ref_dir = refroots::default_ref_dir(&refroots::shot_ref_root(&media_root));
+    if let Err(e) = ensure_dir(&ref_dir) {
+        tracing::warn!("could not create {}: {e}", as_str(&ref_dir));
+    }
     // Only seed a version folder for a brand-new media root; an existing one
     // keeps whatever versions it has.
     //
@@ -668,14 +748,14 @@ mod tests {
             "v"
         );
 
-        // Fresh shot: creates Renders/2dRender/AI with SRC and a padded first
-        // version.
+        // Fresh shot: creates Renders/2dRender/AI with a padded first version.
+        // The reference folder lands beside Renders, not inside the media root
+        // — see `media_root_ensure_creates_the_entity_resources_src_...`.
         let media = prism_media_root_ensure(format!("{p}/03_Production/Shots/MOD/s0010")).unwrap();
         assert_eq!(
             media,
             format!("{p}/03_Production/Shots/MOD/s0010/Renders/2dRender/AI")
         );
-        assert!(PathBuf::from(&media).join(SRC_DIR).is_dir());
         assert!(
             PathBuf::from(&media).join("v0001").is_dir(),
             "first version folder should use PRISM's 4-digit padding"
@@ -726,6 +806,87 @@ mod tests {
         let l = detect(&base).expect("still PRISM");
         assert_eq!(l.shots_rel, DEFAULT_SHOTS_REL);
         assert_eq!(l.version_padding, DEFAULT_VERSION_PADDING);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `resources_rel` is only ever *derived* as a last resort, because the
+    /// derivation is a guess that fails silently — see `resources_rel_from`.
+    #[test]
+    fn resources_rel_prefers_the_stock_folder_then_falls_back_safely() {
+        let base = make_project();
+        let pipeline = base.join("00_Pipeline");
+
+        let write_textures = |value: &str| {
+            std::fs::write(
+                pipeline.join("pipeline.json"),
+                format!(
+                    r#"{{"folder_structure":{{
+                         "sequences":{{"value":"@project_path@/03_Production/Shots/@sequence@"}},
+                         "assets":{{"value":"@project_path@/03_Production/Assets/@asset_path@"}},
+                         "textures":{{"value":"{value}"}}}}}}"#
+                ),
+            )
+            .unwrap();
+        };
+
+        // No 04_Resources on disk, and textures point somewhere else entirely:
+        // the template's parent is used.
+        write_textures("@project_path@/09_Refs/Textures");
+        assert_eq!(detect(&base).unwrap().resources_rel, "09_Refs");
+
+        // A textures path inside the *production* tree must not hand the whole
+        // production tree over as a browsable reference root.
+        write_textures("@project_path@/03_Production/Textures/@asset_path@");
+        assert_eq!(
+            detect(&base).unwrap().resources_rel,
+            DEFAULT_RESOURCES_REL,
+            "never name one of the entity trees"
+        );
+
+        // Textures straight at the project root give no parent to read.
+        write_textures("@project_path@/Textures");
+        assert_eq!(detect(&base).unwrap().resources_rel, DEFAULT_RESOURCES_REL);
+
+        // And once the stock folder is actually there, it wins outright.
+        std::fs::create_dir_all(base.join(DEFAULT_RESOURCES_REL)).unwrap();
+        write_textures("@project_path@/09_Refs/Textures");
+        assert_eq!(detect(&base).unwrap().resources_rel, DEFAULT_RESOURCES_REL);
+        assert_eq!(
+            detect(&base).unwrap().resources_root(),
+            base.join(DEFAULT_RESOURCES_REL)
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The reference folder aiSLAP now puts beside an entity's `Renders` must
+    /// not then be offered as a shot or a category.
+    #[test]
+    fn an_entity_resources_folder_is_never_an_entity() {
+        assert!(is_ignored_entity_name(ENTITY_RESOURCES_DIR));
+        assert!(is_ignored_entity_name(SRC_DIR));
+        assert!(is_ignored_entity_name(SEL_DIR));
+        assert!(!is_ignored_entity_name("s0010"));
+        assert!(!is_ignored_entity_name("Renders"));
+    }
+
+    /// The media root stays where it was; the reference folder moved out of it.
+    #[test]
+    fn media_root_ensure_creates_the_entity_resources_src_not_one_in_the_media_root() {
+        let base = make_project();
+        let entity = base.join("03_Production/Shots/MOD/s0010");
+
+        let media_root = PathBuf::from(prism_media_root_ensure(as_str(&entity)).unwrap());
+
+        assert_eq!(media_root, entity.join("Renders/2dRender/AI"));
+        assert!(entity.join("Resources/SRC").is_dir(), "new location made");
+        assert!(!media_root.join("SRC").exists(), "old location not made");
+        // Idempotent, and handed its own media root it returns it unchanged.
+        assert_eq!(
+            prism_media_root_ensure(as_str(&media_root)).unwrap(),
+            as_str(&media_root)
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
