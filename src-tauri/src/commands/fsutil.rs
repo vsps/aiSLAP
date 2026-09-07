@@ -19,8 +19,20 @@ pub(crate) const SEL_DIR: &str = "SEL";
 /// see `walk::is_content_dir` and [`list_dirs`].
 pub(crate) const TRASH_DIR: &str = "TRASH";
 
-const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
-const VIDEO_EXTS: &[&str] = &["mp4", "webm"];
+/// What counts as media on disk. **These must mirror `src/lib/media.ts`.**
+///
+/// They drifted, and the failure is silent and total: `classifyMedia` on the TS
+/// side accepts a file, the ref panel copies it into the project, and then every
+/// Rust scan — gallery columns, thumbnails, cost, reconcile, tags — skips it,
+/// because `is_media_ext` says it isn't media. The file is on disk and invisible.
+/// That is what happened to `.mov` references, which TS has always accepted and
+/// Rust never has.
+///
+/// `mp3`/`wav` are deliberately still absent: the ref panel handles audio, but
+/// `db::media_kind` has no `"audio"` arm, so indexing one would file it as
+/// `"other"`. Adding audio means adding that kind first.
+const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp"];
+const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov", "mkv", "m4v", "avi"];
 const MODEL_3D_EXTS: &[&str] = &["glb", "gltf"];
 
 /// Whether a file transfer is a copy (source kept) or a move (source gone) —
@@ -700,5 +712,33 @@ mod tests {
         assert!(!is_thumb(&dir.join("a.png")), "real media is not a thumb");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Pinned against `src/lib/media.ts`, which is the list the ref panel and
+    /// every OS drop filter on. When the two disagree the app copies a file into
+    /// the project and then cannot see it — no error anywhere, the file simply
+    /// never appears. `.mov` sat in that hole.
+    #[test]
+    fn media_extensions_mirror_the_typescript_list() {
+        for ext in ["png", "jpg", "jpeg", "webp", "gif", "bmp"] {
+            let p = PathBuf::from(format!("a.{ext}"));
+            assert!(is_image_ext(&p), "{ext} should be an image");
+            assert!(is_media_ext(&p));
+        }
+        for ext in ["mp4", "webm", "mov", "mkv", "m4v", "avi"] {
+            let p = PathBuf::from(format!("a.{ext}"));
+            assert!(is_video_ext(&p), "{ext} should be a video");
+            assert!(is_media_ext(&p));
+        }
+        // Case-insensitive: cameras and editors emit .MOV and .MP4.
+        assert!(is_video_ext(&PathBuf::from("a.MOV")));
+        assert!(is_image_ext(&PathBuf::from("a.JPG")));
+        // Still not media — see the constants' doc comment for audio.
+        for ext in ["mp3", "wav", "exr", "rat", "txt"] {
+            assert!(
+                !is_media_ext(&PathBuf::from(format!("a.{ext}"))),
+                "{ext} should not be media"
+            );
+        }
     }
 }
