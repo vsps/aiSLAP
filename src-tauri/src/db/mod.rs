@@ -856,6 +856,56 @@ pub async fn assets_cost_update(
     Ok(())
 }
 
+/// One asset's cost and attribution as the index has it — the DB-side half of
+/// the AUDIT report's per-image lines.
+///
+/// `model` (the human-readable name) is deliberately absent: `assets` stores
+/// `model_id` only. The frontend resolves the label from the model registry,
+/// which is fresher than whatever name was stamped into a sidecar at
+/// generation time.
+pub struct AssetCostRow {
+    pub id: String,
+    pub provider: Option<String>,
+    pub model_id: Option<String>,
+    pub cost_usd: Option<f64>,
+    pub generated_by: Option<String>,
+}
+
+/// Every indexed asset's cost row for one project, keyed by `rel_path`.
+///
+/// Same bargain as [`tags_all`]: the sidecar stays the source of truth, and
+/// this exists only so the cost report costs one query instead of one JSON
+/// open-and-parse per media file. The caller reads the sidecar for any file
+/// the index has no row for, so a project that was never reconciled still
+/// reports correctly — just slowly. A sidecar edited outside the app needs a
+/// reconcile before the report sees it, exactly as the tag views do.
+pub async fn assets_cost_index(project_root: &Path) -> AppResult<HashMap<String, AssetCostRow>> {
+    let conn = open_local(project_root).await?;
+    let mut rows = conn
+        .query(
+            "SELECT rel_path, id, provider, model_id, cost_usd, generated_by \
+             FROM assets WHERE deleted_at IS NULL",
+            (),
+        )
+        .await
+        .map_err(db_err)?;
+    let mut out = HashMap::new();
+    while let Some(row) = rows.next().await.map_err(db_err)? {
+        let rel_path = row.get::<String>(0).map_err(db_err)?;
+        out.insert(
+            rel_path,
+            AssetCostRow {
+                id: row.get::<String>(1).map_err(db_err)?,
+                provider: opt_string(&row, 2)?,
+                model_id: opt_string(&row, 3)?,
+                cost_usd: row.get::<Option<f64>>(4).map_err(db_err)?,
+                generated_by: opt_string(&row, 5)?,
+            },
+        );
+    }
+    Ok(out)
+}
+
 /// Ingest freshly re-identified copies: the asset row and its tag rows, which
 /// are keyed by the *copy's* new id rather than the source's.
 pub async fn assets_ingest(
