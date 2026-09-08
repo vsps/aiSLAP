@@ -8,7 +8,10 @@ import { checkForUpdate } from "../lib/updater";
 import { pushLog } from "../stores/logStore";
 import { usePricesStore } from "../stores/pricesStore";
 import { useUpdateStore } from "../stores/updateStore";
-import { invalidateConfigCache } from "../lib/metadataCache";
+import {
+  getSharedConfigCached,
+  invalidateConfigCache,
+} from "../lib/metadataCache";
 import { ensureRefLifecycleRule, TOS_DEFAULTS } from "../lib/providers/tos";
 import { Field } from "./Field";
 import { ModalDialog } from "./ModalDialog";
@@ -18,8 +21,18 @@ import {
   type ColorOverrides,
   type Config,
   type FalLifecycle,
+  type SharedConfig,
 } from "../lib/types";
 import { Btn } from "./Btn";
+
+// Border color for a field whose shown value came from the shared config
+// rather than a local override — the "differs from default" accent, not an
+// error/warning state (see docs/styling.md).
+const SHARED_HIGHLIGHT = "border border-accent";
+
+function fieldClass(base: string, fromShared: boolean): string {
+  return fromShared ? `${base} ${SHARED_HIGHLIGHT}` : base;
+}
 
 const TABS = ["General", "Appearance", "APIs"] as const;
 type Tab = (typeof TABS)[number];
@@ -67,6 +80,12 @@ export function SettingsDialog({ onClose }: Props) {
   const [revealTosSk, setRevealTosSk] = useState(false);
   const [revealTursoToken, setRevealTursoToken] = useState(false);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
+  const [shared, setShared] = useState<SharedConfig | null>(null);
+  // Which of the 9 secret fields have a *local* .env line, keyed the same as
+  // provider_key_get/_local's `provider` argument. The shown value (falKey
+  // etc.) is already the merged one — this is only so the highlight can tell
+  // "typed locally" from "inherited from the shared file".
+  const [localSecretSet, setLocalSecretSet] = useState<Record<string, boolean>>({});
   const [originalColors, setOriginalColors] = useState<
     ColorOverrides | undefined
   >(undefined);
@@ -86,8 +105,19 @@ export function SettingsDialog({ onClose }: Props) {
   );
 
   useEffect(() => {
+    const SECRET_PROVIDERS = [
+      "fal",
+      "replicate",
+      "bytedance",
+      "bytedance_mediakit",
+      "beeble",
+      "tos_ak",
+      "tos_sk",
+      "turso_url",
+      "turso_token",
+    ] as const;
     void (async () => {
-      const [k, rk, bk, mk, bbk, ak, sk, tu, tt, c] = await Promise.all([
+      const [k, rk, bk, mk, bbk, ak, sk, tu, tt, c, sh, localFlags] = await Promise.all([
         cmd.provider_key_get("fal").catch(() => ""),
         cmd.provider_key_get("replicate").catch(() => ""),
         cmd.provider_key_get("bytedance").catch(() => ""),
@@ -98,6 +128,12 @@ export function SettingsDialog({ onClose }: Props) {
         cmd.provider_key_get("turso_url").catch(() => ""),
         cmd.provider_key_get("turso_token").catch(() => ""),
         cmd.config_load().catch(() => null),
+        getSharedConfigCached(),
+        Promise.all(
+          SECRET_PROVIDERS.map((p) =>
+            cmd.provider_key_get_local(p).catch(() => ""),
+          ),
+        ),
       ]);
       setFalKey(k);
       setReplicateKey(rk);
@@ -108,6 +144,12 @@ export function SettingsDialog({ onClose }: Props) {
       setTosSk(sk);
       setTursoUrl(tu);
       setTursoToken(tt);
+      setShared(sh);
+      setLocalSecretSet(
+        Object.fromEntries(
+          SECRET_PROVIDERS.map((p, i) => [p, localFlags[i].trim() !== ""]),
+        ),
+      );
       if (c) {
         const cfg = c as Config;
         setConfig(cfg);
@@ -188,6 +230,13 @@ export function SettingsDialog({ onClose }: Props) {
     if (paths?.[0]) setConfig((c) => ({ ...c, ffmpegPath: paths[0] }));
   }
 
+  async function browseSharedConfig() {
+    const paths = await pickFile("Pick shared config YAML", {
+      extensions: ["yaml", "yml"],
+    });
+    if (paths?.[0]) setConfig((c) => ({ ...c, sharedConfigPath: paths[0] }));
+  }
+
   function setColor(key: keyof ColorOverrides, value: string) {
     setConfig((c) => ({ ...c, colors: { ...(c.colors ?? {}), [key]: value } }));
   }
@@ -196,29 +245,16 @@ export function SettingsDialog({ onClose }: Props) {
     setConfig((c) => ({ ...c, colors: undefined }));
   }
 
+  // Only the field actually being touched gets a local value — the others
+  // stay whatever they were (usually absent), so editing just the bucket
+  // doesn't also freeze the region/endpoint/expiry away from deferring to the
+  // shared config or TOS_DEFAULTS at display time.
   function setTosField(key: "bucket" | "region" | "endpoint", value: string) {
-    setConfig((c) => ({
-      ...c,
-      tos: {
-        bucket: c.tos?.bucket ?? TOS_DEFAULTS.bucket,
-        region: c.tos?.region ?? TOS_DEFAULTS.region,
-        endpoint: c.tos?.endpoint ?? TOS_DEFAULTS.endpoint,
-        refExpiryDays: c.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays,
-        [key]: value,
-      },
-    }));
+    setConfig((c) => ({ ...c, tos: { ...c.tos, [key]: value } }));
   }
 
   function setTosExpiry(days: number) {
-    setConfig((c) => ({
-      ...c,
-      tos: {
-        bucket: c.tos?.bucket ?? TOS_DEFAULTS.bucket,
-        region: c.tos?.region ?? TOS_DEFAULTS.region,
-        endpoint: c.tos?.endpoint ?? TOS_DEFAULTS.endpoint,
-        refExpiryDays: days,
-      },
-    }));
+    setConfig((c) => ({ ...c, tos: { ...c.tos, refExpiryDays: days } }));
   }
 
   async function save() {
@@ -254,18 +290,18 @@ export function SettingsDialog({ onClose }: Props) {
       // Best-effort: install/refresh the TOS ref-expiry lifecycle rule when
       // creds + bucket are present. Failure is surfaced but doesn't block the
       // save — uploads still work without the rule (refs just won't auto-expire).
-      const bucket = config.tos?.bucket || TOS_DEFAULTS.bucket;
+      const bucket = config.tos?.bucket || shared?.tos_bucket || TOS_DEFAULTS.bucket;
       if (ak && sk && bucket) {
         try {
           await ensureRefLifecycleRule(
             {
               accessKeyId: ak,
               secretAccessKey: sk,
-              region: config.tos?.region || TOS_DEFAULTS.region,
+              region: config.tos?.region || shared?.tos_region || TOS_DEFAULTS.region,
               bucket,
-              endpoint: config.tos?.endpoint || TOS_DEFAULTS.endpoint,
+              endpoint: config.tos?.endpoint || shared?.tos_endpoint || TOS_DEFAULTS.endpoint,
             },
-            config.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays,
+            config.tos?.refExpiryDays ?? shared?.tos_ref_expiry_days ?? TOS_DEFAULTS.refExpiryDays,
           );
         } catch (e) {
           await showMessage(
@@ -310,12 +346,34 @@ export function SettingsDialog({ onClose }: Props) {
       <div className="p-4 flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto thin-scroll">
         {tab === "General" && (
           <>
-            <Field label="Max concurrent submissions">
+            <Field label="Shared config file (optional)">
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={config.sharedConfigPath ?? ""}
+                  onChange={(e) => {
+                    const value = e.currentTarget.value;
+                    setConfig((c) => ({ ...c, sharedConfigPath: value || undefined }));
+                  }}
+                  className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
+                  placeholder="path to a read-only team config.yaml"
+                />
+                <Btn onClick={browseSharedConfig}>browse</Btn>
+              </div>
+              <div className="text-xs text-dim mt-1">
+                A YAML file — often on a network share — an admin maintains for
+                the whole team. aiSLAP only ever reads it; any field you fill
+                in below still wins over it. Fields sourced from it are
+                highlighted, and every field's tooltip names its YAML key.
+              </div>
+            </Field>
+
+            <Field label="Max concurrent submissions" yamlKey="max_concurrent_jobs">
               <input
                 type="number"
                 min={1}
                 max={10}
-                value={config.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS}
+                value={config.maxConcurrentJobs ?? shared?.max_concurrent_jobs ?? DEFAULT_MAX_CONCURRENT_JOBS}
                 onChange={(e) => {
                   const n = parseInt(e.currentTarget.value, 10);
                   setConfig((c) => ({
@@ -325,8 +383,11 @@ export function SettingsDialog({ onClose }: Props) {
                       : DEFAULT_MAX_CONCURRENT_JOBS,
                   }));
                 }}
-                className="bg-inset px-2 py-1 text-xs font-mono w-20"
-                title="Caps how many submissions hit fal.ai in parallel. Extra submits sit in a local queue."
+                className={fieldClass(
+                  "bg-inset px-2 py-1 text-xs font-mono w-20",
+                  config.maxConcurrentJobs == null && shared?.max_concurrent_jobs != null,
+                )}
+                title="Caps how many submissions hit fal.ai in parallel. Extra submits sit in a local queue. Shared config YAML key: max_concurrent_jobs"
               />
               <div className="text-xs text-dim mt-1">
                 Extra submits beyond this cap wait in a local queue.
@@ -350,16 +411,22 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="ffmpeg path (optional — auto-detected if installed)">
+            <Field
+              label="ffmpeg path (optional — auto-detected if installed)"
+              yamlKey="ffmpeg_path"
+            >
               <div className="flex gap-1">
                 <input
                   type="text"
-                  value={config.ffmpegPath}
+                  value={config.ffmpegPath || shared?.ffmpeg_path || ""}
                   onChange={(e) => {
                     const value = e.currentTarget.value;
                     setConfig((c) => ({ ...c, ffmpegPath: value }));
                   }}
-                  className="flex-1 bg-inset px-2 py-1 text-xs font-mono"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 text-xs font-mono",
+                    !config.ffmpegPath && !!shared?.ffmpeg_path,
+                  )}
                   placeholder="auto-detected from PATH, or browse to a specific build"
                 />
                 <Btn onClick={browseFfmpeg}>
@@ -397,7 +464,7 @@ export function SettingsDialog({ onClose }: Props) {
         )}
 
         {tab === "Appearance" && (
-          <Field label="Colors">
+          <Field label="Colors" yamlKey="colors">
             <div className="flex flex-col gap-1">
               {COLOR_KEYS.map((key) => (
                 <ColorRow
@@ -416,13 +483,16 @@ export function SettingsDialog({ onClose }: Props) {
 
         {tab === "APIs" && (
           <>
-            <Field label="FAL_KEY">
+            <Field label="FAL_KEY" yamlKey="fal_key">
               <div className="flex gap-1">
                 <input
                   type={revealKey ? "text" : "password"}
                   value={falKey}
                   onChange={(e) => setFalKey(e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !localSecretSet.fal && !!falKey,
+                  )}
                   placeholder="fal-…"
                 />
                 <Btn onClick={() => setRevealKey((v) => !v)}>
@@ -434,9 +504,9 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="fal.ai object lifecycle">
+            <Field label="fal.ai object lifecycle" yamlKey="fal_lifecycle">
               <select
-                value={config.falLifecycle ?? ""}
+                value={config.falLifecycle ?? shared?.fal_lifecycle ?? ""}
                 onChange={(e) => {
                   const v = e.currentTarget.value;
                   setConfig((c) => ({
@@ -444,7 +514,10 @@ export function SettingsDialog({ onClose }: Props) {
                     falLifecycle: v ? (v as FalLifecycle) : undefined,
                   }));
                 }}
-                className="bg-inset px-2 py-1 text-xs font-mono"
+                className={fieldClass(
+                  "bg-inset px-2 py-1 text-xs font-mono",
+                  !config.falLifecycle && !!shared?.fal_lifecycle,
+                )}
               >
                 {FAL_LIFECYCLE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -458,13 +531,16 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="REPLICATE_API_TOKEN">
+            <Field label="REPLICATE_API_TOKEN" yamlKey="replicate_api_token">
               <div className="flex gap-1">
                 <input
                   type={revealReplicate ? "text" : "password"}
                   value={replicateKey}
                   onChange={(e) => setReplicateKey(e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !localSecretSet.replicate && !!replicateKey,
+                  )}
                   placeholder="r8_…"
                 />
                 <Btn onClick={() => setRevealReplicate((v) => !v)}>
@@ -473,13 +549,16 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="BYTEDANCE_API_KEY">
+            <Field label="BYTEDANCE_API_KEY" yamlKey="bytedance_api_key">
               <div className="flex gap-1">
                 <input
                   type={revealBytedance ? "text" : "password"}
                   value={bytedanceKey}
                   onChange={(e) => setBytedanceKey(e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !localSecretSet.bytedance && !!bytedanceKey,
+                  )}
                   placeholder="Ark API key…"
                 />
                 <Btn onClick={() => setRevealBytedance((v) => !v)}>
@@ -488,13 +567,16 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="BYTEDANCE_MEDIAKIT_API_KEY">
+            <Field label="BYTEDANCE_MEDIAKIT_API_KEY" yamlKey="bytedance_mediakit_api_key">
               <div className="flex gap-1">
                 <input
                   type={revealMediaKit ? "text" : "password"}
                   value={mediaKitKey}
                   onChange={(e) => setMediaKitKey(e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !localSecretSet.bytedance_mediakit && !!mediaKitKey,
+                  )}
                   placeholder="AI MediaKit API key…"
                 />
                 <Btn onClick={() => setRevealMediaKit((v) => !v)}>
@@ -508,13 +590,16 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="BEEBLE_API_KEY">
+            <Field label="BEEBLE_API_KEY" yamlKey="beeble_api_key">
               <div className="flex gap-1">
                 <input
                   type={revealBeeble ? "text" : "password"}
                   value={beebleKey}
                   onChange={(e) => setBeebleKey(e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !localSecretSet.beeble && !!beebleKey,
+                  )}
                   placeholder="Beeble API key…"
                 />
                 <Btn onClick={() => setRevealBeeble((v) => !v)}>
@@ -533,16 +618,24 @@ export function SettingsDialog({ onClose }: Props) {
                 type="text"
                 value={tosAk}
                 onChange={(e) => setTosAk(e.currentTarget.value)}
-                className="w-full bg-inset px-2 py-1 font-mono text-xs"
+                className={fieldClass(
+                  "w-full bg-inset px-2 py-1 font-mono text-xs",
+                  !localSecretSet.tos_ak && !!tosAk,
+                )}
                 placeholder="Access Key ID (AKLT…)"
+                title="Shared config YAML key: tos_access_key_id"
               />
               <div className="flex gap-1 mt-1">
                 <input
                   type={revealTosSk ? "text" : "password"}
                   value={tosSk}
                   onChange={(e) => setTosSk(e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !localSecretSet.tos_sk && !!tosSk,
+                  )}
                   placeholder="Secret Access Key"
+                  title="Shared config YAML key: tos_secret_access_key"
                 />
                 <Btn onClick={() => setRevealTosSk((v) => !v)}>
                   {revealTosSk ? "hide" : "show"}
@@ -551,35 +644,56 @@ export function SettingsDialog({ onClose }: Props) {
               <div className="flex gap-1 mt-1">
                 <input
                   type="text"
-                  value={config.tos?.bucket ?? TOS_DEFAULTS.bucket}
+                  value={config.tos?.bucket ?? shared?.tos_bucket ?? TOS_DEFAULTS.bucket}
                   onChange={(e) => setTosField("bucket", e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !config.tos?.bucket && !!shared?.tos_bucket,
+                  )}
                   placeholder="bucket"
-                  title="TOS bucket name"
+                  title="TOS bucket name. Shared config YAML key: tos_bucket"
                 />
                 <input
                   type="text"
-                  value={config.tos?.region ?? TOS_DEFAULTS.region}
+                  value={config.tos?.region ?? shared?.tos_region ?? TOS_DEFAULTS.region}
                   onChange={(e) => setTosField("region", e.currentTarget.value)}
-                  className="w-32 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "w-32 bg-inset px-2 py-1 font-mono text-xs",
+                    !config.tos?.region && !!shared?.tos_region,
+                  )}
                   placeholder="region"
-                  title="TOS region (used in the signature)"
+                  title="TOS region (used in the signature). Shared config YAML key: tos_region"
                 />
               </div>
               <input
                 type="text"
-                value={config.tos?.endpoint ?? TOS_DEFAULTS.endpoint}
+                value={config.tos?.endpoint ?? shared?.tos_endpoint ?? TOS_DEFAULTS.endpoint}
                 onChange={(e) => setTosField("endpoint", e.currentTarget.value)}
-                className="w-full bg-inset px-2 py-1 font-mono text-xs mt-1"
+                className={fieldClass(
+                  "w-full bg-inset px-2 py-1 font-mono text-xs mt-1",
+                  !config.tos?.endpoint && !!shared?.tos_endpoint,
+                )}
                 placeholder="endpoint host"
-                title="TOS endpoint host suffix"
+                title="TOS endpoint host suffix. Shared config YAML key: tos_endpoint"
               />
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs text-dim">Refs expire after</span>
+                <span
+                  className="text-xs text-dim"
+                  title="Shared config YAML key: tos_ref_expiry_days"
+                >
+                  Refs expire after
+                </span>
                 <select
-                  value={config.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays}
+                  value={
+                    config.tos?.refExpiryDays ??
+                    shared?.tos_ref_expiry_days ??
+                    TOS_DEFAULTS.refExpiryDays
+                  }
                   onChange={(e) => setTosExpiry(parseInt(e.currentTarget.value, 10))}
-                  className="bg-inset px-2 py-1 text-xs font-mono"
+                  className={fieldClass(
+                    "bg-inset px-2 py-1 text-xs font-mono",
+                    config.tos?.refExpiryDays == null && shared?.tos_ref_expiry_days != null,
+                  )}
                 >
                   {[1, 3, 7, 30].map((d) => (
                     <option key={d} value={d}>
@@ -595,12 +709,15 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="TURSO_DATABASE_URL (optional)">
+            <Field label="TURSO_DATABASE_URL (optional)" yamlKey="turso_database_url">
               <input
                 type="text"
                 value={tursoUrl}
                 onChange={(e) => setTursoUrl(e.currentTarget.value)}
-                className="w-full bg-inset px-2 py-1 font-mono text-xs"
+                className={fieldClass(
+                  "w-full bg-inset px-2 py-1 font-mono text-xs",
+                  !localSecretSet.turso_url && !!tursoUrl,
+                )}
                 placeholder="libsql://your-db.turso.io"
               />
               <div className="text-xs text-dim mt-1">
@@ -610,13 +727,16 @@ export function SettingsDialog({ onClose }: Props) {
               </div>
             </Field>
 
-            <Field label="TURSO_AUTH_TOKEN">
+            <Field label="TURSO_AUTH_TOKEN" yamlKey="turso_auth_token">
               <div className="flex gap-1">
                 <input
                   type={revealTursoToken ? "text" : "password"}
                   value={tursoToken}
                   onChange={(e) => setTursoToken(e.currentTarget.value)}
-                  className="flex-1 bg-inset px-2 py-1 font-mono text-xs"
+                  className={fieldClass(
+                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
+                    !localSecretSet.turso_token && !!tursoToken,
+                  )}
                   placeholder="ey…"
                 />
                 <Btn onClick={() => setRevealTursoToken((v) => !v)}>

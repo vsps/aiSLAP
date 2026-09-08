@@ -320,10 +320,14 @@ export type Config = {
    *  fetchable URLs. Credentials (AK/SK) live in .env; these are the
    *  non-secret targeting fields. Defaults in lib/providers/tos.ts. */
   tos?: {
-    bucket: string;
-    region: string;
+    /** Optional (rather than required with a client-side default) so editing
+     *  just one TOS field doesn't bake a default into the others — see
+     *  SettingsDialog's setTosField/setTosExpiry. Absent means "defer further,
+     *  to the shared config or TOS_DEFAULTS". */
+    bucket?: string;
+    region?: string;
     /** Host suffix, e.g. "tos-ap-southeast-1.bytepluses.com". */
-    endpoint: string;
+    endpoint?: string;
     /** Days before uploaded refs auto-expire via the bucket lifecycle rule. */
     refExpiryDays?: number;
   };
@@ -333,6 +337,40 @@ export type Config = {
    *  re-prompting for that version on the next launch. The manual "Check for
    *  updates" button in Settings ignores this. */
   lastDismissedUpdateVersion?: string;
+  /** Path to a read-only shared YAML config an admin maintains on a network
+   *  share (provider keys, Turso, ffmpeg path, etc). aiSLAP never writes to
+   *  it — see `SharedConfig` and `getSharedConfigCached`. */
+  sharedConfigPath?: string;
+};
+
+/** The read-only shared config file's shape, mirroring the Rust
+ *  `SharedConfig` field-for-field (snake_case, same as the YAML on disk —
+ *  secrets keyed after their existing `.env` variable names). Every field
+ *  optional: a partial file (just secrets, say) is expected. */
+export type SharedConfig = {
+  fal_key?: string;
+  replicate_api_token?: string;
+  bytedance_api_key?: string;
+  bytedance_mediakit_api_key?: string;
+  beeble_api_key?: string;
+  tos_access_key_id?: string;
+  tos_secret_access_key?: string;
+  turso_database_url?: string;
+  turso_auth_token?: string;
+
+  ffmpeg_path?: string;
+  max_concurrent_jobs?: number;
+  filename_template?: string;
+  fal_lifecycle?: FalLifecycle;
+  tos_bucket?: string;
+  tos_region?: string;
+  tos_endpoint?: string;
+  tos_ref_expiry_days?: number;
+  colors?: ColorOverrides;
+
+  /** Admin-authored model/provider lock-out list — YAML-only, never written
+   *  by aiSLAP. Absent means every model is visible. */
+  models?: { include: string[]; exclude: string[] };
 };
 
 export const DEFAULT_MAX_CONCURRENT_JOBS = 3;

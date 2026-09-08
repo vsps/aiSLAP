@@ -5,7 +5,7 @@
 // per-column cost totals) that would otherwise re-read the same files on
 // every render.
 import { cmd } from "./tauri";
-import type { Config, ImageMetadata } from "./types";
+import type { Config, ImageMetadata, SharedConfig } from "./types";
 
 const cache = new Map<string, Promise<ImageMetadata | null>>();
 
@@ -40,4 +40,17 @@ export function getConfigCached(): Promise<Config | null> {
 
 export function invalidateConfigCache(): void {
   configPromise = null;
+}
+
+// The shared YAML config lives on a network share and aiSLAP never writes to
+// it, so there's no local save to invalidate on — a session-lifetime cache
+// with no invalidation path is fine here (a live edit picks up on next launch,
+// same as models_load's own lack of hot reload).
+let sharedConfigPromise: Promise<SharedConfig | null> | null = null;
+
+export function getSharedConfigCached(): Promise<SharedConfig | null> {
+  if (!sharedConfigPromise) {
+    sharedConfigPromise = cmd.shared_config_load().catch(() => null);
+  }
+  return sharedConfigPromise;
 }

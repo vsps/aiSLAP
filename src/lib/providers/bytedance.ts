@@ -1,6 +1,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
+import { getSharedConfigCached } from "../metadataCache";
 import {
   ensureRefLifecycleRule,
   TOS_DEFAULTS,
@@ -110,12 +111,13 @@ export class BytedanceProvider implements Provider {
   private tos: TosConfig | null = null;
 
   async prepare(): Promise<void> {
-    const [key, mediaKitKey, ak, sk, cfg] = await Promise.all([
+    const [key, mediaKitKey, ak, sk, cfg, shared] = await Promise.all([
       cmd.provider_key_get("bytedance").catch(() => ""),
       cmd.provider_key_get("bytedance_mediakit").catch(() => ""),
       cmd.provider_key_get("tos_ak").catch(() => ""),
       cmd.provider_key_get("tos_sk").catch(() => ""),
       cmd.config_load().catch(() => null),
+      getSharedConfigCached(),
     ]);
     // Neither key is required here — Ark and MediaKit are independent APIs
     // sharing this provider instance, so a MediaKit-only (or Ark-only) setup
@@ -127,22 +129,23 @@ export class BytedanceProvider implements Provider {
     // TOS is only needed to host reference material. A text-only job has no
     // refs and never calls uploadFile, so missing TOS creds must NOT fail
     // prepare() — leave `tos` null and let uploadFile throw if a ref shows up.
-    const bucket = cfg?.tos?.bucket || TOS_DEFAULTS.bucket;
+    const bucket = cfg?.tos?.bucket || shared?.tos_bucket || TOS_DEFAULTS.bucket;
     if (!ak || !sk || !bucket) return;
 
     this.tos = {
       accessKeyId: ak,
       secretAccessKey: sk,
-      region: cfg?.tos?.region || TOS_DEFAULTS.region,
+      region: cfg?.tos?.region || shared?.tos_region || TOS_DEFAULTS.region,
       bucket,
-      endpoint: cfg?.tos?.endpoint || TOS_DEFAULTS.endpoint,
+      endpoint: cfg?.tos?.endpoint || shared?.tos_endpoint || TOS_DEFAULTS.endpoint,
     };
 
     // Best-effort: install the expiry rule so uploaded refs don't accumulate.
     // Never block generation on it — uploads work whether or not it succeeds.
     if (!lifecycleEnsured) {
       lifecycleEnsured = true;
-      const days = cfg?.tos?.refExpiryDays ?? TOS_DEFAULTS.refExpiryDays;
+      const days =
+        cfg?.tos?.refExpiryDays ?? shared?.tos_ref_expiry_days ?? TOS_DEFAULTS.refExpiryDays;
       void ensureRefLifecycleRule(this.tos, days).catch(() => {
         lifecycleEnsured = false; // let a later submit retry
       });

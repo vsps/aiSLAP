@@ -3,6 +3,7 @@
 
 import { cmd } from "../tauri";
 import { confirmAction } from "../dialog";
+import { getSharedConfigCached } from "../metadataCache";
 import { pushLog } from "../../stores/logStore";
 import {
   DEFAULT_MAX_CONCURRENT_JOBS,
@@ -103,18 +104,22 @@ async function preflightRefs(
   );
 }
 
-/** Load config-derived job options and remember the concurrency cap. */
+/** Load config-derived job options and remember the concurrency cap. Falls
+ *  back to the shared YAML config for any field left unset locally. */
 async function loadJobConfig(): Promise<{
   ffmpegPath: string;
   filenameTemplate: string;
 }> {
-  const config = await loadConfigSafely();
+  const [config, shared] = await Promise.all([
+    loadConfigSafely(),
+    getSharedConfigCached(),
+  ]);
   setMaxConcurrentJobs(
-    config?.maxConcurrentJobs ?? DEFAULT_MAX_CONCURRENT_JOBS,
+    config?.maxConcurrentJobs ?? shared?.max_concurrent_jobs ?? DEFAULT_MAX_CONCURRENT_JOBS,
   );
   return {
-    ffmpegPath: config?.ffmpegPath ?? "",
-    filenameTemplate: config?.filenameTemplate ?? "",
+    ffmpegPath: config?.ffmpegPath || shared?.ffmpeg_path || "",
+    filenameTemplate: config?.filenameTemplate || shared?.filename_template || "",
   };
 }
 
