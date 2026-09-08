@@ -17,15 +17,48 @@ import { useEffect, useState, type RefObject } from "react";
 // pop in visibly during a horizontal scroll.
 const MARGIN = "400px";
 
-// One observer for every tile in the app rather than one per tile: a shot can
-// hold several hundred, and each IntersectionObserver carries its own
-// bookkeeping in the compositor.
-let observer: IntersectionObserver | null = null;
+// One observer per distinct scrolling ancestor, rather than either of the two
+// obvious extremes: one per tile (a shot can hold several hundred, and each
+// IntersectionObserver carries its own bookkeeping in the compositor) or one
+// shared instance with the implicit document root, which is what this used
+// to be — and which never fires for a tile clipped by *two* nested
+// `overflow` ancestors (the gallery's horizontal row of columns, each column
+// itself `overflow-y-auto`) on WebKit: `near` never becomes true, so neither
+// the `<img>` nor the `<video>` branch below it ever mounts, and the tile
+// stays blank forever. Chromium tolerates the same nesting, which is why this
+// only ever showed up on macOS. Giving the observer its actual clipping
+// ancestor as `root` — the same thing scoping `rootMargin` was always
+// implicitly assuming — sidesteps the ambiguity rather than guessing around
+// it, and every caller with only one level of `overflow` (StackedView,
+// TagView, TraceView) behaves exactly as before, since that single ancestor
+// *is* what `root: null` was already resolving to there.
+const observers = new Map<Element | null, IntersectionObserver>();
 const callbacks = new Map<Element, () => void>();
 
-function ensureObserver(): IntersectionObserver {
-  if (observer) return observer;
-  observer = new IntersectionObserver(
+/** The nearest ancestor that actually clips `el` by scrolling, or `null` for
+ *  "none — the document viewport is the real root", matching what an
+ *  IntersectionObserver's default `root` would have resolved to anyway. */
+function findScrollRoot(el: Element): Element | null {
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    const style = getComputedStyle(node);
+    if (
+      style.overflowY === "auto" ||
+      style.overflowY === "scroll" ||
+      style.overflowX === "auto" ||
+      style.overflowX === "scroll"
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function ensureObserverFor(root: Element | null): IntersectionObserver {
+  const existing = observers.get(root);
+  if (existing) return existing;
+  const io = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
@@ -33,9 +66,10 @@ function ensureObserver(): IntersectionObserver {
         if (cb) cb();
       }
     },
-    { rootMargin: MARGIN },
+    { root, rootMargin: MARGIN },
   );
-  return observer;
+  observers.set(root, io);
+  return io;
 }
 
 /**
@@ -68,7 +102,9 @@ export function useNearViewport(ref: RefObject<Element | null>): boolean {
       setNear(true);
       return;
     }
-    const io = ensureObserver();
+    // `io` is captured for cleanup below, so unobserving always targets the
+    // exact instance `el` was added to, however many roots exist by then.
+    const io = ensureObserverFor(findScrollRoot(el));
     callbacks.set(el, () => setNear(true));
     io.observe(el);
     return () => {
