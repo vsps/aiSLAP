@@ -223,6 +223,15 @@ is what makes picker order stable.
 
 **Deeper nesting is silently ignored.** `models/fal/video/veo3.json` will never load.
 
+### 9a. Admin lock-out (shared config)
+
+After every file is loaded, `models_load` applies an optional org-wide filter from the
+shared config's `models: { include, exclude }` glob lists (see
+[providers.md](providers.md) §3a) — matched against `"<provider>/<node.id>"`, e.g.
+`"fal/*"` or a single node id. This is the *only* thing that can make a model
+disappear without a bad/missing file; it is entirely admin-authored, never written by
+aiSLAP, and defaults to including everything when absent.
+
 ---
 
 ## 10. Failure modes

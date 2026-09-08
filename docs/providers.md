@@ -88,6 +88,29 @@ That last row is why a new provider needs no Rust change — and also why
 it is *derived* from the logical name `bytedance_mediakit`, never written down. It is
 now in `.env.example`.
 
+## 3a. Shared config (multi-user/studio deployment)
+
+Every field above (and `ffmpeg_path`, `max_concurrent_jobs`, `filename_template`,
+`fal_lifecycle`, the TOS bucket/region/endpoint/ref-expiry, `colors`) can also be
+supplied by a **read-only YAML file** on a network share, so a studio can roll out
+one file instead of pasting secrets into every machine. Point each machine at it once
+via Settings → General → "Shared config file" (`Config.sharedConfigPath`). aiSLAP
+never writes to this file — it is purely admin-authored.
+
+Precedence is always **local override → shared file → hard-coded default**, resolved
+at each field's point of use (never inside `config_load()`, which stays pure local
+truth — see `commands/config.rs::load_shared_config`). Secrets are keyed by their
+existing env-var name (`fal_key`, `turso_database_url`, …); everything else is a new
+snake_case key matching the `Config` field. Every field in Settings shows a mouseover
+hint naming its key, and highlights when its value is inherited rather than typed
+locally.
+
+The same file can also carry a `models:` section — `include`/`exclude` glob lists
+(default `include: ["*"]`) matched against `"<provider>/<node.id>"` — to lock out
+models or whole providers org-wide. That list is YAML-only: aiSLAP never writes it,
+and there is deliberately no Settings UI for it. See
+`commands/models.rs::model_visible`.
+
 ## 4. Adding a provider
 
 Seven steps, all TypeScript:

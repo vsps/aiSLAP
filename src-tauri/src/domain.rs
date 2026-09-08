@@ -80,6 +80,19 @@ pub struct WindowBounds {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TosConfig {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ref_expiry_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ColorOverrides {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub bg: Option<String>,
@@ -109,8 +122,11 @@ pub struct Config {
     pub last_model: String,
     #[serde(default)]
     pub ffmpeg_path: String,
-    #[serde(default = "default_max_concurrent_jobs")]
-    pub max_concurrent_jobs: u32,
+    /// `None` until the user (or a save) pins a concrete value — needed so a
+    /// fresh install can still defer to the shared config's own
+    /// `max_concurrent_jobs`, the same way `filename_template` already does.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub max_concurrent_jobs: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub filename_template: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -134,10 +150,16 @@ pub struct Config {
     /// The manual "Check for updates" button in Settings ignores this.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub last_dismissed_update_version: Option<String>,
-}
-
-fn default_max_concurrent_jobs() -> u32 {
-    3
+    /// BytePlus TOS object storage targeting fields. Was entirely absent from
+    /// this struct until now, so the frontend's tos.* form silently never
+    /// persisted — Tauri's IPC deserialize had nowhere to put it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tos: Option<TosConfig>,
+    /// Path to a read-only shared YAML config an admin maintains on a network
+    /// share (provider keys, Turso, ffmpeg path, etc). Never written by
+    /// aiSLAP. See `commands::config::load_shared_config`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub shared_config_path: Option<String>,
 }
 
 fn default_auto_check_updates() -> bool {
@@ -158,7 +180,7 @@ impl Default for Config {
             last_shot: String::new(),
             last_model: String::new(),
             ffmpeg_path: String::new(),
-            max_concurrent_jobs: default_max_concurrent_jobs(),
+            max_concurrent_jobs: None,
             filename_template: None,
             colors: None,
             fal_lifecycle: None,
@@ -167,8 +189,77 @@ impl Default for Config {
             price_overrides: None,
             auto_check_updates: default_auto_check_updates(),
             last_dismissed_update_version: None,
+            tos: None,
+            shared_config_path: None,
         }
     }
+}
+
+/// A model/node lock-out list, admin-authored only — aiSLAP never writes
+/// this back, so there is no Settings UI for it. Patterns are matched against
+/// `"<provider>/<node.id>"` (e.g. `"fal/*"`, `"bytedance/topaz_upscale_video"`)
+/// via `commands::models::model_visible`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelFilter {
+    #[serde(default = "default_include_all")]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+fn default_include_all() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+/// The read-only shared config file's shape — every field optional so a
+/// partial file (just secrets, say) still parses. Secret/Turso keys are named
+/// after their existing `.env` variable names so a studio's shared file can
+/// reuse exactly what they'd otherwise put in a `.env`; everything else is a
+/// new snake_case key mirroring the matching `Config` field.
+///
+/// aiSLAP only ever reads this file — see `commands::config::load_shared_config`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SharedConfig {
+    #[serde(default)]
+    pub fal_key: Option<String>,
+    #[serde(default)]
+    pub replicate_api_token: Option<String>,
+    #[serde(default)]
+    pub bytedance_api_key: Option<String>,
+    #[serde(default)]
+    pub bytedance_mediakit_api_key: Option<String>,
+    #[serde(default)]
+    pub beeble_api_key: Option<String>,
+    #[serde(default)]
+    pub tos_access_key_id: Option<String>,
+    #[serde(default)]
+    pub tos_secret_access_key: Option<String>,
+    #[serde(default)]
+    pub turso_database_url: Option<String>,
+    #[serde(default)]
+    pub turso_auth_token: Option<String>,
+
+    #[serde(default)]
+    pub ffmpeg_path: Option<String>,
+    #[serde(default)]
+    pub max_concurrent_jobs: Option<u32>,
+    #[serde(default)]
+    pub filename_template: Option<String>,
+    #[serde(default)]
+    pub fal_lifecycle: Option<String>,
+    #[serde(default)]
+    pub tos_bucket: Option<String>,
+    #[serde(default)]
+    pub tos_region: Option<String>,
+    #[serde(default)]
+    pub tos_endpoint: Option<String>,
+    #[serde(default)]
+    pub tos_ref_expiry_days: Option<u32>,
+    #[serde(default)]
+    pub colors: Option<ColorOverrides>,
+
+    #[serde(default)]
+    pub models: Option<ModelFilter>,
 }
 
 // `app-state.json` has no struct here on purpose.

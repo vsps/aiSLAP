@@ -34,6 +34,7 @@ import type {
   SharedPricing,
   SyncReport,
   ReconcileReport,
+  SharedConfig,
 } from "./types";
 
 // Thin typed wrapper over Tauri commands. Keep names 1:1 with Rust #[tauri::command] fns.
@@ -55,8 +56,12 @@ export const cmd = {
 
   provider_key_get: (provider: string): Promise<string> =>
     rawInvoke("provider_key_get", { provider }),
+  provider_key_get_local: (provider: string): Promise<string> =>
+    rawInvoke("provider_key_get_local", { provider }),
   provider_key_set: (provider: string, key: string): Promise<void> =>
     rawInvoke("provider_key_set", { provider, key }),
+  shared_config_load: (): Promise<SharedConfig | null> =>
+    rawInvoke("shared_config_load"),
 
   // Models
   models_load: (): Promise<ModelEntry[]> => rawInvoke("models_load"),

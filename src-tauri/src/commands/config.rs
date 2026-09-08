@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::domain::Config;
+use crate::domain::{Config, SharedConfig};
 use crate::error::AppResult;
 use crate::fsjson::{read_json_or_default, write_json_atomic};
 use crate::paths;
@@ -17,16 +17,52 @@ pub fn config_save(config: Config) -> AppResult<()> {
     write_json_atomic(&paths::config_path()?, &config)
 }
 
-/// The user's configured ffmpeg binary, or empty when they haven't set one.
-/// See `resolve_ffmpeg` for what a caller actually does with this.
+/// The user's configured ffmpeg binary, or empty when they haven't set one
+/// locally *or* via the shared config. See `resolve_ffmpeg` for what a caller
+/// actually does with this.
 ///
 /// Lives here rather than in `fsutil` because it reads `config.json`, which is
 /// this module's business. `tags.rs` and `image.rs` each carried a
 /// byte-identical private copy.
 pub(crate) fn configured_ffmpeg_path() -> String {
-    read_json_or_default::<Config>(&paths::config_path().unwrap_or_default())
+    let local = read_json_or_default::<Config>(&paths::config_path().unwrap_or_default())
         .map(|c| c.ffmpeg_path)
+        .unwrap_or_default();
+    if !local.is_empty() {
+        return local;
+    }
+    load_shared_config()
+        .and_then(|s| s.ffmpeg_path)
         .unwrap_or_default()
+}
+
+/// The read-only shared YAML config an admin points every machine at
+/// (`Config.shared_config_path`), or `None` when unset, missing, or
+/// unparseable — a bad or absent shared file never blocks the app, it just
+/// means nothing defers to it. Read fresh every call: nothing here is
+/// hot-path enough yet to justify a cache invalidation story.
+pub(crate) fn load_shared_config() -> Option<SharedConfig> {
+    let local = read_json_or_default::<Config>(&paths::config_path().ok()?).ok()?;
+    let shared_path = local.shared_config_path?;
+    if shared_path.trim().is_empty() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&shared_path)
+        .inspect_err(|e| tracing::warn!("shared config at {shared_path} unreadable: {e}"))
+        .ok()?;
+    serde_yaml_ng::from_str(&text)
+        .inspect_err(|e| tracing::warn!("shared config at {shared_path} did not parse: {e}"))
+        .ok()
+}
+
+/// The Settings dialog's read of the shared file — used only for the
+/// inherited-value highlight/tooltip. Every other consumer resolves its own
+/// field through the plain accessors above (`configured_ffmpeg_path`,
+/// `provider_key_get`, `turso_config`), so this command never feeds back into
+/// `config_save`.
+#[tauri::command]
+pub fn shared_config_load() -> Option<SharedConfig> {
+    load_shared_config()
 }
 
 /// Resolve a configured ffmpeg path down to a binary we can actually exec.
@@ -193,23 +229,61 @@ pub(crate) fn turso_config() -> AppResult<Option<(String, String)>> {
     Ok(Some((url, token)))
 }
 
-fn read_env_var(name: &str) -> AppResult<String> {
-    let path = paths::env_path()?;
-    if !path.exists() {
-        return Ok(String::new());
+/// Maps an env-var name (as passed to `read_env_var`/`write_env_var`) to the
+/// matching field on the shared config — the two use identical key names by
+/// design, so a studio's shared file can reuse exactly what they'd otherwise
+/// put in a `.env`. Providers added later via `env_var_for`'s catch-all fall
+/// through to `None` here until this gains a matching `SharedConfig` field.
+fn shared_secret(name: &str, shared: &SharedConfig) -> Option<String> {
+    match name {
+        "FAL_KEY" => shared.fal_key.clone(),
+        "REPLICATE_API_TOKEN" => shared.replicate_api_token.clone(),
+        "BYTEDANCE_API_KEY" => shared.bytedance_api_key.clone(),
+        "BYTEDANCE_MEDIAKIT_API_KEY" => shared.bytedance_mediakit_api_key.clone(),
+        "BEEBLE_API_KEY" => shared.beeble_api_key.clone(),
+        "TOS_ACCESS_KEY_ID" => shared.tos_access_key_id.clone(),
+        "TOS_SECRET_ACCESS_KEY" => shared.tos_secret_access_key.clone(),
+        "TURSO_DATABASE_URL" => shared.turso_database_url.clone(),
+        "TURSO_AUTH_TOKEN" => shared.turso_auth_token.clone(),
+        _ => None,
     }
-    let text = std::fs::read_to_string(path)?;
-    let prefix = format!("{name}=");
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix(&prefix) {
-            return Ok(rest.trim_matches('"').to_string());
+}
+
+/// The literal `.env` line, ignoring the shared config entirely — empty when
+/// there's no local line at all. Split out from `read_env_var` so Settings can
+/// tell "shown because it's the local override" from "shown because it's
+/// inherited from the shared file" (`provider_key_get` collapses that
+/// distinction on purpose, since every other caller just wants the effective
+/// value).
+fn read_local_env_var(name: &str) -> AppResult<String> {
+    let path = paths::env_path()?;
+    if path.exists() {
+        let text = std::fs::read_to_string(&path)?;
+        let prefix = format!("{name}=");
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix(&prefix) {
+                return Ok(rest.trim_matches('"').to_string());
+            }
         }
     }
     Ok(String::new())
+}
+
+/// Local `.env` wins outright; an unset/absent key falls back to the shared
+/// config. Both `provider_key_get` and `turso_config` go through this, so
+/// both get the fallback for free.
+fn read_env_var(name: &str) -> AppResult<String> {
+    let local = read_local_env_var(name)?;
+    if !local.is_empty() {
+        return Ok(local);
+    }
+    Ok(load_shared_config()
+        .and_then(|s| shared_secret(name, &s))
+        .unwrap_or_default())
 }
 
 fn write_env_var(name: &str, value: &str) -> AppResult<()> {
@@ -239,6 +313,16 @@ fn write_env_var(name: &str, value: &str) -> AppResult<()> {
 pub fn provider_key_get(provider: String) -> AppResult<String> {
     let name = env_var_for(&provider);
     read_env_var(&name)
+}
+
+/// Settings-only: the local `.env` value alone, empty when unset there even
+/// if the shared config supplies one. Lets the dialog tell "typed locally"
+/// from "inherited" for the highlight — every other caller wants
+/// `provider_key_get`'s merged value instead.
+#[tauri::command]
+pub fn provider_key_get_local(provider: String) -> AppResult<String> {
+    let name = env_var_for(&provider);
+    read_local_env_var(&name)
 }
 
 #[tauri::command]
@@ -352,5 +436,129 @@ mod resolve_ffmpeg_tests {
         } else {
             assert_eq!(swap_exe_suffix("ffmpeg"), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod shared_config_tests {
+    use super::*;
+
+    #[test]
+    fn shared_secret_maps_every_env_var_name_to_its_field() {
+        let shared = SharedConfig {
+            fal_key: Some("fal-1".into()),
+            replicate_api_token: Some("r8-1".into()),
+            bytedance_api_key: Some("bd-1".into()),
+            bytedance_mediakit_api_key: Some("mk-1".into()),
+            beeble_api_key: Some("bb-1".into()),
+            tos_access_key_id: Some("ak-1".into()),
+            tos_secret_access_key: Some("sk-1".into()),
+            turso_database_url: Some("libsql://x".into()),
+            turso_auth_token: Some("tok-1".into()),
+            ..Default::default()
+        };
+        assert_eq!(shared_secret("FAL_KEY", &shared).as_deref(), Some("fal-1"));
+        assert_eq!(
+            shared_secret("REPLICATE_API_TOKEN", &shared).as_deref(),
+            Some("r8-1")
+        );
+        assert_eq!(
+            shared_secret("BYTEDANCE_API_KEY", &shared).as_deref(),
+            Some("bd-1")
+        );
+        assert_eq!(
+            shared_secret("BYTEDANCE_MEDIAKIT_API_KEY", &shared).as_deref(),
+            Some("mk-1")
+        );
+        assert_eq!(
+            shared_secret("BEEBLE_API_KEY", &shared).as_deref(),
+            Some("bb-1")
+        );
+        assert_eq!(
+            shared_secret("TOS_ACCESS_KEY_ID", &shared).as_deref(),
+            Some("ak-1")
+        );
+        assert_eq!(
+            shared_secret("TOS_SECRET_ACCESS_KEY", &shared).as_deref(),
+            Some("sk-1")
+        );
+        assert_eq!(
+            shared_secret("TURSO_DATABASE_URL", &shared).as_deref(),
+            Some("libsql://x")
+        );
+        assert_eq!(
+            shared_secret("TURSO_AUTH_TOKEN", &shared).as_deref(),
+            Some("tok-1")
+        );
+        assert_eq!(shared_secret("SOME_OTHER_KEY", &shared), None);
+    }
+
+    /// The actual studio-facing contract: these exact key names in a YAML
+    /// file must parse into the fields callers rely on. A field rename here
+    /// would compile fine and break every deployed shared file silently.
+    #[test]
+    fn shared_config_parses_every_documented_yaml_key() {
+        let yaml = r#"
+fal_key: fal-secret
+replicate_api_token: r8-secret
+bytedance_api_key: bd-secret
+bytedance_mediakit_api_key: mk-secret
+beeble_api_key: bb-secret
+tos_access_key_id: ak-secret
+tos_secret_access_key: sk-secret
+turso_database_url: "libsql://team.turso.io"
+turso_auth_token: turso-secret
+
+ffmpeg_path: /opt/homebrew/bin/ffmpeg
+max_concurrent_jobs: 6
+filename_template: "<date>_<shot>_<model>"
+fal_lifecycle: 7d
+tos_bucket: team-bucket
+tos_region: ap-southeast-1
+tos_endpoint: tos-ap-southeast-1.bytepluses.com
+tos_ref_expiry_days: 14
+
+models:
+  include: ["fal/*", "bytedance/*"]
+  exclude: ["bytedance/experimental-*"]
+"#;
+        let parsed: SharedConfig = serde_yaml_ng::from_str(yaml).expect("valid shared config");
+        assert_eq!(parsed.fal_key.as_deref(), Some("fal-secret"));
+        assert_eq!(
+            parsed.turso_database_url.as_deref(),
+            Some("libsql://team.turso.io")
+        );
+        assert_eq!(
+            parsed.ffmpeg_path.as_deref(),
+            Some("/opt/homebrew/bin/ffmpeg")
+        );
+        assert_eq!(parsed.max_concurrent_jobs, Some(6));
+        assert_eq!(parsed.fal_lifecycle.as_deref(), Some("7d"));
+        assert_eq!(parsed.tos_ref_expiry_days, Some(14));
+        let models = parsed.models.expect("models section");
+        assert_eq!(models.include, vec!["fal/*", "bytedance/*"]);
+        assert_eq!(models.exclude, vec!["bytedance/experimental-*"]);
+    }
+
+    /// An empty/partial file (just a couple of keys) must still parse —
+    /// nobody wants every field mandatory in a hand-authored YAML.
+    #[test]
+    fn shared_config_tolerates_a_partial_file() {
+        let parsed: SharedConfig = serde_yaml_ng::from_str("fal_key: only-this\n").unwrap();
+        assert_eq!(parsed.fal_key.as_deref(), Some("only-this"));
+        assert_eq!(parsed.turso_database_url, None);
+        assert!(parsed.models.is_none());
+    }
+
+    /// `include` defaults to `["*"]` when a `models:` section is present but
+    /// doesn't mention `include` — "lock out by exclude only" shouldn't
+    /// require restating the wildcard.
+    #[test]
+    fn model_filter_include_defaults_to_wildcard() {
+        let parsed: SharedConfig =
+            serde_yaml_ng::from_str("models:\n  exclude: [\"fal/topaz*\"]\n").unwrap();
+        let models = parsed.models.expect("models section");
+        assert_eq!(models.include, vec!["*"]);
+        assert_eq!(models.exclude, vec!["fal/topaz*"]);
     }
 }

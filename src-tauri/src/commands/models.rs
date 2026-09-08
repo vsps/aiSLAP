@@ -1,7 +1,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::{ModelEntry, ModelInput, ModelNode, ModelOutput, RefRoleSpec};
+use crate::commands::config::load_shared_config;
+use crate::domain::{ModelEntry, ModelFilter, ModelInput, ModelNode, ModelOutput, RefRoleSpec};
 use crate::error::AppResult;
 use crate::paths;
 
@@ -137,6 +138,37 @@ fn collect_model_files(dir: &std::path::Path) -> AppResult<Vec<std::path::PathBu
     Ok(out)
 }
 
+/// Translate a `*`/`?` glob into an anchored regex — everything else is
+/// matched literally, so an admin can write `"fal/topaz_upscale_video"`
+/// without thinking about regex metacharacters.
+fn glob_to_regex(pattern: &str) -> regex::Regex {
+    let mut out = String::from("^");
+    for c in pattern.chars() {
+        match c {
+            '*' => out.push_str(".*"),
+            '?' => out.push('.'),
+            _ => out.push_str(&regex::escape(&c.to_string())),
+        }
+    }
+    out.push('$');
+    // A pattern that somehow still fails to compile matches nothing, rather
+    // than panicking the whole model load over one bad admin-authored line.
+    regex::Regex::new(&out).unwrap_or_else(|_| regex::Regex::new("$^").unwrap())
+}
+
+fn matches_any(key: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|p| glob_to_regex(p).is_match(key))
+}
+
+/// A model is visible iff it matches at least one `include` pattern and no
+/// `exclude` pattern. Matched against `"<provider>/<node.id>"` (e.g.
+/// `"fal/topaz_upscale_video_creative"`), so `"fal/*"` locks out a whole
+/// provider and a bare node id locks out just one model.
+pub(crate) fn model_visible(provider: &str, node_id: &str, filter: &ModelFilter) -> bool {
+    let key = format!("{provider}/{node_id}");
+    matches_any(&key, &filter.include) && !matches_any(&key, &filter.exclude)
+}
+
 #[tauri::command]
 pub fn models_load(app: tauri::AppHandle) -> AppResult<Vec<ModelEntry>> {
     let dir = paths::models_dir(&app)?;
@@ -176,6 +208,16 @@ pub fn models_load(app: tauri::AppHandle) -> AppResult<Vec<ModelEntry>> {
                 node,
             });
         }
+    }
+
+    // Admin-authored lock-out list, YAML-only — never written by aiSLAP, so
+    // this is the one place it's ever applied. Absent `models:` section (or
+    // no shared config at all) leaves every model visible, unchanged.
+    if let Some(filter) = load_shared_config().and_then(|s| s.models) {
+        entries.retain(|e| {
+            let provider = e.node.provider.as_deref().unwrap_or("fal");
+            model_visible(provider, &e.node.id, &filter)
+        });
     }
 
     Ok(entries)
@@ -347,5 +389,57 @@ mod tests {
             infer_batch_field(&[param("count")], &Some("count".into())),
             Some("count".into())
         );
+    }
+
+    fn filter(include: &[&str], exclude: &[&str]) -> ModelFilter {
+        ModelFilter {
+            include: include.iter().map(|s| s.to_string()).collect(),
+            exclude: exclude.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn default_include_all_admits_everything() {
+        let f = filter(&["*"], &[]);
+        assert!(model_visible("fal", "topaz_upscale_video", &f));
+        assert!(model_visible("bytedance", "seedance", &f));
+    }
+
+    #[test]
+    fn a_whole_provider_can_be_excluded() {
+        let f = filter(&["*"], &["bytedance/*"]);
+        assert!(model_visible("fal", "topaz_upscale_video", &f));
+        assert!(!model_visible("bytedance", "seedance", &f));
+    }
+
+    #[test]
+    fn include_narrows_to_matching_providers_only() {
+        let f = filter(&["fal/*"], &[]);
+        assert!(model_visible("fal", "topaz_upscale_video", &f));
+        assert!(!model_visible("bytedance", "seedance", &f));
+    }
+
+    #[test]
+    fn a_single_node_id_can_be_excluded_without_touching_its_siblings() {
+        let f = filter(&["*"], &["fal/topaz_upscale_video_creative"]);
+        assert!(model_visible("fal", "topaz_upscale_video_creative_alt", &f));
+        assert!(!model_visible("fal", "topaz_upscale_video_creative", &f));
+        assert!(model_visible("fal", "topaz_upscale_image", &f));
+    }
+
+    #[test]
+    fn exclude_wins_over_a_broader_include() {
+        let f = filter(&["fal/*"], &["fal/topaz_upscale_video_creative"]);
+        assert!(!model_visible("fal", "topaz_upscale_video_creative", &f));
+        assert!(model_visible("fal", "topaz_upscale_image", &f));
+    }
+
+    #[test]
+    fn glob_patterns_do_not_leak_regex_metacharacters() {
+        // A literal "." or "+" in a node id must not act as a regex wildcard.
+        let f = filter(&["fal/v1.0+beta"], &[]);
+        assert!(model_visible("fal", "v1.0+beta", &f));
+        assert!(!model_visible("fal", "v1X0+beta", &f));
+        assert!(!model_visible("fal", "v1.0Xbeta", &f));
     }
 }

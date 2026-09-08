@@ -1,6 +1,7 @@
 import { cmd } from "./tauri";
 import { joinPath, normalizeDir, relativeTo } from "./paths";
 import { applyColors } from "./colors";
+import { getSharedConfigCached } from "./metadataCache";
 import type {
   AppState,
   ChainLink,
@@ -241,9 +242,10 @@ export async function bootstrap(): Promise<() => void> {
   const modelsPromise = useModelsStore.getState().loadAll();
   const presetsPromise = usePresetsStore.getState().loadAll();
 
-  const [appStateRaw, configRaw] = await Promise.all([
+  const [appStateRaw, configRaw, shared] = await Promise.all([
     cmd.app_state_load().catch(() => null),
     cmd.config_load().catch(() => null),
+    getSharedConfigCached(),
     modelsPromise,
     presetsPromise,
     loadSystemUsername(),
@@ -256,7 +258,7 @@ export async function bootstrap(): Promise<() => void> {
     : null;
 
   // Always apply colors at startup so CSS variables are explicit inline values.
-  applyColors(config?.colors);
+  applyColors(config?.colors ?? shared?.colors);
 
   // Seed cached fal prices (fetched manually via Settings) so cost labels
   // work without re-hitting fal's pricing API.
