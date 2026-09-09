@@ -182,11 +182,11 @@ function loadGalleryListMode(): boolean {
  *  (see `lib/bootstrap.ts` — adding a field there means editing `tabToPersisted`
  *  and the `installPersistence` change gate in lockstep). Tabs and modes are
  *  orthogonal: switching mode leaves the active tab alone, and vice versa. */
-export type AppMode = "generate" | "deliver" | "audit";
+export type AppMode = "context" | "generate" | "deliver" | "audit";
 
 const MODE_STORAGE_KEY = "aislap.activeMode";
 
-const APP_MODES: readonly AppMode[] = ["generate", "deliver", "audit"];
+const APP_MODES: readonly AppMode[] = ["context", "generate", "deliver", "audit"];
 
 function loadMode(): AppMode {
   try {

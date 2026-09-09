@@ -35,6 +35,7 @@ import type {
   SyncReport,
   ReconcileReport,
   SharedConfig,
+  BriefExtractResult,
 } from "./types";
 
 // Thin typed wrapper over Tauri commands. Keep names 1:1 with Rust #[tauri::command] fns.
@@ -323,6 +324,16 @@ export const cmd = {
     shotPath: string,
     mediaPath: string | null,
   ): Promise<void> => rawInvoke("shot_clip_media_set", { shotPath, mediaPath }),
+  shot_storyboard_image_set: (
+    shotPath: string,
+    imagePath: string | null,
+  ): Promise<void> =>
+    rawInvoke("shot_storyboard_image_set", { shotPath, imagePath }),
+  brief_extract: (
+    projectPath: string,
+    filePath: string,
+  ): Promise<BriefExtractResult> =>
+    rawInvoke("brief_extract", { projectPath, filePath }),
   shot_version_comment_set: (
     shotPath: string,
     version: string,

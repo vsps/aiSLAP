@@ -82,6 +82,18 @@ pub(crate) fn default_ref_dir(ref_root: &Path) -> PathBuf {
     ref_root.join(SRC_DIR)
 }
 
+/// Where brief-analysis extracts land: a `BRIEF` folder alongside `SRC` inside
+/// the project's global reference root (never nested inside `SRC` itself, so
+/// it reads as its own kind of material rather than an aiSLAP-authored
+/// reference copy). Writing here is enough on its own to make it show up as a
+/// subfolder section of the Global SRC reference column — no separate
+/// registration needed, same as any other folder a person drops into the root.
+pub(crate) const BRIEF_DIR: &str = "BRIEF";
+
+pub(crate) fn brief_dir(project_root: &Path) -> PathBuf {
+    global_ref_root(project_root).join(BRIEF_DIR)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

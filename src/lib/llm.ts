@@ -2,15 +2,15 @@ import { fal } from "@fal-ai/client";
 import { FalProvider } from "./providers/fal";
 
 export const LLM_MODELS = [
-  "anthropic/claude-sonnet-4.6",
-  "anthropic/claude-opus-4.6",
-  "anthropic/claude-sonnet-4.5",
+  "anthropic/claude-sonnet-5",
+  "anthropic/claude-opus-5",
+  "anthropic/claude-haiku-4.5",
   "openai/gpt-4.1",
   "openai/gpt-oss-120b",
   "google/gemini-2.5-flash",
   "google/gemini-2.5-pro",
   "meta-llama/llama-4-maverick",
-  "deepseek/deepseek-v3",
+  "deepseek/deepseek-v4-pro-0813",
 ] as const;
 
 export const DEFAULT_SYSTEM_PROMPT =
@@ -75,4 +75,62 @@ export async function runLlmRewrite(args: {
   });
   const data = (res.data ?? {}) as { output?: string };
   return (data.output ?? "").trim();
+}
+
+// ---------- Brief analysis (CONTEXT page) ----------
+
+const BRIEF_MARKER = "===BRIEF===";
+const SCRIPT_MARKER = "===SCRIPT===";
+
+const BRIEF_ANALYSIS_SYSTEM_PROMPT =
+  "You are a creative-brief analyst for a video/image production pipeline. " +
+  "You will be given the raw extracted text of a pitch deck or brief " +
+  "(slide-by-slide or page-by-page, possibly messy). Derive from it: " +
+  "(1) a short prose summary of the brief — audience, goal, tone, key " +
+  "requirements; (2) a shot-by-shot script broken into sequences and shots, " +
+  "as markdown using a top-level '# ' heading per sequence and a '## ' " +
+  "heading per shot underneath it, with one or two sentences of description " +
+  `under each shot heading. Return your answer in exactly this format, with ` +
+  `nothing before or after it:\n\n${BRIEF_MARKER}\n<the brief summary>\n` +
+  `${SCRIPT_MARKER}\n<the markdown script>`;
+
+export type BriefAnalysis = { brief: string; script: string };
+
+/** Split a model's raw reply on the `===BRIEF===`/`===SCRIPT===` markers.
+ *  Exported for testing and so a caller can inspect what actually came back
+ *  even when the model didn't follow the format — falls back to treating the
+ *  whole reply as the script with an empty brief, rather than discarding a
+ *  real (just unlabeled) result. */
+export function parseBriefAnalysis(raw: string): BriefAnalysis {
+  const briefIdx = raw.indexOf(BRIEF_MARKER);
+  const scriptIdx = raw.indexOf(SCRIPT_MARKER);
+  if (briefIdx === -1 || scriptIdx === -1 || scriptIdx < briefIdx) {
+    return { brief: "", script: raw.trim() };
+  }
+  return {
+    brief: raw.slice(briefIdx + BRIEF_MARKER.length, scriptIdx).trim(),
+    script: raw.slice(scriptIdx + SCRIPT_MARKER.length).trim(),
+  };
+}
+
+/** Derive a brief summary + script.md-shaped breakdown from a brief's
+ *  extracted text (see `commands::brief::brief_extract`). Never applies
+ *  anything itself — the caller shows a confirm step before touching the
+ *  live script, same as CREATE DIRS's own preview-then-confirm. */
+export async function runBriefAnalysis(args: {
+  model: string;
+  extractedText: string;
+  signal: AbortSignal;
+}): Promise<BriefAnalysis> {
+  await new FalProvider().prepare();
+  const res = await fal.subscribe("openrouter/router", {
+    input: {
+      model: args.model,
+      prompt: args.extractedText,
+      system_prompt: BRIEF_ANALYSIS_SYSTEM_PROMPT,
+    },
+    abortSignal: args.signal,
+  });
+  const data = (res.data ?? {}) as { output?: string };
+  return parseBriefAnalysis((data.output ?? "").trim());
 }

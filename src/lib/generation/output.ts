@@ -141,6 +141,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, {});
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
+    await applyModelTag(target, ctx.node.name);
     written.push(target);
     return written;
   }
@@ -162,6 +163,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, {});
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
+    await applyModelTag(target, ctx.node.name);
     written.push(target);
     return written;
   }
@@ -178,6 +180,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const meta = buildMetadataRecord(ctx, ctx.iterationBase, identity, costPerFile, geometry);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
+    await applyModelTag(target, ctx.node.name);
     written.push(target);
     await ensureThumbs(ctx);
     return written;
@@ -201,6 +204,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
     const meta = buildMetadataRecord(ctx, iterIdx, identity, costPerFile, geometry);
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
+    await applyModelTag(target, ctx.node.name);
     written.push(target);
   }
   await ensureThumbs(ctx);
@@ -361,6 +365,22 @@ export async function recordAsset(
   }
 
   void cmd.db_sync_outbox(projectPath).then(reportOutboxSync).catch(() => {});
+}
+
+/** Best-effort — the file/sidecar are already durably written by this point.
+ *  Gives every new generation an immediate, filterable tag naming its exact
+ *  model variant, via the same path a user tagging an image by hand would use
+ *  (`image_tags_set` also registers it in the project's tag vocabulary and
+ *  the SQLite tag index) — so AUDIT-style reporting can filter/group by tag
+ *  instead of joining on provider/modelId. A freshly-written file has no
+ *  existing tags, so the single-element list is a safe full replacement.
+ *
+ *  Deliberately not folded into `recordAsset` above, even though both are
+ *  shared with the video-trim path: `TrimMode.tsx` deliberately excludes
+ *  `tags` when copying a source's metadata into a derived clip, and this
+ *  would silently undo that. */
+async function applyModelTag(target: string, modelName: string): Promise<void> {
+  await cmd.image_tags_set(target, [modelName]).catch(() => {});
 }
 
 /** Some providers echo the actual seed used even when the request left it to

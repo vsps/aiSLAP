@@ -10,6 +10,7 @@ import { checkForUpdate } from "./lib/updater";
 import { SessionBar } from "./components/SessionBar";
 import { TabBar } from "./components/TabBar";
 import { ModeSwitcher } from "./components/ModeSwitcher";
+import { ContextMode } from "./components/modes/ContextMode";
 import { GenerateMode } from "./components/modes/GenerateMode";
 import { DeliverMode } from "./components/modes/DeliverMode";
 import { AuditMode } from "./components/modes/AuditMode";
@@ -118,6 +119,7 @@ export default function App() {
         onOpenProjectSettings={() => setProjectSettingsOpen(true)}
       />
 
+      {mode === "context" && <ContextMode />}
       {mode === "generate" && <GenerateMode />}
       {mode === "deliver" && <DeliverMode />}
       {mode === "audit" && <AuditMode />}

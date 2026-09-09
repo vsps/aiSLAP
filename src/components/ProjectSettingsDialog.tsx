@@ -1,13 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { cmd } from "../lib/tauri";
-import {
-  showMessage,
-  confirmAction,
-  pickFile,
-} from "../lib/dialog";
-import { useScriptStore } from "../stores/scriptStore";
+import { showMessage } from "../lib/dialog";
 import { useSessionStore } from "../stores/sessionStore";
-import { normalizeTitle, parseScript } from "../lib/script";
 import { DEFAULT_FILENAME_TEMPLATE } from "../lib/generation/output";
 import { ModalDialog } from "./ModalDialog";
 import { rebuildProjectThumbs } from "../lib/thumbs";
@@ -25,17 +19,9 @@ type Props = {
 const VERSION_PREFIX_DEFAULT = "gen";
 const VERSION_PREFIX_RE = /^[A-Za-z][A-Za-z_-]*$/;
 
-function withAssetsHeader(raw: string): string {
-  const hasAssets = /^#\s+ASSETS\b/i.test(raw.trimStart());
-  return hasAssets ? raw : "# ASSETS\n\n" + raw;
-}
-
 export function ProjectSettingsDialog({ onClose }: Props) {
   const projectPath = useSessionStore((s) => s.projectPath);
-  const scriptRaw = useScriptStore((s) => s.raw);
-  const saveScript = useScriptStore((s) => s.save);
   const [config, setConfig] = useState<Config | null>(null);
-  const [script, setScript] = useState(scriptRaw);
   const [busy, setBusy] = useState(false);
   const [versionPrefix, setVersionPrefix] = useState<string>(
     VERSION_PREFIX_DEFAULT,
@@ -43,10 +29,6 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const [versionPrefixOriginal, setVersionPrefixOriginal] = useState<string>(
     VERSION_PREFIX_DEFAULT,
   );
-
-  type PendingShot = { name: string; isNew: boolean };
-  type PendingSeq = { seq: string; isNew: boolean; shots: PendingShot[] };
-  const [pendingDirs, setPendingDirs] = useState<PendingSeq[] | null>(null);
 
   // Asset index reconcile
   const [reconcileBusy, setReconcileBusy] = useState(false);
@@ -87,13 +69,6 @@ export function ProjectSettingsDialog({ onClose }: Props) {
     }
   }
 
-  const scriptCounts = useMemo(() => {
-    const p = parseScript(script);
-    let shots = 0;
-    for (const arr of p.shotsByParent.values()) shots += arr.length;
-    return { sequences: p.sequences.length, shots };
-  }, [script]);
-
   useEffect(() => {
     void (async () => {
       const c = await cmd.config_load().catch(() => null);
@@ -116,124 +91,11 @@ export function ProjectSettingsDialog({ onClose }: Props) {
   const versionPrefixValid = VERSION_PREFIX_RE.test(versionPrefix);
   const versionPrefixDirty = versionPrefix !== versionPrefixOriginal;
 
-  useEffect(() => {
-    setScript(withAssetsHeader(scriptRaw));
-  }, [scriptRaw]);
-
-  async function reloadScript() {
-    if (!projectPath) return;
-    if (script !== scriptRaw) {
-      const ok = await confirmAction(
-        "Discard unsaved script changes and reload script.md from disk?",
-        { title: "Reload script", kind: "warning" },
-      );
-      if (!ok) return;
-    }
-    await useScriptStore.getState().loadFor(projectPath);
-  }
-
-  async function importScript() {
-    const picked = await pickFile("Import script", {
-      extensions: ["md", "txt"],
-    });
-    if (!picked || picked.length === 0) return;
-    try {
-      const { readTextFile } = await import("@tauri-apps/plugin-fs");
-      setScript(withAssetsHeader(await readTextFile(picked[0])));
-    } catch (e) {
-      await showMessage(String(e), { kind: "error" });
-    }
-  }
-
-  function sanitizeName(name: string): string {
-    return [...name]
-      .map((c) => ('/\\:*?"<>|'.includes(c) || c.charCodeAt(0) < 32 ? "_" : c))
-      .join("");
-  }
-
-  async function promptCreateDirs() {
-    if (!projectPath) return;
-    setBusy(true);
-    try {
-      const parsed = parseScript(script);
-      const seqNames = parsed.sequences.map((s) => s.title);
-      const seqPaths = seqNames.map((n) => `${projectPath}/${sanitizeName(n)}`);
-
-      const shotEntries: { seqIdx: number; name: string; path: string }[] = [];
-      for (let i = 0; i < parsed.sequences.length; i++) {
-        for (const s of parsed.shotsByParent.get(normalizeTitle(seqNames[i])) ??
-          []) {
-          shotEntries.push({
-            seqIdx: i,
-            name: s.title,
-            path: `${seqPaths[i]}/${sanitizeName(s.title)}`,
-          });
-        }
-      }
-
-      const exists = await cmd.dirs_exist([
-        ...seqPaths,
-        ...shotEntries.map((e) => e.path),
-      ]);
-      const seqExists = exists.slice(0, seqPaths.length);
-      const shotExists = exists.slice(seqPaths.length);
-
-      const indexedShots = shotEntries.map((e, idx) => ({ ...e, idx }));
-      const preview = parsed.sequences.map((seq, i) => ({
-        seq: seq.title,
-        isNew: !seqExists[i],
-        shots: indexedShots
-          .filter((e) => e.seqIdx === i)
-          .map((e) => ({ name: e.name, isNew: !shotExists[e.idx] })),
-      }));
-      setPendingDirs(preview);
-    } catch (e) {
-      await showMessage(String(e), { kind: "error" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function confirmCreateDirs() {
-    if (!projectPath || !pendingDirs) return;
-    setPendingDirs(null);
-    setBusy(true);
-    try {
-      let newSeqs = 0;
-      let newShots = 0;
-      for (const { seq, isNew: seqIsNew, shots } of pendingDirs) {
-        const seqPath = await cmd.sequence_create(projectPath, seq);
-        if (seqIsNew) newSeqs++;
-        for (const { name, isNew: shotIsNew } of shots) {
-          await cmd.shot_create(seqPath, name);
-          if (shotIsNew) newShots++;
-        }
-      }
-      const sequences = await cmd.project_open(projectPath);
-      useSessionStore.setState({ sequencesInProject: sequences });
-      const { sequencePath } = useSessionStore.getState();
-      if (sequencePath) {
-        const { shots } = await cmd.sequence_open(sequencePath);
-        useSessionStore.setState({ shotsInSequence: shots });
-      }
-      await showMessage(`Created ${newSeqs} sequence(s), ${newShots} shot(s)`, {
-        kind: "info",
-      });
-    } catch (e) {
-      await showMessage(String(e), { kind: "error" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function save() {
     if (!config) return;
     setBusy(true);
     try {
       await cmd.config_save(config);
-      if (projectPath && script !== scriptRaw) {
-        await saveScript(projectPath, script);
-      }
       if (projectPath && versionPrefixDirty && versionPrefixValid) {
         await cmd.project_version_prefix_set(projectPath, versionPrefix);
         setVersionPrefixOriginal(versionPrefix);
@@ -338,35 +200,8 @@ export function ProjectSettingsDialog({ onClose }: Props) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-              Script (script.md)
-            </div>
-            <div className="flex gap-1">
-              <Btn disabled={!projectPath} onClick={reloadScript}>
-                Reload
-              </Btn>
-              <Btn onClick={importScript}>
-                Import…
-              </Btn>
-            </div>
-          </div>
-          <textarea
-            value={script}
-            onChange={(e) => setScript(e.currentTarget.value)}
-            disabled={!projectPath}
-            spellCheck={false}
-            className="min-h-[260px] max-h-[40vh] w-full resize-y bg-inset text-text p-prompt-panel outline-none font-mono text-xs thin-scroll"
-            placeholder="# Sequence 1&#10;&#10;## Shot 1&#10;..."
-          />
-          <div className="text-xs text-dim">
-            Detected: {scriptCounts.sequences} sequence(s), {scriptCounts.shots}{" "}
-            shot(s). <code>#</code> headings populate the SEQUENCE dropdown;{" "}
-            <code>##</code> under the current sequence populate the SHOT
-            dropdown. Body text below each heading appears above the matching
-            prompt column.
-          </div>
+        <div className="text-xs text-dim">
+          The script (script.md) and CREATE DIRS moved to the CONTEXT page.
         </div>
 
         <div className="flex flex-col gap-1">
@@ -427,51 +262,10 @@ export function ProjectSettingsDialog({ onClose }: Props) {
         <Btn onClick={onClose}>
           Cancel
         </Btn>
-        <Btn
-          disabled={busy || !projectPath || scriptCounts.sequences === 0}
-          onClick={promptCreateDirs}
-        >
-          CREATE DIRS
-        </Btn>
         <Btn disabled={busy || !config || !versionPrefixValid} onClick={save}>
           Save
         </Btn>
       </div>
-
-      {pendingDirs && (
-        <div className="absolute inset-0 bg-black/70 flex items-center justify-center p-6">
-          <div className="bg-panel border border-dim shadow-xl w-full max-w-sm flex flex-col">
-            <div className="px-4 py-2 bg-surface text-text text-sm">
-              Create directories?
-            </div>
-            <ul className="px-4 py-3 font-mono text-xs overflow-y-auto max-h-64 thin-scroll flex flex-col gap-0.5">
-              {pendingDirs.map(({ seq, isNew: seqIsNew, shots }) => (
-                <li key={seq}>
-                  <span className={seqIsNew ? "text-accent" : "text-text"}>
-                    {seq}/
-                  </span>
-                  {shots.map(({ name, isNew: shotIsNew }) => (
-                    <div
-                      key={name}
-                      className={`pl-4 ${shotIsNew ? "text-accent" : "text-dim"}`}
-                    >
-                      {name}/
-                    </div>
-                  ))}
-                </li>
-              ))}
-            </ul>
-            <div className="px-4 py-2 flex justify-end gap-2 border-t border-dim">
-              <Btn onClick={() => setPendingDirs(null)}>
-                Cancel
-              </Btn>
-              <Btn onClick={confirmCreateDirs}>
-                Create
-              </Btn>
-            </div>
-          </div>
-        </div>
-      )}
     </ModalDialog>
   );
 }

@@ -24,6 +24,7 @@ export type OsDragTarget =
     }
   | { kind: "ref" }
   | { kind: "trace" }
+  | { kind: "storyboard" }
   | null;
 
 let target: OsDragTarget = null;
@@ -49,6 +50,10 @@ function resolveTarget(x: number, y: number): OsDragTarget {
   if (!el) return null;
   const refPanel = (el as HTMLElement).closest<HTMLElement>("[data-ref-drop]");
   if (refPanel) return { kind: "ref" };
+  const storyboard = (el as HTMLElement).closest<HTMLElement>(
+    "[data-storyboard-drop]",
+  );
+  if (storyboard) return { kind: "storyboard" };
   // AUDIT's file lookup. Read-only — it identifies the dropped file, it never
   // copies or moves it — so unlike the two targets below it has no shot open
   // to require and works with no project loaded at all.
@@ -136,6 +141,30 @@ export async function ingestIntoRefPanel(paths: string[]): Promise<void> {
   }
 }
 
+/** OS file drop onto the CONTEXT page's storyboard slot — copies the file
+ *  into the shot's reference folder (same as any other incoming reference, so
+ *  the pin doesn't point at a path outside the project) and pins it as the
+ *  storyboard image. Only the first file matters: a storyboard is one frame,
+ *  not a batch. */
+export async function ingestStoryboardDrop(paths: string[]): Promise<void> {
+  const session = useSessionStore.getState();
+  const { shotPath } = session;
+  if (!shotPath) {
+    await showMessage("Open a shot first", { kind: "warning" });
+    return;
+  }
+  const media = paths.filter((p) => classifyMedia(p) !== null);
+  if (media.length === 0) return;
+  const destDir = await cmd.ref_dir_ensure(shotPath, "shot");
+  try {
+    const dest = await cmd.image_copy_to_dir(media[0], destDir);
+    await session.setShotStoryboardImage(dest);
+    await session.rescanShot();
+  } catch (e) {
+    await showMessage(`Failed to set storyboard image: ${e}`, { kind: "error" });
+  }
+}
+
 let installed = false;
 
 export function installOsDragDropListener(): void {
@@ -163,6 +192,8 @@ export function installOsDragDropListener(): void {
             if (p.paths[0]) await useAssetTraceStore.getState().run(p.paths[0]);
           } else if (hit?.kind === "ref") {
             await ingestIntoRefPanel(p.paths);
+          } else if (hit?.kind === "storyboard") {
+            await ingestStoryboardDrop(p.paths);
           } else if (hit?.kind === "column") {
             await ingestIntoColumn(p.paths, hit.destDir, hit.refScope);
           }
