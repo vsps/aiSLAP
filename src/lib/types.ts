@@ -525,6 +525,10 @@ export type ShotSidecar = {
   promptHistory: PromptEntry[];
   /** Single exclusive "clip media" pick (set via the clapperboard icon on a thumb). */
   clipMediaPath?: string | null;
+  /** Single pinned storyboard frame for this shot, shown on the CONTEXT page.
+   *  Set via `shot_storyboard_image_set` — an independent pin from
+   *  `clipMediaPath`, which is timeline/NLE-specific. */
+  storyboardImagePath?: string | null;
   /** Per-version pinned "select" picks (stacked view). Key = version name
    *  (e.g. "v003"), value = filename within that version dir. When unset for a
    *  version, the latest image is used. */
@@ -959,6 +963,19 @@ export type CostReportLine = {
 export type ProjectCostReport = {
   generatedAt: string;
   lines: CostReportLine[];
+};
+
+// ---------- Brief analysis (brief_extract) ----------
+
+/** Mirrors the Rust `BriefExtractResult`. */
+export type BriefExtractResult = {
+  /** All extractable text, newline-structured (one section per slide/page). */
+  text: string;
+  /** Absolute paths of every image written into the project's BRIEF folder. */
+  imagesWritten: string[];
+  /** Images found but not turned into a plain file (PDF only — a
+   *  non-JPEG-filtered XObject). */
+  imagesSkipped: number;
 };
 
 // ---------- Pending submissions (orphan recovery) ----------

@@ -127,6 +127,8 @@ type State = {
   shotHistory: PromptHistoryChannel;
   /** Per-version short comments for the current shot, keyed by version dir name. */
   versionComments: Record<string, string>;
+  /** Current shot's pinned storyboard frame (CONTEXT page), or null. */
+  storyboardImagePath: string | null;
 
   /** Active trace: the seed image, the full ancestor set, and the parent
    *  refs captured during traversal (used to draw the dependency edges). */
@@ -164,6 +166,8 @@ type Actions = {
   /** Accepts a PRISM entity folder or an AI media root — either resolves to
    *  the media root, creating it on first visit. */
   setShot: (shotPath: string) => Promise<void>;
+  /** Pin (or clear, with null) the current shot's storyboard frame. */
+  setShotStoryboardImage: (imagePath: string | null) => Promise<void>;
   /** PRISM only: switch between the shot and asset trees. Re-lists sequences
    *  and clears the current selection. */
   setEntityType: (entityType: PrismEntityType) => Promise<void>;
@@ -260,6 +264,7 @@ function clearedSelection() {
     sequenceHistory: emptyChannel(),
     shotHistory: emptyChannel(),
     versionComments: {},
+    storyboardImagePath: null,
   };
 }
 
@@ -469,6 +474,7 @@ export function createSessionStore(tab: TabStores) {
     sequenceHistory: emptyChannel(),
     shotHistory: emptyChannel(),
     versionComments: {},
+    storyboardImagePath: null,
 
     traceActive: null,
 
@@ -589,6 +595,7 @@ export function createSessionStore(tab: TabStores) {
         },
         shotHistory: emptyChannel(),
         versionComments: {},
+        storyboardImagePath: null,
         taggedGroups: [],
       });
       if (get().viewMode === "tagged") {
@@ -665,11 +672,19 @@ export function createSessionStore(tab: TabStores) {
         compareA: null,
         compareB: null,
         versionComments: sidecar.versionComments ?? {},
+        storyboardImagePath: sidecar.storyboardImagePath ?? null,
         shotHistory: {
           entries: sidecar.promptHistory,
           cursor: sidecar.promptHistory.length,
         },
       });
+    },
+
+    async setShotStoryboardImage(imagePath) {
+      const { shotPath } = get();
+      if (!shotPath) return;
+      await cmd.shot_storyboard_image_set(shotPath, imagePath);
+      set({ storyboardImagePath: imagePath });
     },
 
     async rescanShot() {

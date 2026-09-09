@@ -42,7 +42,7 @@ const DEFAULT_SECTIONS: MenuSection[] = [
       "delete",
     ],
   },
-  { header: "OTHER", items: ["edit_tags", "set_clip_media"] },
+  { header: "OTHER", items: ["edit_tags", "set_clip_media", "set_storyboard"] },
 ];
 
 const LABELS: Record<AvailableAction, string> = {
@@ -50,6 +50,7 @@ const LABELS: Record<AvailableAction, string> = {
   replace_ref: "Replace ref (clear others)",
   edit_tags: "EDIT TAGS…",
   set_clip_media: "TOGGLE CLIP MEDIA",
+  set_storyboard: "TOGGLE STORYBOARD IMAGE",
   copy_path: "COPY PATH",
   copy_image: "COPY IMAGE",
   copy_prompt: "COPY PROMPT",

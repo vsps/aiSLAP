@@ -28,6 +28,8 @@ pub fn run() {
             commands::config::provider_key_get_local,
             commands::config::provider_key_set,
             commands::config::shared_config_load,
+            commands::brief::brief_extract,
+            commands::session::shot_storyboard_image_set,
             commands::config::presets_load,
             commands::config::presets_save,
             commands::system::system_username,

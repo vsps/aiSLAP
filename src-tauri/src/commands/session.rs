@@ -424,6 +424,14 @@ pub fn shot_clip_media_set(shot_path: String, media_path: Option<String>) -> App
     .map(drop)
 }
 
+#[tauri::command]
+pub fn shot_storyboard_image_set(shot_path: String, image_path: Option<String>) -> AppResult<()> {
+    with_shot_sidecar(&shot_path, |sidecar| {
+        sidecar.storyboard_image_path = image_path;
+    })
+    .map(drop)
+}
+
 /// Serializes `<minor>` ordinal allocation.
 ///
 /// Up to `DEFAULT_MAX_CONCURRENT_JOBS` generations run at once and two of them
@@ -515,5 +523,24 @@ mod tests {
             read_json_or_default(&project.root.join("SQ01/sh010").join(SHOT_SIDECAR)).unwrap();
         assert_eq!(sidecar.minor_counters.get("v003"), Some(&6));
         assert_eq!(sidecar.minor_counters.get("v004"), Some(&1));
+    }
+
+    #[test]
+    fn storyboard_image_set_round_trips_through_the_sidecar_and_clears_on_none() {
+        let project = TestProject::new("storyboard");
+        let shot = as_str(&project.dir("SQ01/sh010"));
+
+        shot_storyboard_image_set(shot.clone(), Some("C:/refs/frame.png".into())).unwrap();
+        let sidecar: ShotSidecar =
+            read_json_or_default(&project.root.join("SQ01/sh010").join(SHOT_SIDECAR)).unwrap();
+        assert_eq!(
+            sidecar.storyboard_image_path.as_deref(),
+            Some("C:/refs/frame.png")
+        );
+
+        shot_storyboard_image_set(shot, None).unwrap();
+        let cleared: ShotSidecar =
+            read_json_or_default(&project.root.join("SQ01/sh010").join(SHOT_SIDECAR)).unwrap();
+        assert_eq!(cleared.storyboard_image_path, None);
     }
 }

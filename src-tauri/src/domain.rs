@@ -312,6 +312,10 @@ pub struct ShotSidecar {
     /// Single exclusive "clip media" pick — absolute path or None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clip_media_path: Option<String>,
+    /// Single pinned storyboard frame for this shot — absolute path or None.
+    /// Set via `shot_storyboard_image_set`, mirroring `clip_media_path` exactly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storyboard_image_path: Option<String>,
     /// Per-version pinned "select" picks. Key = version name (e.g., "v003"),
     /// value = filename within that version dir. When unset, the latest image is used.
     #[serde(default, skip_serializing_if = "map_is_empty")]

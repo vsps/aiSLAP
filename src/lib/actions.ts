@@ -490,6 +490,7 @@ export type ImageAction =
   | "copy_settings"
   | "copy_prompt"
   | "set_clip_media"
+  | "set_storyboard"
   | "trace"
   | "refresh"
   | "open_location"
@@ -608,6 +609,21 @@ export async function performImageAction(
         const current =
           tl.shotsLatestMedia.get(shotPath)?.clipMediaPath ?? null;
         await tl.setShotClipMedia(shotPath, current === path ? null : path);
+      } catch (e) {
+        await showMessage(String(e), { kind: "error" });
+      }
+      return;
+    }
+    case "set_storyboard": {
+      const { shotPath, storyboardImagePath } = session;
+      if (!shotPath) {
+        await showMessage("No shot open", { kind: "warning" });
+        return;
+      }
+      try {
+        await session.setShotStoryboardImage(
+          storyboardImagePath === path ? null : path,
+        );
       } catch (e) {
         await showMessage(String(e), { kind: "error" });
       }

@@ -99,6 +99,7 @@ const TOP_LEVEL_FIELDS = new Set([
   "watermark",
   "seed",
   "output_format", // Seedance 2.5 only
+  "omni_reference_task_type", // Seedance 2.5 ref2vid only
 ]);
 
 // Ensure the ref-expiry lifecycle rule at most once per session — cheap

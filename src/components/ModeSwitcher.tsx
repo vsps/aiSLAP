@@ -3,6 +3,7 @@ import { useLayoutStore, type AppMode } from "../stores/layoutStore";
 import { useTimelineStore } from "../stores/timelineStore";
 
 const MODES: { value: AppMode; label: string; title: string }[] = [
+  { value: "context", label: "CONTEXT", title: "Script, shot tree, storyboard and brief analysis" },
   { value: "generate", label: "GENERATE", title: "Prompt, run and browse output" },
   { value: "deliver", label: "DELIVER", title: "Edit, tag and export" },
   { value: "audit", label: "AUDIT", title: "Costs, usage and reports" },

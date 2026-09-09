@@ -1,3 +1,4 @@
+pub mod brief;
 pub mod config;
 pub mod cost;
 pub mod db;
