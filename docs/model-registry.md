@@ -145,6 +145,10 @@ A discriminated union on `type`. Everything here becomes a control in
 { "name": "seed", "label": "Seed", "type": "int",
   "api_field": "seed", "default": -1, "min": -1, "max": 2147483647 }
 
+// int with an out-of-range "let the model decide" sentinel
+{ "name": "duration", "label": "Duration (sec)", "type": "int",
+  "api_field": "duration", "default": 8, "min": 4, "max": 30, "auto_value": -1 }
+
 // float
 { "name": "guidance", "label": "Guidance", "type": "float",
   "api_field": "guidance_scale", "default": 3.5, "min": 0, "max": 20, "step": 0.1 }
@@ -157,7 +161,21 @@ A discriminated union on `type`. Everything here becomes a control in
 { "name": "prompts", "label": "Prompts", "type": "prompts", "api_field": "prompts" }
 ```
 
-Two idioms worth knowing, because both look like mistakes:
+Three idioms worth knowing, because they all look like mistakes:
+
+**`auto_value` on an int.** ByteDance Ark's Seedance 2.5 takes `duration: -1` for
+"pick a length to suit the prompt", but its real range is 4–30. Widening `min` to
+`-1` would be wrong twice over: the spinner would offer 0–3, which Ark rejects, and
+the sentinel would read as a duration. Declaring `auto_value` instead keeps `min`/`max`
+honest and gives the control an `auto` checkbox that writes the sentinel verbatim;
+unticking it restores the last in-range value. The spinner clamps to `min`/`max` on
+blur, and shows the fallback value (not the sentinel) while auto is on.
+
+`parseDurationSeconds` treats any non-positive duration as unknown, so an auto run
+carries no pre-submit cost estimate — the real length is measured off the output file
+afterwards, as it is for fal's string `"auto"`.
+
+The other two:
 
 **The empty-enum negative prompt.** Several fal models declare:
 

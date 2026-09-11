@@ -17,7 +17,7 @@
       "parameters": [
         { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p"] },
         { "name": "ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "ratio", "default": "adaptive", "options": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
-        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30 },
+        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30, "auto_value": -1 },
         { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
         { "name": "output_format", "label": "Output Format", "type": "enum", "api_field": "output_format", "default": "mp4", "options": ["mp4", "mov"] },
         { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": false }
@@ -41,7 +41,7 @@
       ],
       "parameters": [
         { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p"] },
-        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30 },
+        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30, "auto_value": -1 },
         { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
         { "name": "output_format", "label": "Output Format", "type": "enum", "api_field": "output_format", "default": "mp4", "options": ["mp4", "mov"] },
         { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": false }
@@ -67,7 +67,7 @@
         { "name": "omni_reference_task_type", "label": "Task Type", "type": "enum", "api_field": "omni_reference_task_type", "default": "auto", "options": ["auto", "reference", "edit", "extend"] },
         { "name": "resolution", "label": "Resolution", "type": "enum", "api_field": "resolution", "default": "720p", "options": ["480p", "720p", "1080p"] },
         { "name": "ratio", "label": "Aspect Ratio", "type": "enum", "api_field": "ratio", "default": "adaptive", "options": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] },
-        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": -1, "max": 30 },
+        { "name": "duration", "label": "Duration (sec)", "type": "int", "api_field": "duration", "default": 8, "min": 4, "max": 30, "auto_value": -1 },
         { "name": "generate_audio", "label": "Audio", "type": "bool", "api_field": "generate_audio", "default": true },
         { "name": "output_format", "label": "Output Format", "type": "enum", "api_field": "output_format", "default": "mp4", "options": ["mp4", "mov"] },
         { "name": "watermark", "label": "Watermark", "type": "bool", "api_field": "watermark", "default": false }

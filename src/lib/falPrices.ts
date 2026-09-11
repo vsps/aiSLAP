@@ -222,10 +222,13 @@ export function videoTokens(ctx: CostContext): number | null {
 
 /** Parse a `duration` setting value to seconds. Handles the numeric,
  *  numeric-string, and suffixed-string ("8s") shapes used across the model
- *  registry. Returns null for non-numeric values (e.g. seedance-2's "auto"),
- *  where the actual output length isn't knowable from settings alone. */
+ *  registry. Returns null for non-numeric values (e.g. seedance-2's "auto")
+ *  and for non-positive ones (the `auto_value: -1` sentinel Seedance 2.5 uses
+ *  on Ark), where the actual output length isn't knowable from settings alone. */
 export function parseDurationSeconds(raw: unknown): number | null {
-  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  }
   if (typeof raw === "string") {
     const m = raw.match(/^(\d+(?:\.\d+)?)/);
     const n = m ? Number(m[1]) : NaN;

@@ -48,6 +48,10 @@ export type IntParam = {
   default: number;
   min: number;
   max: number;
+  /** Sentinel meaning "let the model decide" (e.g. -1 for Seedance duration).
+   *  Present → the control grows an Auto checkbox and `min`/`max` stay the
+   *  real range; absent → plain spinner. Sent verbatim when Auto is on. */
+  auto_value?: number;
 };
 
 export type FloatParam = {

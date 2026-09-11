@@ -136,7 +136,11 @@
             "type": { "const": "int" },
             "default": { "type": "integer" },
             "min": { "type": "integer" },
-            "max": { "type": "integer" }
+            "max": { "type": "integer" },
+            "auto_value": {
+              "type": "integer",
+              "description": "Sentinel meaning \"let the model decide\" (e.g. -1). Adds an Auto checkbox next to the spinner; min/max stay the real range."
+            }
           }
         },
         {
