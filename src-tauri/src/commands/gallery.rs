@@ -1,8 +1,9 @@
 //! Gallery scanning: shot version columns and the stacked sequence view.
 //!
-//! Every scan resolves each file's tags from a `TagIndex` loaded once by the
-//! async command wrapper (see `tag_index_for`), falling back to the file's
-//! own sidecar only for files the index has never seen.
+//! Every scan resolves each file's tags, `generatedBy` and `modelId` from a
+//! `TagIndex` loaded once by the async command wrapper (see `tag_index_for`),
+//! falling back to the file's own sidecar only for files the index has never
+//! seen.
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +14,7 @@ use crate::commands::fsutil::{
     project_root_for, require_dir, sidecar_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::refroots;
-use crate::commands::tags::{generated_by_from_sidecar, tags_from_sidecar};
+use crate::commands::tags::{generated_by_from_sidecar, model_id_from_sidecar, tags_from_sidecar};
 use crate::commands::thumbs::ThumbCtx;
 use crate::commands::walk;
 use crate::db::TagIndex;
@@ -23,7 +24,7 @@ use crate::fsjson::read_json_or_default;
 
 /// Load the tag index for the project `path` belongs to. Best-effort: a
 /// missing or broken index just means every image scans as untagged (and the
-/// sidecar fallback in `tags_for_file` fills most of it back in).
+/// sidecar fallback in `resolved_fields` fills most of it back in).
 pub(crate) async fn tag_index_for(path: &Path) -> TagIndex {
     let Ok(root) = project_root_for(path) else {
         return TagIndex::default();
@@ -249,15 +250,28 @@ pub async fn dir_children_scan(dir: String) -> AppResult<DirChildren> {
     .await
 }
 
+/// The per-file values a scan has already resolved, so `try_make_gallery_image`
+/// stays a pure classifier.
+///
+/// Grouped rather than passed positionally because `generated_by` and
+/// `model_id` are both `Option<String>` and adjacent: the compiler cannot catch
+/// a transposition, and the result would be a plausible wrong answer — every
+/// image attributed to a username-shaped model id — rather than a failure.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ResolvedFields {
+    pub tags: Vec<String>,
+    pub generated_by: Option<String>,
+    pub model_id: Option<String>,
+}
+
 /// Classify a single file as a `GalleryImage`, or `None` if it's not a
-/// recognized media file (or is a `.thumb.*` adjunct). `tags` are passed in
-/// rather than resolved here since callers differ on how they know them: a
-/// directory scan looks each file up in the index, while a scan driven by the
-/// index itself already has them in hand.
+/// recognized media file (or is a `.thumb.*` adjunct). The `fields` are passed
+/// in rather than resolved here since callers differ on how they know them: a
+/// directory scan looks each file up in the index (`resolved_fields`), while a
+/// scan driven by the index itself already has them in hand.
 pub(crate) fn try_make_gallery_image(
     path: &Path,
-    tags: Vec<String>,
-    generated_by: Option<String>,
+    fields: ResolvedFields,
     thumbs: Option<&ThumbCtx>,
 ) -> Option<GalleryImage> {
     let filename = path.file_name().and_then(|n| n.to_str())?.to_string();
@@ -279,6 +293,11 @@ pub(crate) fn try_make_gallery_image(
         None if is_video || is_model_3d => existing_thumb_path(path).map(|t| as_str(&t)),
         None => None,
     };
+    let ResolvedFields {
+        tags,
+        generated_by,
+        model_id,
+    } = fields;
     Some(GalleryImage {
         filename,
         path: as_str(path),
@@ -288,43 +307,45 @@ pub(crate) fn try_make_gallery_image(
         thumb_path,
         tags,
         generated_by,
+        model_id,
     })
 }
 
-/// Tags for one file: the index if it knows the file, otherwise the file's
-/// own sidecar. The fallback only fires for media the index has never seen
-/// (legacy files, anything dropped in from outside the app), so a warm
-/// project costs zero extra reads per scan.
-fn tags_for_file(path: &Path, project_root: Option<&ProjectRoot>, index: &TagIndex) -> Vec<String> {
-    let rel = project_root.and_then(|r| r.rel(path));
-    match rel {
-        Some(rel) if index.is_indexed(&rel) => index.tags_for(&rel),
-        _ => match std::fs::read_to_string(sidecar_path(path)) {
-            Ok(text) => serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .as_ref()
-                .and_then(|v| v.as_object())
-                .map(tags_from_sidecar)
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
-        },
-    }
-}
-
-/// `generatedBy` for one file, mirroring `tags_for_file`'s index-with-sidecar-
-/// fallback shape. `None` for SRC/ref images, which were never generated.
-fn generated_by_for_file(
+/// The index-resolved fields for one file: the index when it knows the file,
+/// otherwise the file's own sidecar — read and parsed **once** for all three.
+///
+/// The fallback only fires for media the index has never seen (legacy files,
+/// anything dropped in from outside the app), so a warm project costs zero
+/// extra reads per scan. Resolving the three together is what keeps it that
+/// way: the per-field helpers this replaced each opened and parsed the same
+/// sidecar, so a folder of dragged-in references paid one read *per field* per
+/// file, per scan — over SMB, for a third of the answer each time.
+fn resolved_fields(
     path: &Path,
     project_root: Option<&ProjectRoot>,
     index: &TagIndex,
-) -> Option<String> {
-    let rel = project_root.and_then(|r| r.rel(path));
-    match rel {
-        Some(rel) if index.is_indexed(&rel) => index.generated_by_for(&rel),
-        _ => std::fs::read_to_string(sidecar_path(path))
-            .ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .and_then(|v| v.as_object().and_then(generated_by_from_sidecar)),
+) -> ResolvedFields {
+    if let Some(rel) = project_root.and_then(|r| r.rel(path)) {
+        if index.is_indexed(&rel) {
+            return ResolvedFields {
+                tags: index.tags_for(&rel),
+                generated_by: index.generated_by_for(&rel),
+                model_id: index.model_id_for(&rel),
+            };
+        }
+    }
+    // Bound before borrowing `as_object()`, so the map is read in place rather
+    // than cloned.
+    let parsed = std::fs::read_to_string(sidecar_path(path))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+    let Some(obj) = parsed.as_ref().and_then(|v| v.as_object()) else {
+        return ResolvedFields::default();
+    };
+    ResolvedFields {
+        tags: tags_from_sidecar(obj),
+        generated_by: generated_by_from_sidecar(obj),
+        model_id: model_id_from_sidecar(obj),
     }
 }
 
@@ -339,9 +360,8 @@ fn scan_directory_images(
     let thumbs = project_root.map(|r| ThumbCtx::for_project(&r.path));
     let mut out: Vec<GalleryImage> = Vec::new();
     for path in walk::dir_media(dir)? {
-        let tags = tags_for_file(&path, project_root, index);
-        let generated_by = generated_by_for_file(&path, project_root, index);
-        if let Some(img) = try_make_gallery_image(&path, tags, generated_by, thumbs.as_ref()) {
+        let fields = resolved_fields(&path, project_root, index);
+        if let Some(img) = try_make_gallery_image(&path, fields, thumbs.as_ref()) {
             out.push(img);
         }
     }
@@ -484,7 +504,7 @@ mod tests {
                 let stem = media.file_stem().unwrap().to_str().unwrap();
                 std::fs::write(media.with_file_name(format!("{stem}{suffix}")), b"t").unwrap();
             }
-            let img = try_make_gallery_image(&media, Vec::new(), None, None).unwrap();
+            let img = try_make_gallery_image(&media, ResolvedFields::default(), None).unwrap();
             assert!(img.is_video, "{rel} classified as video");
             match suffix {
                 Some(suffix) => assert!(
@@ -501,7 +521,7 @@ mod tests {
             let thumb = project.root.join(format!("SQ01/sh010/v001/x{suffix}"));
             std::fs::write(&thumb, b"t").unwrap();
             assert!(
-                try_make_gallery_image(&thumb, Vec::new(), None, None).is_none(),
+                try_make_gallery_image(&thumb, ResolvedFields::default(), None).is_none(),
                 "{suffix} must not scan as media"
             );
         }
@@ -543,6 +563,53 @@ mod tests {
         // Version columns are untouched by any of this.
         let v = col(&cols, "v001");
         assert!(v.subdirs.is_empty() && v.dest_dir.is_none() && v.ref_scope.is_none());
+    }
+
+    /// A cold index (nothing indexed yet) must still resolve all three
+    /// per-file fields, and must do it from **one** sidecar read — the reason
+    /// `resolved_fields` replaced a helper per field.
+    #[test]
+    fn a_cold_scan_resolves_tags_user_and_model_from_the_sidecar() {
+        let p = TestProject::new("gallery-fields");
+        p.media(
+            "SQ01/sh010/v001/out.png",
+            Some(serde_json::json!({
+                "modelId": "flux_dev_txt2img",
+                "model": "FLUX.1 [dev]",
+                "generatedBy": "alice",
+                "tags": ["fav"],
+            })),
+        );
+        // A trim of a source with no sidecar leaves `modelId: ""` on disk. It
+        // has to read as "no model", not a chip with a blank label.
+        p.media(
+            "SQ01/sh010/v001/trimmed.png",
+            Some(serde_json::json!({ "modelId": "", "generatedBy": "bob" })),
+        );
+        // Dragged in from outside the app: no sidecar at all.
+        p.media("SQ01/sh010/SRC/ref.png", None);
+
+        let cols = scan_shot_columns(&p.root.join("SQ01/sh010"), &TagIndex::default()).unwrap();
+
+        let v = col(&cols, "v001");
+        let out = v.images.iter().find(|i| i.filename == "out.png").unwrap();
+        assert_eq!(out.model_id.as_deref(), Some("flux_dev_txt2img"));
+        assert_eq!(out.generated_by.as_deref(), Some("alice"));
+        assert_eq!(out.tags, vec!["fav".to_string()]);
+
+        let trimmed = v
+            .images
+            .iter()
+            .find(|i| i.filename == "trimmed.png")
+            .unwrap();
+        assert_eq!(trimmed.model_id, None, "an empty modelId is no model");
+        assert_eq!(trimmed.generated_by.as_deref(), Some("bob"));
+
+        // No sidecar: nothing is fabricated, and nothing panics.
+        let src = &col(&cols, "SHOT SRC").images[0];
+        assert_eq!(src.model_id, None);
+        assert_eq!(src.generated_by, None);
+        assert!(src.tags.is_empty());
     }
 
     /// The move itself: PRISM reference columns read the pipeline's own

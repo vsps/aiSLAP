@@ -449,6 +449,12 @@ pub struct GalleryImage {
     /// `tags`. Absent for SRC/ref images and anything predating the field.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub generated_by: Option<String>,
+    /// Registry node id of the model that generated this image, resolved the
+    /// same way as `tags`. The **id**, not the name: `TagFilterBar` resolves
+    /// the label from the model registry, which follows a model that has since
+    /// been renamed. Absent for SRC/ref images.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -22,7 +22,7 @@ use crate::commands::fsutil::{
     as_str, existing_thumb_path, is_media_ext, is_thumb, project_root_for, rel_of, relativize,
     require_dir, sidecar_path, thumb_path, thumb_path_like, ProjectRoot, PROJECT_SIDECAR, SEL_DIR,
 };
-use crate::commands::gallery::try_make_gallery_image;
+use crate::commands::gallery::{try_make_gallery_image, ResolvedFields};
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
 use crate::commands::prism;
 use crate::commands::thumbs::ThumbCtx;
@@ -90,6 +90,23 @@ pub(crate) fn tags_from_sidecar(obj: &Map<String, Value>) -> Vec<String> {
 pub(crate) fn generated_by_from_sidecar(obj: &Map<String, Value>) -> Option<String> {
     obj.get("generatedBy")
         .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+/// Mirrors `generated_by_from_sidecar` for `modelId` — the registry node id
+/// (`flux_dev_txt2img`), not the display name. The sidecar carries both
+/// (`model` is the label) and only the id is taken: the label is resolved from
+/// the live registry on the frontend, so a model since renamed reads with its
+/// new name, and a stale stamped-in name never becomes a filter key.
+///
+/// The empty-string guard is not in the `generatedBy` mirror and is deliberate:
+/// `TrimMode` seeds `modelId: ""` before spreading a source's metadata, so an
+/// empty string is a real on-disk value for a trim whose source had no sidecar.
+/// It has to read as "no model" rather than a chip with a blank label.
+pub(crate) fn model_id_from_sidecar(obj: &Map<String, Value>) -> Option<String> {
+    obj.get("modelId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(String::from)
 }
 
@@ -720,10 +737,15 @@ pub async fn project_tag_scan(
         if !abs.is_file() {
             continue;
         }
-        let generated_by = index.generated_by_for(rel);
-        let Some(img) =
-            try_make_gallery_image(&abs, image_tags.clone(), generated_by, Some(&thumbs))
-        else {
+        // Index-only, with no sidecar fallback — this loop iterates
+        // `index.by_rel`, so an unindexed file cannot reach the tag view at
+        // all. Already true of `tags` and `generatedBy` on this surface.
+        let fields = ResolvedFields {
+            tags: image_tags.clone(),
+            generated_by: index.generated_by_for(rel),
+            model_id: index.model_id_for(rel),
+        };
+        let Some(img) = try_make_gallery_image(&abs, fields, Some(&thumbs)) else {
             continue;
         };
         by_seq
@@ -1100,6 +1122,42 @@ mod tests {
             .unwrap();
         assert_eq!(favs.len(), 1);
         assert_eq!(favs[0].seq_name, "seq1");
+    }
+
+    /// The tag view is index-only, so its model ids have to arrive through the
+    /// index — which means `record_from_sidecar`'s `modelId` mapping is what
+    /// puts them there on a file's first tagging.
+    #[tokio::test]
+    async fn the_tag_view_reports_each_image_s_model_id() {
+        let project = TestProject::new("tags");
+        let root = project.root.clone();
+        let gen = media(
+            &root,
+            "seq1/shot1/gen001/a.png",
+            Some(serde_json::json!({
+                "modelId": "flux_dev_txt2img",
+                "model": "FLUX.1 [dev]",
+            })),
+        );
+        // Never generated, so it carries no model — but tagging it by hand
+        // still puts it in the view.
+        let reference = media(&root, "seq1/shot1/SRC/ref.png", None);
+        image_tags_set(as_str(&gen), vec!["fav".into()])
+            .await
+            .unwrap();
+        image_tags_set(as_str(&reference), vec!["fav".into()])
+            .await
+            .unwrap();
+
+        let groups = project_tag_scan(as_str(&root), vec!["fav".into()], None)
+            .await
+            .unwrap();
+        let images = &groups[0].shots[0].images;
+        assert_eq!(images.len(), 2);
+        let generated = images.iter().find(|i| i.filename == "a.png").unwrap();
+        assert_eq!(generated.model_id.as_deref(), Some("flux_dev_txt2img"));
+        let dragged = images.iter().find(|i| i.filename == "ref.png").unwrap();
+        assert_eq!(dragged.model_id, None);
     }
 
     /// In a PRISM project every media path carries the entity root and the

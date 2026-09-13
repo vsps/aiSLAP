@@ -223,6 +223,12 @@ export type GalleryImage = {
   /** OS username that generated this image, resolved at scan time the same
    *  way as `tags`. Absent for SRC/ref images. */
   generatedBy?: string;
+  /** Registry node id of the model that generated this image, resolved at scan
+   *  time the same way as `tags`. The **id**, not the display name — resolve
+   *  the label with `useModelLabels()` (lib/modelLabels.ts), which reads the
+   *  live registry and so follows a model that has since been renamed. Absent
+   *  for SRC/ref images. */
+  modelId?: string;
   /** True when the image hasn't been generated yet — renders a placeholder tile. */
   pending?: boolean;
 };

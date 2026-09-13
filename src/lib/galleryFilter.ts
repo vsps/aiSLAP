@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useSessionStore } from "../stores/sessionStore";
-import { matchesFilter, tagsEqual, useTagsStore } from "../stores/tagsStore";
+import { matchesFilter, matchesScope, useTagsStore } from "../stores/tagsStore";
 import type {
   GalleryColumn as GalleryColumnData,
   SeqTaggedGroup,
@@ -10,7 +10,7 @@ import type {
  * What the gallery is actually showing, derived once and shared.
  *
  * The columns view filters client-side; the tag view sends the tag filter to
- * `project_tag_scan` and narrows the result by user client-side. DELIVER's
+ * `project_tag_scan` and narrows the result by user and model client-side. DELIVER's
  * export bar has to agree with whichever surface is on screen exactly — "export
  * what's listed" is a promise about the pixels — so the two derivations live
  * here rather than inside the components that render them.
@@ -30,50 +30,56 @@ export function useFilteredColumns(
   const activeFilter = useTagsStore((s) => s.activeFilter);
   const filterMode = useTagsStore((s) => s.filterMode);
   const activeUserFilter = useTagsStore((s) => s.activeUserFilter);
+  const activeModelFilter = useTagsStore((s) => s.activeModelFilter);
 
   return useMemo(
     () =>
-      activeFilter.length === 0 && !activeUserFilter
+      // The identity-preserving early-out is load-bearing: it is what keeps
+      // `columns` referentially stable when nothing is being filtered.
+      activeFilter.length === 0 &&
+      !activeUserFilter &&
+      activeModelFilter.length === 0
         ? columns
         : columns.map((c) => ({
             ...c,
             images: c.images.filter((i) =>
-              matchesFilter(
-                i.tags,
-                activeFilter,
-                filterMode,
-                i.generatedBy,
-                activeUserFilter,
-              ),
+              matchesFilter(i, {
+                tags: activeFilter,
+                mode: filterMode,
+                user: activeUserFilter,
+                modelIds: activeModelFilter,
+              }),
             ),
           })),
-    [columns, activeFilter, filterMode, activeUserFilter],
+    [columns, activeFilter, filterMode, activeUserFilter, activeModelFilter],
   );
 }
 
-/** The server-filtered tagged groups, narrowed by the user filter and with
- *  emptied shots/sequences dropped so no bare headers are left behind. */
+/** The server-filtered tagged groups, narrowed by the two client-side filters
+ *  (user, model) and with emptied shots/sequences dropped so no bare headers
+ *  are left behind. The *tag* filter is not re-applied here —
+ *  `project_tag_scan` already did it server-side. */
 export function useVisibleTaggedGroups(
   taggedGroups: SeqTaggedGroup[],
 ): SeqTaggedGroup[] {
   const activeUserFilter = useTagsStore((s) => s.activeUserFilter);
+  const activeModelFilter = useTagsStore((s) => s.activeModelFilter);
 
   return useMemo(() => {
-    if (!activeUserFilter) return taggedGroups;
+    if (!activeUserFilter && activeModelFilter.length === 0) return taggedGroups;
+    const scope = { user: activeUserFilter, modelIds: activeModelFilter };
     return taggedGroups
       .map((seq) => ({
         ...seq,
         shots: seq.shots
           .map((sh) => ({
             ...sh,
-            images: sh.images.filter(
-              (i) => i.generatedBy && tagsEqual(i.generatedBy, activeUserFilter),
-            ),
+            images: sh.images.filter((i) => matchesScope(i, scope)),
           }))
           .filter((sh) => sh.images.length > 0),
       }))
       .filter((seq) => seq.shots.length > 0);
-  }, [taggedGroups, activeUserFilter]);
+  }, [taggedGroups, activeUserFilter, activeModelFilter]);
 }
 
 /**
