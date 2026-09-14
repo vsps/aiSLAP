@@ -7,6 +7,16 @@ pub fn system_username() -> String {
     whoami::username()
 }
 
+/// Open the webview inspector on the calling window.
+///
+/// Opening is idempotent everywhere; `is_devtools_open` is not (unsupported on
+/// Windows), so there is no toggle — F12 opens, the inspector's own close
+/// button closes.
+#[tauri::command]
+pub fn devtools_open(window: tauri::WebviewWindow) {
+    window.open_devtools();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

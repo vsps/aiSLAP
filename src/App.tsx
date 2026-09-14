@@ -97,6 +97,26 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [traceActive, setTrace]);
 
+  // F12 / Ctrl+Shift+I opens the webview inspector. WebView2 binds both keys
+  // itself once devtools are enabled, but WKWebView on macOS binds neither, so
+  // route both through the command and get the same keys on every platform.
+  // The Rust side is compiled with tauri's `devtools` feature, so this works in
+  // release builds, not just under `tauri dev`.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const wants =
+        e.key === "F12" ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "i");
+      if (!wants) return;
+      e.preventDefault();
+      void cmd.devtools_open().catch(() => {
+        // No inspector in this build — nothing useful to say.
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="flex h-full w-full flex-col gap-prompt-surface bg-bg p-prompt-surface text-text">
       {/* Modes are app-global and deliberately unkeyed: which surface you are

@@ -33,6 +33,7 @@ pub fn run() {
             commands::config::presets_load,
             commands::config::presets_save,
             commands::system::system_username,
+            commands::system::devtools_open,
             commands::models::models_load,
             commands::session::project_open,
             commands::prism::prism_detect,
