@@ -1069,6 +1069,15 @@ pub struct TagIndex {
     /// Absent for rows that predate that column or were never generated
     /// (SRC/ref images).
     pub generated_by: HashMap<String, String>,
+    /// Registry node id of the model each asset was generated with, from
+    /// `assets.model_id`. Absent for SRC/ref images and rows whose sidecar
+    /// never carried one.
+    ///
+    /// The human-readable *name* is deliberately not here, for the same reason
+    /// it is absent from `AssetCostRow`: `assets` stores the id only, and the
+    /// frontend resolves the label from the model registry, which is fresher
+    /// than a name stamped into a sidecar at generation time.
+    pub model_id: HashMap<String, String>,
 }
 
 impl TagIndex {
@@ -1082,6 +1091,10 @@ impl TagIndex {
 
     pub fn generated_by_for(&self, rel: &str) -> Option<String> {
         self.generated_by.get(rel).cloned()
+    }
+
+    pub fn model_id_for(&self, rel: &str) -> Option<String> {
+        self.model_id.get(rel).cloned()
     }
 }
 
@@ -1104,7 +1117,7 @@ pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
     let conn = open_local(project_root).await?;
     let mut rows = conn
         .query(
-            "SELECT a.rel_path, t.tag, a.generated_by FROM assets a \
+            "SELECT a.rel_path, t.tag, a.generated_by, a.model_id FROM assets a \
              LEFT JOIN asset_tags t ON t.asset_id = a.id \
              WHERE a.deleted_at IS NULL",
             (),
@@ -1116,12 +1129,25 @@ pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
         let rel = row.get::<String>(0).map_err(db_err)?;
         let tag = opt_string(&row, 1)?;
         let generated_by = opt_string(&row, 2)?;
+        let model_id = opt_string(&row, 3)?;
         idx.indexed.insert(rel.clone());
         if let Some(tag) = tag {
             idx.by_rel.entry(rel.clone()).or_default().push(tag);
         }
+        // The LEFT JOIN fans one row out per tag, so a multi-tag asset writes
+        // its `generated_by` and `model_id` once per tag — a harmless overwrite
+        // of the same value, not an accumulation.
         if let Some(generated_by) = generated_by {
-            idx.generated_by.insert(rel, generated_by);
+            idx.generated_by.insert(rel.clone(), generated_by);
+        }
+        // Empty filtered out here rather than at each ingest path: every
+        // sidecar→record mapping (`record_from_sidecar`, `reidentify_copy`,
+        // reconcile) takes `modelId` verbatim, and `TrimMode` writes it as `""`
+        // for a trim whose source had no sidecar. Guarding the one read that
+        // feeds every scan covers all of them, and matches
+        // `model_id_from_sidecar`'s filter on the fallback path.
+        if let Some(model_id) = model_id.filter(|s| !s.is_empty()) {
+            idx.model_id.insert(rel, model_id);
         }
     }
     for tags in idx.by_rel.values_mut() {
@@ -2072,6 +2098,44 @@ mod tests {
         assert!(idx.is_indexed("seq1/shot1/gen001/b.png"));
         assert!(idx.tags_for("seq1/shot1/gen001/b.png").is_empty());
         assert!(!idx.is_indexed("seq1/shot1/gen001/never-seen.png"));
+    }
+
+    #[tokio::test]
+    async fn tags_all_carries_model_id_per_asset() {
+        let project = TestProject::new("db");
+        let root = project.root.clone();
+
+        // Two tags on one asset: `tags_all`'s LEFT JOIN fans that out to two
+        // rows, and the model id has to survive as one value rather than
+        // accumulating or being clobbered by a NULL.
+        let mut two_tags = tag_update("m-a", "seq1/shot1/gen001/a.png", &["fav", "hero"]);
+        two_tags.record.as_mut().unwrap().model_id = Some("flux_dev_txt2img".to_string());
+        asset_tags_apply(&root, &[two_tags]).await.unwrap();
+
+        // An untagged asset resolves its model id through the LEFT JOIN's NULL
+        // tag row, which is the other half of that query's behaviour.
+        let mut untagged = asset("m-b", "seq1/shot1/gen001/b.png");
+        untagged.model_id = Some("seedance25_ref2vid".to_string());
+        asset_upsert(&root, untagged).await.unwrap();
+
+        // Indexed but never generated — a dragged-in reference.
+        asset_upsert(&root, asset("m-c", "seq1/shot1/SRC/ref.png"))
+            .await
+            .unwrap();
+
+        let idx = tags_all(&root).await.unwrap();
+        assert_eq!(
+            idx.model_id_for("seq1/shot1/gen001/a.png").as_deref(),
+            Some("flux_dev_txt2img")
+        );
+        assert_eq!(
+            idx.model_id_for("seq1/shot1/gen001/b.png").as_deref(),
+            Some("seedance25_ref2vid")
+        );
+        // Indexed, so a scan must not fall back to the sidecar — but with no
+        // model, so it belongs under no model chip.
+        assert!(idx.is_indexed("seq1/shot1/SRC/ref.png"));
+        assert!(idx.model_id_for("seq1/shot1/SRC/ref.png").is_none());
     }
 
     #[tokio::test]

@@ -48,6 +48,10 @@ export type IntParam = {
   default: number;
   min: number;
   max: number;
+  /** Sentinel meaning "let the model decide" (e.g. -1 for Seedance duration).
+   *  Present → the control grows an Auto checkbox and `min`/`max` stay the
+   *  real range; absent → plain spinner. Sent verbatim when Auto is on. */
+  auto_value?: number;
 };
 
 export type FloatParam = {
@@ -219,6 +223,12 @@ export type GalleryImage = {
   /** OS username that generated this image, resolved at scan time the same
    *  way as `tags`. Absent for SRC/ref images. */
   generatedBy?: string;
+  /** Registry node id of the model that generated this image, resolved at scan
+   *  time the same way as `tags`. The **id**, not the display name — resolve
+   *  the label with `useModelLabels()` (lib/modelLabels.ts), which reads the
+   *  live registry and so follows a model that has since been renamed. Absent
+   *  for SRC/ref images. */
+  modelId?: string;
   /** True when the image hasn't been generated yet — renders a placeholder tile. */
   pending?: boolean;
 };

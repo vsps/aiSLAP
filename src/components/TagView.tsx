@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useTagsStore } from "../stores/tagsStore";
 import { useVisibleTaggedGroups } from "../lib/galleryFilter";
+import { useModelLabels } from "../lib/modelLabels";
 import { editTagsAt, selectImagePath } from "../lib/actions";
 import { Thumbnail } from "./Thumbnail";
 
@@ -30,6 +31,8 @@ export function TagView({
   const activeFilter = useTagsStore((s) => s.activeFilter);
   const filterMode = useTagsStore((s) => s.filterMode);
   const activeUserFilter = useTagsStore((s) => s.activeUserFilter);
+  const activeModelFilter = useTagsStore((s) => s.activeModelFilter);
+  const modelLabel = useModelLabels();
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
 
   useEffect(() => {
@@ -61,9 +64,11 @@ export function TagView({
       <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-dim">
         {activeUserFilter
           ? `Nothing tagged by "${activeUserFilter}".`
-          : activeFilter.length > 0
-            ? `Nothing tagged ${activeFilter.join(filterMode === "all" ? " + " : " / ")}.`
-            : "Nothing tagged in this project yet."}
+          : activeModelFilter.length > 0
+            ? `Nothing tagged from ${activeModelFilter.map((m) => `"${modelLabel(m)}"`).join(" / ")}.`
+            : activeFilter.length > 0
+              ? `Nothing tagged ${activeFilter.join(filterMode === "all" ? " + " : " / ")}.`
+              : "Nothing tagged in this project yet."}
       </div>
     );
   }

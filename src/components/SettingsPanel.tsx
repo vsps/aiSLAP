@@ -171,24 +171,56 @@ function IntControl({
   onChange: (v: unknown) => void;
 }) {
   const span = param.max - param.min;
-  if (span <= 14 && span > 0) {
+  const auto = param.auto_value != null && value === param.auto_value;
+
+  if (param.auto_value == null && span <= 14 && span > 0) {
     const opts: { value: number; label: string }[] = [];
     for (let i = param.min; i <= param.max; i++) opts.push({ value: i, label: String(i) });
     return <ToggleGroup value={value} options={opts} onChange={onChange} />;
   }
-  return (
+
+  // The sentinel sits outside [min, max], so while Auto is on the spinner shows
+  // the value it would fall back to rather than the sentinel itself.
+  const spinnerValue = auto || !Number.isFinite(value) ? param.default : value;
+  const clamp = (n: number) => Math.min(param.max, Math.max(param.min, n));
+
+  const spinner = (
     <input
       type="number"
       step={1}
       min={param.min}
       max={param.max}
-      value={Number.isFinite(value) ? value : param.default}
-      className="bg-bg text-text px-1 py-[2px] w-24"
+      disabled={auto}
+      value={spinnerValue}
+      className="bg-bg text-text px-1 py-[2px] w-24 disabled:opacity-40"
       onChange={(e) => {
         const n = parseInt(e.currentTarget.value, 10);
         if (Number.isFinite(n)) onChange(n);
       }}
+      onBlur={(e) => {
+        const n = parseInt(e.currentTarget.value, 10);
+        onChange(Number.isFinite(n) ? clamp(n) : param.default);
+      }}
     />
+  );
+
+  if (param.auto_value == null) return spinner;
+
+  return (
+    <div className="flex items-center gap-[8px]">
+      {spinner}
+      <label className="flex items-center gap-[6px] text-xs text-text cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={auto}
+          onChange={(e) =>
+            onChange(e.currentTarget.checked ? param.auto_value : clamp(spinnerValue))
+          }
+          className="accent-accent"
+        />
+        <span>auto</span>
+      </label>
+    </div>
   );
 }
 

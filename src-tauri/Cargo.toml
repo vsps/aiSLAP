@@ -1,6 +1,6 @@
 [package]
 name = "aislap"
-version = "0.6.13"
+version = "0.6.14"
 description = "aiSLAP - AI desktop pipeline"
 authors = ["Piotr"]
 edition = "2021"
@@ -19,7 +19,11 @@ opt-level = "s"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+# `devtools` compiles the webview inspector into release builds too — without it
+# `open_devtools()` only exists under `debug_assertions` and the shipped installer
+# has no way to open it. Kept on deliberately: this is an internal tool and a
+# broken generation is far easier to diagnose with the console in front of you.
+tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-window-state = "2"
