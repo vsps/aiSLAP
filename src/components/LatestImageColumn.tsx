@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   imageIndexOf,
   taggedImageIndexOf,
@@ -12,8 +12,10 @@ import {
   type ResolvedClipMedia,
 } from "../stores/timelineStore";
 import { fileSrc } from "../lib/assets";
+import { Btn } from "./Btn";
 import { IconBtn } from "./IconBtn";
 import { ComparePreview } from "./ComparePreview";
+import { LazyBoundary } from "./LazyBoundary";
 import { PathContextMenu } from "./PathContextMenu";
 import { editTagsAt, performImageAction } from "../lib/actions";
 import { cmd } from "../lib/tauri";
@@ -28,10 +30,18 @@ import type {
   ShotLatestMedia,
 } from "../lib/types";
 
+/** three + fiber + drei is a ~1MB chunk, so the viewport is only ever reached
+ *  through `React.lazy` — see the note in `ModelCanvas`. The gallery's zoom
+ *  modal loads the same chunk, so opening one warms the other. */
+const ModelCanvas = lazy(() =>
+  import("./ModelCanvas").then((m) => ({ default: m.ModelCanvas })),
+);
+
 /**
  * Fills remaining horizontal space between RefImages and Run. Shows the
  * current selection, or the last image in the target version (i.e. the most
- * recent generation). Videos render with native controls.
+ * recent generation). Videos render with native controls; `.glb`/`.gltf`
+ * render in an orbitable 3D viewport.
  *
  * When the timeline is playing (or scrubbed past 0), this column instead
  * becomes the timeline preview surface.
@@ -238,6 +248,28 @@ export function LatestImageColumn() {
                   className="max-w-full max-h-full"
                   onContextMenu={onCtx}
                 />
+              ) : image.isModel3d ? (
+                // No click-to-zoom here, unlike the <img> below: the canvas
+                // consumes drag for orbiting, and a click that both orbits and
+                // opens a modal fights itself. The toolbar's zoom button is the
+                // way to fullscreen a mesh.
+                <div className="absolute inset-0" onContextMenu={onCtx}>
+                  <LazyBoundary
+                    fallback={
+                      <div className="w-full h-full flex items-center justify-center text-xs text-dim">
+                        Loading 3D viewer…
+                      </div>
+                    }
+                    onError={(retry) => (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-xs text-dim">
+                        <span>The 3D viewer could not be loaded.</span>
+                        <Btn onClick={retry}>RETRY</Btn>
+                      </div>
+                    )}
+                  >
+                    <ModelCanvas key={image.path} url={fileSrc(image.path)} />
+                  </LazyBoundary>
+                </div>
               ) : (
                 <img
                   key={image.path}
@@ -362,7 +394,11 @@ export function LatestImageColumn() {
                   onClick={() => void performImageAction("trim_video", image.path)}
                 />
               )}
-              {!image.isVideo && (
+              {/* Raster-only, so both exclude 3D as well as video. `!isVideo`
+                  alone offered draw and crop on a .glb — the same
+                  "not video means bitmap" assumption that left this pane
+                  handing meshes to an <img>. */}
+              {!image.isVideo && !image.isModel3d && (
                 <IconBtn
                   name="edit"
                   size={22}
@@ -370,7 +406,7 @@ export function LatestImageColumn() {
                   onClick={() => void performImageAction("edit", image.path)}
                 />
               )}
-              {!image.isVideo && (
+              {!image.isVideo && !image.isModel3d && (
                 <IconBtn
                   name="crop"
                   size={22}
