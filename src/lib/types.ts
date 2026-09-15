@@ -378,9 +378,18 @@ export type SharedConfig = {
   tos_ref_expiry_days?: number;
   colors?: ColorOverrides;
 
-  /** Admin-authored model/provider lock-out list — YAML-only, never written
-   *  by aiSLAP. Absent means every model is visible. */
-  models?: { include: string[]; exclude: string[] };
+  /** Admin-authored adjustments to the shipped registry — YAML-only, never
+   *  written by aiSLAP. Absent means every model is visible on its shipped
+   *  endpoint. `include`/`exclude` are the provider/node lock-out list;
+   *  `endpoints` remaps a node's endpoint (pattern → replacement), both keyed
+   *  on `"<provider>/<node.id>"`. Applied entirely in Rust at load time, so
+   *  `ModelNode.endpoint` already reflects any override by the time the
+   *  frontend sees it. */
+  models?: {
+    include: string[];
+    exclude: string[];
+    endpoints?: Record<string, string>;
+  };
 };
 
 export const DEFAULT_MAX_CONCURRENT_JOBS = 3;

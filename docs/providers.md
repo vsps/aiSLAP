@@ -14,7 +14,7 @@ and caches one instance per name (an unknown or absent name resolves to `"fal"`)
 ```ts
 prepare()                      // one-time setup, e.g. configure the SDK client
 uploadFile(path): Promise<url> // make a local file reachable by the API
-run(input, hooks): Promise<ProviderOutput>
+run(endpoint, kind, input, signal, onProgress, hooks?): Promise<ProviderOutput>
 ```
 
 - `ProviderProgress` — status text pushed to the queue checklist and the log.
@@ -22,6 +22,9 @@ run(input, hooks): Promise<ProviderOutput>
   resolution when a response returns extras) and `inlineText` for text payloads.
 - `ProviderRunHooks` — notably `onSubmitted(requestId)`, which persists the pending
   record *before* the result is awaited. That is the orphan-recovery hook.
+- `kind` is the node's output kind, and is **required** even though only bytedance
+  reads it. Optional would compile at every call site while silently mis-routing one
+  of them; required turns that into a typecheck failure.
 
 ## 2. The four providers
 
@@ -33,17 +36,27 @@ live cost estimate that gets stamped into the sidecar on success.
 
 **replicate** (`replicate.ts`) — `replicate` SDK, prediction polling.
 
-**bytedance** (`bytedance.ts`) — **two unrelated BytePlus APIs behind one `Provider`**:
+**bytedance** (`bytedance.ts`) — **three API surfaces behind one `Provider`**, two of
+them on Ark and one a different BytePlus product entirely:
 
-| | Ark | VOD AI MediaKit |
-|---|---|---|
-| What | Seedance / Seedream generation | video enhancement |
-| Key | `BYTEDANCE_API_KEY` | `BYTEDANCE_MEDIAKIT_API_KEY` |
-| Selected by | anything else | the `"mediakit-enhance-video"` endpoint sentinel |
+| | Ark tasks | Ark images | VOD AI MediaKit |
+|---|---|---|---|
+| What | Seedance video | Seedream images | video enhancement |
+| Shape | async: submit, poll, cancel | synchronous, one request | async: submit, poll |
+| Body | `content[]`-wrapped | flat | flat |
+| Key | `BYTEDANCE_API_KEY` | `BYTEDANCE_API_KEY` | `BYTEDANCE_MEDIAKIT_API_KEY` |
+| Selected by | anything else | node `kind === "image"` | the `"mediakit-enhance-video"` sentinel |
 
-`run()` dispatches on that sentinel; each half has its own base URL, terminal-status
-set and request shape. Uploads for both go through TOS (`tos.ts`), because Ark will
-not accept inline data.
+MediaKit is checked first, on its endpoint sentinel — its node is `video` like
+Seedance, so `kind` cannot separate those two. The **Ark** split then keys on the
+node's `kind` rather than on the endpoint string, because Ark takes a published model
+id or a provisioned `ep-…` endpoint id interchangeably in the same `model` field, and
+an admin can swap one for the other (§3a). A hardcoded list of image-model ids used to
+do this job and would miss every such override — posting an image job to the video task
+API, which fails in a way that looks nothing like the cause.
+
+Each surface has its own base URL, terminal-status set and request shape. Uploads for
+all of them go through TOS (`tos.ts`), because Ark will not accept inline data.
 
 **beeble** (`beeble.ts`) — [Beeble](https://developer.beeble.ai/docs)'s SwitchX
 relighting / background replacement. The simplest of the four: `x-api-key` auth, one
@@ -105,11 +118,27 @@ snake_case key matching the `Config` field. Every field in Settings shows a mous
 hint naming its key, and highlights when its value is inherited rather than typed
 locally.
 
-The same file can also carry a `models:` section — `include`/`exclude` glob lists
-(default `include: ["*"]`) matched against `"<provider>/<node.id>"` — to lock out
-models or whole providers org-wide. That list is YAML-only: aiSLAP never writes it,
-and there is deliberately no Settings UI for it. See
-`commands/models.rs::model_visible`.
+The same file can also carry a `models:` section, keyed throughout against
+`"<provider>/<node.id>"`. It is YAML-only: aiSLAP never writes it, and there is
+deliberately no Settings UI for any of it.
+
+- **`include`/`exclude`** — glob lists (default `include: ["*"]`) that lock out models
+  or whole providers org-wide. See `commands/models.rs::model_visible`.
+- **`endpoints`** — pattern → replacement endpoint, for pointing a shipped model at a
+  private endpoint id. See [model-registry.md](model-registry.md) §9b.
+
+> **`endpoints` is not safe to point at an arbitrary string on every provider.** Three
+> providers read the endpoint as something other than an opaque route:
+>
+> - **beeble** derives `generation_type` from it and **throws** on anything that is not
+>   `switchx-image` or `switchx-video` (`beeble.ts`'s `ENDPOINT_GENERATION_TYPE`).
+> - **replicate** parses it as `owner/model[:version]` and throws without the `/`.
+> - **bytedance**'s `mediakit-enhance-video` is a *routing sentinel*, not a real
+>   endpoint — it is what selects the AI MediaKit half of the provider. Remapping it
+>   sends the job to Ark instead.
+>
+> Ark's Seedance/Seedream endpoints are the intended use: Ark accepts a published model
+> id or a provisioned `ep-…` endpoint id in the same `model` field, interchangeably.
 
 ## 4. Adding a provider
 

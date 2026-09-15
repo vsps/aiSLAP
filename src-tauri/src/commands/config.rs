@@ -521,6 +521,9 @@ tos_ref_expiry_days: 14
 models:
   include: ["fal/*", "bytedance/*"]
   exclude: ["bytedance/experimental-*"]
+  endpoints:
+    "bytedance/bytedance_seedance25_*": ep-private-video
+    bytedance/bytedance_seedream5_pro_edit: ep-private-image
 "#;
         let parsed: SharedConfig = serde_yaml_ng::from_str(yaml).expect("valid shared config");
         assert_eq!(parsed.fal_key.as_deref(), Some("fal-secret"));
@@ -538,6 +541,16 @@ models:
         let models = parsed.models.expect("models section");
         assert_eq!(models.include, vec!["fal/*", "bytedance/*"]);
         assert_eq!(models.exclude, vec!["bytedance/experimental-*"]);
+        assert_eq!(
+            models.endpoints.get("bytedance/bytedance_seedance25_*"),
+            Some(&"ep-private-video".to_string())
+        );
+        assert_eq!(
+            models
+                .endpoints
+                .get("bytedance/bytedance_seedream5_pro_edit"),
+            Some(&"ep-private-image".to_string())
+        );
     }
 
     /// An empty/partial file (just a couple of keys) must still parse —

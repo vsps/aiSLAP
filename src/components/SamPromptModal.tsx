@@ -216,7 +216,7 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
       }
 
       console.log("[sam-preview] input:", JSON.stringify(input));
-      const out = await provider.run("fal-ai/sam-3/image", input, ac.signal, () => {});
+      const out = await provider.run("fal-ai/sam-3/image", "image", input, ac.signal, () => {});
       if (ac.signal.aborted) return;
       console.log("[sam-preview] out.files:", JSON.stringify(out.files));
       console.log("[sam-preview] out.raw:", JSON.stringify(out.raw));

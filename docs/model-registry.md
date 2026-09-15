@@ -250,6 +250,42 @@ shared config's `models: { include, exclude }` glob lists (see
 disappear without a bad/missing file; it is entirely admin-authored, never written by
 aiSLAP, and defaults to including everything when absent.
 
+### 9b. Endpoint overrides (shared config)
+
+The same section can remap a node's `endpoint`, so a studio can run a shipped model
+against a **private** endpoint id without putting that id in `models/` — which ships to
+every install as a bundle resource (§11) and has no user-local overlay:
+
+```yaml
+models:
+  endpoints:
+    "bytedance/bytedance_seedance25_*": ep-20260915100720-kb569
+    bytedance/bytedance_seedream5_pro_edit: ep-20260915102109-h4x7f
+```
+
+Keys are the same `"<provider>/<node.id>"` shape as `include`/`exclude`. **An exact key
+beats a glob; among competing globs the longest pattern wins** (`endpoint_override` in
+`models.rs`), so a wildcard and a one-node exception can coexist. A key matching
+nothing is silently inert, like every other unknown key in that file.
+
+Three things to know:
+
+- **The override is applied in Rust at load time.** `ModelNode.endpoint` already carries
+  the replacement by the time the frontend sees it, so nothing downstream needs to know.
+  Read once per launch — **restart after editing**, same as the registry itself.
+- **Node `id`, not `endpoint`, is the stable identity.** Gallery model filters, chain
+  persistence, presets and model labels are all id-keyed and are unaffected by a remap.
+- **Pricing is endpoint-keyed, and does not follow the override.** `falPrices` and
+  `priceOverrides` (and the keys `pricing_derive` proposes from historical
+  `assets.endpoint` values) are all keyed by endpoint string. A remapped node looks up
+  under its *new* endpoint while old generations recorded the *old* one, so a manual
+  price override for an overridden node must be keyed to the replacement id. This is a
+  real limitation, not an oversight — it is unfixed because no ByteDance endpoint has
+  ever had price data, fal's fetched table covering only fal routes.
+
+Not every provider tolerates an arbitrary endpoint — beeble and replicate parse theirs,
+and `mediakit-enhance-video` is a routing sentinel. See [providers.md](providers.md) §3a.
+
 ---
 
 ## 10. Failure modes

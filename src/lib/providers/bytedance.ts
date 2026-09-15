@@ -8,6 +8,7 @@ import {
   uploadToTos,
   type TosConfig,
 } from "./tos";
+import type { ModelKind } from "../types";
 import type {
   Provider,
   ProviderFile,
@@ -24,8 +25,14 @@ const TERMINAL_STATUSES = new Set(["succeeded", "failed", "expired", "cancelled"
 // Seedream image generation — a third Ark surface alongside the video task
 // API above: synchronous request/response (no task id, no polling), and a
 // flat (non content[]-wrapped) body shape of its own.
+//
+// Which of the two Ark surfaces a node wants is decided by its `kind`, not by
+// its endpoint string. That matters: Ark takes either a published model id
+// (`dola-seedream-5-0-pro-260628`) or a provisioned endpoint id (`ep-…`) in
+// the same `model` field, and the shared config can swap one for the other
+// (see docs/model-registry.md §9a). A hardcoded list of known image-model ids
+// would miss every such override and post an image job to the video task API.
 const IMAGE_GEN_BASE_URL = "https://ark.ap-southeast.bytepluses.com/api/v3/images/generations";
-const IMAGE_GEN_MODELS = new Set(["dola-seedream-5-0-pro-260628", "seedream-5-0-lite"]);
 
 // AI MediaKit (BytePlus VOD) — a separate product from Ark: different host,
 // separate API key, flat (non content[]-wrapped) request/response shapes.
@@ -168,15 +175,20 @@ export class BytedanceProvider implements Provider {
 
   async run(
     endpoint: string,
+    kind: ModelKind,
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,
     hooks?: ProviderRunHooks,
   ): Promise<ProviderOutput> {
+    // MediaKit stays keyed on its sentinel: it is a different product on a
+    // different host with its own API key, and its node is `video` like
+    // Seedance, so `kind` cannot separate the two. The sentinel is not a real
+    // endpoint id and must never be remapped by a shared-config override.
     if (endpoint === MEDIAKIT_ENHANCE_ENDPOINT) {
       return this.runMediaKit(input, signal, onProgress, hooks);
     }
-    if (IMAGE_GEN_MODELS.has(endpoint)) {
+    if (kind === "image") {
       return this.runImageGen(endpoint, input, signal, onProgress);
     }
     return this.runArk(endpoint, input, signal, onProgress, hooks);

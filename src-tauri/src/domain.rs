@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 fn map_is_empty<K, V>(m: &HashMap<K, V>) -> bool {
     m.is_empty()
@@ -195,16 +195,29 @@ impl Default for Config {
     }
 }
 
-/// A model/node lock-out list, admin-authored only — aiSLAP never writes
-/// this back, so there is no Settings UI for it. Patterns are matched against
-/// `"<provider>/<node.id>"` (e.g. `"fal/*"`, `"bytedance/topaz_upscale_video"`)
-/// via `commands::models::model_visible`.
+/// Admin-authored adjustments to the shipped model registry — aiSLAP never
+/// writes any of this back, so there is no Settings UI for it. Every key is
+/// matched against `"<provider>/<node.id>"` (e.g. `"fal/*"`,
+/// `"bytedance/topaz_upscale_video"`).
+///
+/// `include`/`exclude` are the lock-out list, applied by
+/// `commands::models::model_visible`. `endpoints` remaps a node's endpoint,
+/// applied by `commands::models::endpoint_override`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ModelFilter {
+pub struct ModelOverrides {
     #[serde(default = "default_include_all")]
     pub include: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// Pattern → replacement `endpoint`. Lets a studio point a shipped model
+    /// at a private endpoint id (a provisioned BytePlus Ark `ep-…`, say)
+    /// without putting that id in `models/`, which ships to every install.
+    ///
+    /// `BTreeMap` rather than `HashMap` on purpose: the longest-pattern
+    /// tie-break and the load-time log lines both need a deterministic
+    /// iteration order.
+    #[serde(default)]
+    pub endpoints: BTreeMap<String, String>,
 }
 
 fn default_include_all() -> Vec<String> {
@@ -259,7 +272,7 @@ pub struct SharedConfig {
     pub colors: Option<ColorOverrides>,
 
     #[serde(default)]
-    pub models: Option<ModelFilter>,
+    pub models: Option<ModelOverrides>,
 }
 
 // `app-state.json` has no struct here on purpose.

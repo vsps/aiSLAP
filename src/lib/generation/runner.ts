@@ -318,6 +318,7 @@ async function runJob(spec: JobSpec): Promise<void> {
       try {
         const out = await provider.run(
           spec.node.endpoint,
+          spec.node.kind,
           baseArgs,
           controller.signal,
           (e) => reportProgress(spec, k, spec.iterations, e),
