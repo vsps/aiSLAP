@@ -28,7 +28,8 @@
           "allow": [
             "**"
           ],
-          "deny": []
+          "deny": [],
+          "requireLiteralLeadingDot": false
         }
       }
     }
