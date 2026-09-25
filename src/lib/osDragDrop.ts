@@ -44,8 +44,14 @@ export function subscribeOsDragTarget(cb: () => void): () => void {
   return () => listeners.delete(cb);
 }
 
+// The drag-drop payload's position is typed PhysicalPosition, but on macOS
+// wry reports it in points (already logical) and Tauri passes it through
+// unscaled, so dividing by devicePixelRatio there lands on the wrong element
+// on Retina displays.
+const POSITION_IS_LOGICAL = /Mac/.test(navigator.userAgent);
+
 function resolveTarget(x: number, y: number): OsDragTarget {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = POSITION_IS_LOGICAL ? 1 : window.devicePixelRatio || 1;
   const el = document.elementFromPoint(x / dpr, y / dpr);
   if (!el) return null;
   const refPanel = (el as HTMLElement).closest<HTMLElement>("[data-ref-drop]");
