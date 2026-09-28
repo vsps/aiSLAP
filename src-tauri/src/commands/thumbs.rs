@@ -10,7 +10,9 @@
 //! the cache costs a re-sweep and nothing else.
 
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use image::codecs::jpeg::JpegEncoder;
@@ -201,18 +203,40 @@ fn encode_thumb(src: &Path, dst: &Path) -> AppResult<()> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = dst.with_extension("jpg.tmp");
-    {
+    // Two sweeps can encode the same media at once (a shot sweep reaches its
+    // SRC folder, which is also swept on its own), so each writer needs its own
+    // temp file — a shared one gets renamed out from under the other writer.
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp = dst.with_extension(format!(
+        "{}-{}.jpg.tmp",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let written = (|| -> AppResult<()> {
         let mut out = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
         JpegEncoder::new_with_quality(&mut out, THUMB_QUALITY)
             .encode_image(&rgb)
             .map_err(|e| AppError::Msg(format!("encode {}: {e}", as_str(dst))))?;
-    }
-    // Windows won't rename onto an existing file.
-    let _ = std::fs::remove_file(dst);
-    std::fs::rename(&tmp, dst).inspect_err(|_| {
+        out.flush()?;
+        Ok(())
+    })();
+    if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
-    })?;
+        return Err(e);
+    }
+    // Windows won't rename onto an existing file; elsewhere rename replaces it
+    // atomically, and removing first would open a window where a concurrent
+    // writer's finished entry is deleted.
+    if cfg!(windows) {
+        let _ = std::fs::remove_file(dst);
+    }
+    if let Err(e) = std::fs::rename(&tmp, dst) {
+        let _ = std::fs::remove_file(&tmp);
+        // Lost a race to another writer of the same entry — theirs is as good.
+        if !dst.is_file() {
+            return Err(e.into());
+        }
+    }
     Ok(())
 }
 
@@ -620,6 +644,34 @@ mod tests {
             leftovers.is_empty(),
             "temp files left behind: {leftovers:?}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Overlapping sweeps encode the same entry at once. Every writer must
+    /// succeed and the entry must survive — a shared temp file used to let one
+    /// writer delete the other's result and then fail its own rename.
+    #[test]
+    fn concurrent_encodes_of_one_entry_all_succeed() {
+        let dir = scratch("concurrent");
+        let src = dir.join("a.png");
+        write_png(&src, 1600, 900);
+        let dst = dir.join("out.jpg");
+        let results: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| encode_thumb(&src, &dst)))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        for r in &results {
+            assert!(r.is_ok(), "encode failed: {r:?}");
+        }
+        assert!(dst.is_file());
+        let leftovers = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0, "temp files left behind");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
