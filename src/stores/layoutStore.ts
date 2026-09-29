@@ -163,6 +163,33 @@ function loadGalleryColumnWidths(): Record<string, number> {
   }
 }
 
+// Gallery version columns pinned to the left edge. Keyed by version name like
+// `galleryColumnWidths`, so the same column stays pinned wherever it turns up —
+// only GLOBAL SRC and SHOT SRC are pinnable, and those names are stable across
+// shots. A display preference, so it lives here rather than in per-tab state.
+const GALLERY_PIN_STORAGE_KEY = "aislap.galleryPinnedColumns";
+
+function loadGalleryPinnedColumns(): string[] {
+  try {
+    const raw = localStorage.getItem(GALLERY_PIN_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((v): v is string => typeof v === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistGalleryPinnedColumns(versions: string[]) {
+  try {
+    localStorage.setItem(GALLERY_PIN_STORAGE_KEY, JSON.stringify(versions));
+  } catch {
+    /* swallow — pin persistence is best-effort */
+  }
+}
+
 // Gallery display mode: thumbnails (default) or filenames only. A display
 // preference, not a `ViewMode` — it composes with the columns view rather than
 // replacing it, and switching it must not trigger the rescans setViewMode does.
@@ -207,6 +234,9 @@ type State = {
   setGalleryColumnWidth: (version: string, px: number) => void;
   /** Drop the override so the column tracks the global slider again. */
   clearGalleryColumnWidth: (version: string) => void;
+
+  galleryPinnedColumns: string[];
+  toggleGalleryColumnPinned: (version: string) => void;
 
   galleryListMode: boolean;
   toggleGalleryListMode: () => void;
@@ -278,6 +308,16 @@ export const useLayoutStore = create<State>((set, get) => ({
     delete next[version];
     set({ galleryColumnWidths: next });
     persistGalleryColumnWidths(next);
+  },
+
+  galleryPinnedColumns: loadGalleryPinnedColumns(),
+  toggleGalleryColumnPinned(version) {
+    const current = get().galleryPinnedColumns;
+    const next = current.includes(version)
+      ? current.filter((v) => v !== version)
+      : [...current, version];
+    set({ galleryPinnedColumns: next });
+    persistGalleryPinnedColumns(next);
   },
 
   galleryListMode: loadGalleryListMode(),

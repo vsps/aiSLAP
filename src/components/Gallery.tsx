@@ -6,7 +6,12 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { GalleryColumn, type DragState } from "./GalleryColumn";
+import {
+  GalleryColumn,
+  galleryColumnEffectiveWidth,
+  isPinnableColumn,
+  type DragState,
+} from "./GalleryColumn";
 import { ImageInfoModal } from "./ImageInfoModal";
 import { ImageZoomModal } from "./ImageZoomModal";
 import { LazyBoundary } from "./LazyBoundary";
@@ -115,6 +120,8 @@ export function Gallery({ selectable }: Props = {}) {
   const selectedImagePath = useSessionStore((s) => s.selectedImagePath);
   const thumbColWidth = useLayoutStore((s) => s.panelSizes.thumbColWidth);
   const galleryColumnWidths = useLayoutStore((s) => s.galleryColumnWidths);
+  const galleryPinnedColumns = useLayoutStore((s) => s.galleryPinnedColumns);
+  const toggleColumnPinned = useLayoutStore((s) => s.toggleGalleryColumnPinned);
   const listMode = useLayoutStore((s) => s.galleryListMode);
   const toggleListMode = useLayoutStore((s) => s.toggleGalleryListMode);
   // PRISM projects belong to a pipeline aiSLAP doesn't own — nothing here
@@ -188,6 +195,10 @@ export function Gallery({ selectable }: Props = {}) {
   const collapsedSet = useMemo(
     () => new Set(collapsedVersions),
     [collapsedVersions],
+  );
+  const pinnedSet = useMemo(
+    () => new Set(galleryPinnedColumns),
+    [galleryPinnedColumns],
   );
   // Toolbar bulk toggle: collapse every column, or clear all individual
   // collapse state back to fully expanded.
@@ -810,27 +821,48 @@ export function Gallery({ selectable }: Props = {}) {
                 Open a shot to see its versions.
               </div>
             ) : (
-              columnsWithPlaceholders.map((c) => (
-                <GalleryColumn
-                  key={c.version}
-                  column={c}
-                  width={galleryColumnWidths[c.version] ?? thumbColWidth}
-                  destDir={destDirFor(c)}
-                  dragState={dragState}
-                  collapsed={collapsedSet.has(c.version)}
-                  onToggleCollapsed={() => toggleCollapsed(c.version)}
-                  onFolderDelete={() => onFolderDelete(c.version)}
-                  hasFiles={(rawImageCounts.get(c.version) ?? 0) > 0}
-                  listMode={listMode}
-                  deleteDisabled={!!prism}
-                  onImageAction={onImageAction}
-                  onRefresh={c.isSrc ? () => rescanShot() : undefined}
-                  onDragStart={onDragStart}
-                  selectable={selectable}
-                  excludedSet={excludedSet}
-                  onToggleExcluded={toggleExcluded}
-                />
-              ))
+              (() => {
+                // Pin offsets accumulate down the map so several pinned columns
+                // sit side by side against the left edge instead of stacking at
+                // zero. `pinLeft` only advances past columns that are both
+                // pinnable and pinned.
+                let pinLeft = 0;
+                return columnsWithPlaceholders.map((c) => {
+                  const pinned =
+                    isPinnableColumn(c.refScope) && pinnedSet.has(c.version);
+                  const pinnedLeft = pinLeft;
+                  if (pinned) {
+                    pinLeft += galleryColumnEffectiveWidth(
+                      galleryColumnWidths[c.version] ?? thumbColWidth,
+                      collapsedSet.has(c.version),
+                    );
+                  }
+                  return (
+                    <GalleryColumn
+                      key={c.version}
+                      column={c}
+                      width={galleryColumnWidths[c.version] ?? thumbColWidth}
+                      destDir={destDirFor(c)}
+                      dragState={dragState}
+                      collapsed={collapsedSet.has(c.version)}
+                      onToggleCollapsed={() => toggleCollapsed(c.version)}
+                      pinned={pinned}
+                      pinnedLeft={pinnedLeft}
+                      onTogglePinned={() => toggleColumnPinned(c.version)}
+                      onFolderDelete={() => onFolderDelete(c.version)}
+                      hasFiles={(rawImageCounts.get(c.version) ?? 0) > 0}
+                      listMode={listMode}
+                      deleteDisabled={!!prism}
+                      onImageAction={onImageAction}
+                      onRefresh={c.isSrc ? () => rescanShot() : undefined}
+                      onDragStart={onDragStart}
+                      selectable={selectable}
+                      excludedSet={excludedSet}
+                      onToggleExcluded={toggleExcluded}
+                    />
+                  );
+                });
+              })()
             )}
           </div>
         )}
