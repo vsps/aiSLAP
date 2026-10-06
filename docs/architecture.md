@@ -135,7 +135,7 @@ there is one instance app-wide or one per open tab; see [tabs.md](tabs.md).
 | `tagsStore` | per-tab | vocabulary (`defs`), the derived `colorsByName` map, `activeFilter`, `filterMode` |
 | `tabsStore` | global | the tab list, the active tab, and every tab's store bundle |
 | `modelsStore` | global | the loaded registry and a `loaded` flag (drives `models: N`) |
-| `layoutStore` | global | the active **mode**, panel sizes, gallery column widths, and collapsed **chain** columns — persisted to `localStorage`. Gallery column collapse is per-tab and lives in `sessionStore`. |
+| `layoutStore` | global | the active **mode**, panel sizes, gallery column widths, which gallery columns are **pinned**, and collapsed **chain** columns — persisted to `localStorage`. Gallery column collapse is per-tab and lives in `sessionStore`. |
 | `pricesStore` | global | cached fal prices plus manual per-endpoint overrides |
 | `presetsStore` | global | chain presets |
 | `logStore` | global | the in-app log ring, fed by `lib/consoleCapture.ts` |

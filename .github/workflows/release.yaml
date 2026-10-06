@@ -68,9 +68,9 @@ jobs:
           BASE="https://github.com/vsps/aiSLAP/releases/download/${TAG}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
-            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges | head -80)
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges --invert-grep --grep="^chore: release v" | head -80)
           else
-            CHANGELOG=$(git log --pretty=format:"- %s" --no-merges | head -80)
+            CHANGELOG=$(git log --pretty=format:"- %s" --no-merges --invert-grep --grep="^chore: release v" | head -80)
           fi
           BODY_FILE=$(mktemp)
           printf "## What's changed\n\n%s\n\n---\n\n" "$CHANGELOG" >> "$BODY_FILE"

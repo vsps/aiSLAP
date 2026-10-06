@@ -1,0 +1,6 @@
+# The root is the only package. pnpm 9 (used in CI) rejects a workspace file
+# without `packages`.
+packages:
+  - "."
+allowBuilds:
+  esbuild: true

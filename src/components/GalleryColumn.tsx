@@ -6,7 +6,10 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { GalleryColumn as GalleryColumnData } from "../lib/types";
+import type {
+  GalleryColumn as GalleryColumnData,
+  RefScope,
+} from "../lib/types";
 import { editTagsAt, type ImageAction } from "../lib/actions";
 import { FileRow } from "./FileRow";
 import { GalleryColumnResizeHandle } from "./GalleryColumnResizeHandle";
@@ -40,6 +43,12 @@ type Props = {
   dragState: DragState;
   collapsed?: boolean;
   onToggleCollapsed: () => void;
+  /** Whether this column is pinned to the left edge of the gallery scroller. */
+  pinned?: boolean;
+  /** Distance from the scroller's left edge to pin at — the summed width of
+   *  the pinned columns before this one, so several stack rather than overlap. */
+  pinnedLeft?: number;
+  onTogglePinned?: () => void;
   onFolderDelete: () => void;
   /** Whether this version folder has any files, unaffected by the active
    *  tag/user filter (which can make `column.images` read empty even when
@@ -66,6 +75,29 @@ type Props = {
 
 const COLLAPSED_WIDTH = 28;
 
+/** Which reference columns are worth keeping in view while scrolling a wide
+ *  shot. GLOBAL SRC and SHOT SRC hold the project- and shot-level references,
+ *  so they are pinnable; SEL and the version columns are not. */
+export function isPinnableColumn(refScope: RefScope | undefined): boolean {
+  return refScope === "global" || refScope === "shot";
+}
+
+/** Sub-columns a tile width lays out into. Collapsed columns render a single
+ *  label bar instead, which is why they break out as 1 here. */
+export function gallerySubCols(width: number, collapsed: boolean): number {
+  return !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
+}
+
+/** Rendered width of a gallery column — its tile width multiplied by
+ *  `gallerySubCols`. Shared with `Gallery` so pinned-column offsets account for
+ *  a column whose tiles wrap into more than one sub-column. */
+export function galleryColumnEffectiveWidth(
+  width: number,
+  collapsed: boolean,
+): number {
+  return collapsed ? COLLAPSED_WIDTH : width * gallerySubCols(width, collapsed);
+}
+
 export function GalleryColumn({
   column,
   width,
@@ -73,6 +105,9 @@ export function GalleryColumn({
   dragState,
   collapsed,
   onToggleCollapsed,
+  pinned,
+  pinnedLeft,
+  onTogglePinned,
   onFolderDelete,
   hasFiles,
   listMode,
@@ -177,8 +212,7 @@ export function GalleryColumn({
   );
   const osDragTarget =
     osDragHit?.kind === "column" && osDragHit.version === column.version;
-  const subCols =
-    !collapsed && width < 150 ? 3 : !collapsed && width < 300 ? 2 : 1;
+  const subCols = gallerySubCols(width, !!collapsed);
 
   // Stable maxAspect for grid mode — references stay equal between renders.
   // Irrelevant in list mode, which renders no images.
@@ -223,7 +257,20 @@ export function GalleryColumn({
     setTargetVersion(column.version);
   }
 
-  const effectiveWidth = collapsed ? COLLAPSED_WIDTH : width * subCols;
+  const effectiveWidth = galleryColumnEffectiveWidth(width, !!collapsed);
+
+  // Sticky rather than a separate pane so the pinned column keeps its place in
+  // the scroller — drag targets and keyboard navigation, which walk
+  // `data-column-version` in DOM order, see the same layout either way. The
+  // z-index lifts it above the columns that slide beneath it.
+  const rootStyle: React.CSSProperties = pinned
+    ? {
+        width: `${effectiveWidth}px`,
+        position: "sticky",
+        left: pinnedLeft ?? 0,
+        zIndex: 5,
+      }
+    : { width: `${effectiveWidth}px` };
 
   return (
     <div
@@ -236,7 +283,7 @@ export function GalleryColumn({
           ? "outline outline-2 outline-accent border-transparent"
           : "border-border"
       } relative p-gallery-column flex flex-col gap-gallery-column-gap shrink-0 h-full min-h-0`}
-      style={{ width: `${effectiveWidth}px` }}
+      style={rootStyle}
     >
       {!collapsed && (
         <GalleryColumnResizeHandle
@@ -306,6 +353,18 @@ export function GalleryColumn({
               >
                 ≈ ${formatCost(colCost.total)}
               </span>
+            )}
+            {isPinnableColumn(column.refScope) && onTogglePinned && (
+              <IconBtn
+                name="push_pin"
+                size={16}
+                title={pinned ? "Unpin column" : "Pin column to the left"}
+                active={pinned}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTogglePinned();
+                }}
+              />
             )}
             {column.isSrc && onRefresh && (
               <IconBtn
