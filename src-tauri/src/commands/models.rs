@@ -1,8 +1,9 @@
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use crate::commands::config::load_shared_config;
-use crate::domain::{ModelEntry, ModelFilter, ModelInput, ModelNode, ModelOutput, RefRoleSpec};
+use crate::domain::{ModelEntry, ModelInput, ModelNode, ModelOutput, ModelOverrides, RefRoleSpec};
 use crate::error::AppResult;
 use crate::paths;
 
@@ -164,9 +165,29 @@ fn matches_any(key: &str, patterns: &[String]) -> bool {
 /// `exclude` pattern. Matched against `"<provider>/<node.id>"` (e.g.
 /// `"fal/topaz_upscale_video_creative"`), so `"fal/*"` locks out a whole
 /// provider and a bare node id locks out just one model.
-pub(crate) fn model_visible(provider: &str, node_id: &str, filter: &ModelFilter) -> bool {
+pub(crate) fn model_visible(provider: &str, node_id: &str, filter: &ModelOverrides) -> bool {
     let key = format!("{provider}/{node_id}");
     matches_any(&key, &filter.include) && !matches_any(&key, &filter.exclude)
+}
+
+/// The endpoint the shared config wants for `key` (`"<provider>/<node.id>"`),
+/// or `None` to keep whatever the model file shipped.
+///
+/// An exact key always beats a glob, so `"bytedance/seedream5_pro_edit"`
+/// overrides a `"bytedance/*"` written alongside it. Among competing globs the
+/// longest pattern wins — the nearest thing to "most specific" that is cheap to
+/// compute and, over a `BTreeMap`, deterministic: equal-length patterns resolve
+/// to the lexicographically last, never to whichever the hasher happened to
+/// visit first.
+fn endpoint_override<'a>(key: &str, endpoints: &'a BTreeMap<String, String>) -> Option<&'a str> {
+    if let Some(exact) = endpoints.get(key) {
+        return Some(exact.as_str());
+    }
+    endpoints
+        .iter()
+        .filter(|(pattern, _)| glob_to_regex(pattern).is_match(key))
+        .max_by_key(|(pattern, _)| pattern.len())
+        .map(|(_, endpoint)| endpoint.as_str())
 }
 
 #[tauri::command]
@@ -176,6 +197,10 @@ pub fn models_load(app: tauri::AppHandle) -> AppResult<Vec<ModelEntry>> {
     let mut entries = Vec::new();
 
     let files = collect_model_files(&dir)?;
+
+    // Read once, not per node: `load_shared_config` re-reads the YAML off
+    // disk on every call, and that file normally lives on a network share.
+    let shared_models = load_shared_config().and_then(|s| s.models);
 
     for path in files {
         let text = match std::fs::read_to_string(&path) {
@@ -190,10 +215,26 @@ pub fn models_load(app: tauri::AppHandle) -> AppResult<Vec<ModelEntry>> {
             let kind = infer_kind(&raw.outputs, &raw.kind);
             let batch_field = infer_batch_field(&raw.parameters, &raw.batch_field);
             let provider = raw.provider.clone().or_else(|| file.provider.clone());
+
+            // An admin can point a shipped node at a private endpoint id.
+            // Logged because it is otherwise invisible: the picker shows the
+            // same model, running somewhere else entirely.
+            let key = format!("{}/{}", provider.as_deref().unwrap_or("fal"), raw.id);
+            let endpoint = match shared_models
+                .as_ref()
+                .and_then(|m| endpoint_override(&key, &m.endpoints))
+            {
+                Some(replacement) if replacement != raw.endpoint => {
+                    tracing::info!("endpoint override {key}: {} -> {replacement}", raw.endpoint);
+                    replacement.to_string()
+                }
+                _ => raw.endpoint,
+            };
+
             let node = ModelNode {
                 id: raw.id,
                 name: raw.name,
-                endpoint: raw.endpoint,
+                endpoint,
                 kind,
                 inputs: raw.inputs,
                 outputs: raw.outputs,
@@ -213,7 +254,7 @@ pub fn models_load(app: tauri::AppHandle) -> AppResult<Vec<ModelEntry>> {
     // Admin-authored lock-out list, YAML-only — never written by aiSLAP, so
     // this is the one place it's ever applied. Absent `models:` section (or
     // no shared config at all) leaves every model visible, unchanged.
-    if let Some(filter) = load_shared_config().and_then(|s| s.models) {
+    if let Some(filter) = shared_models {
         entries.retain(|e| {
             let provider = e.node.provider.as_deref().unwrap_or("fal");
             model_visible(provider, &e.node.id, &filter)
@@ -391,10 +432,11 @@ mod tests {
         );
     }
 
-    fn filter(include: &[&str], exclude: &[&str]) -> ModelFilter {
-        ModelFilter {
+    fn filter(include: &[&str], exclude: &[&str]) -> ModelOverrides {
+        ModelOverrides {
             include: include.iter().map(|s| s.to_string()).collect(),
             exclude: exclude.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         }
     }
 
@@ -441,5 +483,74 @@ mod tests {
         assert!(model_visible("fal", "v1.0+beta", &f));
         assert!(!model_visible("fal", "v1X0+beta", &f));
         assert!(!model_visible("fal", "v1.0Xbeta", &f));
+    }
+
+    fn endpoints(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn an_unmatched_node_keeps_its_shipped_endpoint() {
+        let m = endpoints(&[("bytedance/seedream5_pro_edit", "ep-private")]);
+        assert_eq!(endpoint_override("fal/flux_dev", &m), None);
+        // An empty map is the overwhelmingly common case — no shared config,
+        // or one that says nothing about endpoints.
+        assert_eq!(endpoint_override("fal/flux_dev", &BTreeMap::new()), None);
+    }
+
+    #[test]
+    fn a_glob_remaps_every_node_in_a_family() {
+        let m = endpoints(&[("bytedance/seedance25_*", "ep-video")]);
+        assert_eq!(
+            endpoint_override("bytedance/seedance25_txt2vid", &m),
+            Some("ep-video")
+        );
+        assert_eq!(
+            endpoint_override("bytedance/seedance25_img2vid", &m),
+            Some("ep-video")
+        );
+        // Sibling families are untouched — the pattern is anchored.
+        assert_eq!(endpoint_override("bytedance/seedance2_txt2vid", &m), None);
+    }
+
+    #[test]
+    fn an_exact_key_beats_a_glob() {
+        let m = endpoints(&[
+            ("bytedance/*", "ep-catchall"),
+            ("bytedance/seedream5_pro_edit", "ep-specific"),
+        ]);
+        assert_eq!(
+            endpoint_override("bytedance/seedream5_pro_edit", &m),
+            Some("ep-specific")
+        );
+        assert_eq!(
+            endpoint_override("bytedance/anything_else", &m),
+            Some("ep-catchall")
+        );
+    }
+
+    #[test]
+    fn the_longest_glob_wins_among_competing_patterns() {
+        let m = endpoints(&[
+            ("bytedance/*", "ep-catchall"),
+            ("bytedance/seedream5_*", "ep-family"),
+        ]);
+        assert_eq!(
+            endpoint_override("bytedance/seedream5_pro_edit", &m),
+            Some("ep-family")
+        );
+    }
+
+    #[test]
+    fn endpoint_patterns_do_not_leak_regex_metacharacters() {
+        let m = endpoints(&[("bytedance/v1.0+beta", "ep-private")]);
+        assert_eq!(
+            endpoint_override("bytedance/v1.0+beta", &m),
+            Some("ep-private")
+        );
+        assert_eq!(endpoint_override("bytedance/v1X0+beta", &m), None);
     }
 }

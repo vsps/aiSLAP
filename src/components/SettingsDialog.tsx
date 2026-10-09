@@ -13,6 +13,7 @@ import {
   invalidateConfigCache,
 } from "../lib/metadataCache";
 import { ensureRefLifecycleRule, TOS_DEFAULTS } from "../lib/providers/tos";
+import { ARK_ASSET_DEFAULTS } from "../lib/providers/arkOpenApi";
 import { Field } from "./Field";
 import { ModalDialog } from "./ModalDialog";
 import {
@@ -255,6 +256,11 @@ export function SettingsDialog({ onClose }: Props) {
 
   function setTosExpiry(days: number) {
     setConfig((c) => ({ ...c, tos: { ...c.tos, refExpiryDays: days } }));
+  }
+
+  // Same one-field-at-a-time rule as setTosField.
+  function setArkAssetsField(key: "projectName", value: string) {
+    setConfig((c) => ({ ...c, arkAssets: { ...c.arkAssets, [key]: value } }));
   }
 
   async function save() {
@@ -706,6 +712,31 @@ export function SettingsDialog({ onClose }: Props) {
                 AK/SK stored in <code>.env</code>. Uploaded references get a
                 presigned URL (bucket stays private) and auto-delete via a
                 bucket lifecycle rule set on save.
+              </div>
+            </Field>
+
+            <Field label="Asset library (ByteDance character refs)">
+              <input
+                type="text"
+                value={
+                  config.arkAssets?.projectName ??
+                  shared?.ark_project_name ??
+                  ARK_ASSET_DEFAULTS.projectName
+                }
+                onChange={(e) => setArkAssetsField("projectName", e.currentTarget.value)}
+                className={fieldClass(
+                  "w-full bg-inset px-2 py-1 font-mono text-xs",
+                  !config.arkAssets?.projectName && !!shared?.ark_project_name,
+                )}
+                placeholder="Ark project"
+                title="Ark project name. Shared config YAML key: ark_project_name"
+              />
+              <div className="text-xs text-dim mt-1">
+                Needs Advanced Creation Rights. Signs with the TOS AK/SK above,
+                so that IAM user needs Ark asset permissions. Upload through
+                the ByteDance › Utility › Asset Library model: the prompt names
+                the group, and each source image becomes one asset in it.
+                Seedance runs then send those images as their library ids.
               </div>
             </Field>
 

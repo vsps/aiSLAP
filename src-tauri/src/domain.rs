@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 fn map_is_empty<K, V>(m: &HashMap<K, V>) -> bool {
     m.is_empty()
@@ -91,6 +91,17 @@ pub struct TosConfig {
     pub ref_expiry_days: Option<u32>,
 }
 
+/// BytePlus Ark private asset library targeting — which Ark project the
+/// ByteDance Asset Library node registers characters into (the group comes
+/// from the prompt). Credentials are the TOS IAM AK/SK. Defaults live in
+/// `src/lib/providers/arkOpenApi.ts`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArkAssetsConfig {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub project_name: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColorOverrides {
@@ -155,6 +166,8 @@ pub struct Config {
     /// persisted — Tauri's IPC deserialize had nowhere to put it.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tos: Option<TosConfig>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ark_assets: Option<ArkAssetsConfig>,
     /// Path to a read-only shared YAML config an admin maintains on a network
     /// share (provider keys, Turso, ffmpeg path, etc). Never written by
     /// aiSLAP. See `commands::config::load_shared_config`.
@@ -190,21 +203,35 @@ impl Default for Config {
             auto_check_updates: default_auto_check_updates(),
             last_dismissed_update_version: None,
             tos: None,
+            ark_assets: None,
             shared_config_path: None,
         }
     }
 }
 
-/// A model/node lock-out list, admin-authored only — aiSLAP never writes
-/// this back, so there is no Settings UI for it. Patterns are matched against
-/// `"<provider>/<node.id>"` (e.g. `"fal/*"`, `"bytedance/topaz_upscale_video"`)
-/// via `commands::models::model_visible`.
+/// Admin-authored adjustments to the shipped model registry — aiSLAP never
+/// writes any of this back, so there is no Settings UI for it. Every key is
+/// matched against `"<provider>/<node.id>"` (e.g. `"fal/*"`,
+/// `"bytedance/topaz_upscale_video"`).
+///
+/// `include`/`exclude` are the lock-out list, applied by
+/// `commands::models::model_visible`. `endpoints` remaps a node's endpoint,
+/// applied by `commands::models::endpoint_override`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ModelFilter {
+pub struct ModelOverrides {
     #[serde(default = "default_include_all")]
     pub include: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// Pattern → replacement `endpoint`. Lets a studio point a shipped model
+    /// at a private endpoint id (a provisioned BytePlus Ark `ep-…`, say)
+    /// without putting that id in `models/`, which ships to every install.
+    ///
+    /// `BTreeMap` rather than `HashMap` on purpose: the longest-pattern
+    /// tie-break and the load-time log lines both need a deterministic
+    /// iteration order.
+    #[serde(default)]
+    pub endpoints: BTreeMap<String, String>,
 }
 
 fn default_include_all() -> Vec<String> {
@@ -256,10 +283,12 @@ pub struct SharedConfig {
     #[serde(default)]
     pub tos_ref_expiry_days: Option<u32>,
     #[serde(default)]
+    pub ark_project_name: Option<String>,
+    #[serde(default)]
     pub colors: Option<ColorOverrides>,
 
     #[serde(default)]
-    pub models: Option<ModelFilter>,
+    pub models: Option<ModelOverrides>,
 }
 
 // `app-state.json` has no struct here on purpose.
@@ -455,6 +484,11 @@ pub struct GalleryImage {
     /// been renamed. Absent for SRC/ref images.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub model_id: Option<String>,
+    /// BytePlus Ark asset-library id (`asset-…`) when this file was registered
+    /// through the ByteDance Asset Library node. Drives the gallery's library
+    /// badge and the `asset://` substitution in Seedance runs.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ark_asset_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

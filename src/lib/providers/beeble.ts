@@ -1,6 +1,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
+import type { ModelKind } from "../types";
 import type {
   Provider,
   ProviderFile,
@@ -128,6 +129,9 @@ export class BeebleProvider implements Provider {
 
   async run(
     endpoint: string,
+    // Beeble derives image-vs-video from the endpoint itself
+    // (ENDPOINT_GENERATION_TYPE), so the node's kind adds nothing here.
+    _kind: ModelKind,
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,

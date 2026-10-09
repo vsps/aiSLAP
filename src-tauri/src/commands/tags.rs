@@ -110,6 +110,15 @@ pub(crate) fn model_id_from_sidecar(obj: &Map<String, Value>) -> Option<String> 
         .map(String::from)
 }
 
+/// Mirrors `model_id_from_sidecar` for `arkAssetId` — the BytePlus Ark
+/// asset-library id the ByteDance Asset Library node stamps on its output.
+pub(crate) fn ark_asset_id_from_sidecar(obj: &Map<String, Value>) -> Option<String> {
+    obj.get("arkAssetId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 fn eq_tag(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
@@ -200,6 +209,7 @@ fn record_from_sidecar(
             .get("generatedBy")
             .and_then(|v| v.as_str())
             .map(String::from),
+        ark_asset_id: ark_asset_id_from_sidecar(obj),
     })
 }
 
@@ -744,6 +754,7 @@ pub async fn project_tag_scan(
             tags: image_tags.clone(),
             generated_by: index.generated_by_for(rel),
             model_id: index.model_id_for(rel),
+            ark_asset_id: index.ark_asset_id_for(rel),
         };
         let Some(img) = try_make_gallery_image(&abs, fields, Some(&thumbs)) else {
             continue;

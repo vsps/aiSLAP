@@ -60,7 +60,8 @@ const SCHEMA: &[&str] = &[
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         deleted_at TEXT,
-        generated_by TEXT
+        generated_by TEXT,
+        ark_asset_id TEXT
     )",
     // Composite, leading with project_id — correct for the remote database,
     // which genuinely holds many projects. See SCHEMA_LOCAL for why the local
@@ -189,6 +190,11 @@ pub struct AssetRecord {
     /// existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated_by: Option<String>,
+    /// BytePlus Ark private asset-library id this file was registered under
+    /// (`asset-…`), from the sidecar's `arkAssetId`. Only the ByteDance
+    /// "Asset Library" utility node writes it; see docs/providers.md.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ark_asset_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,6 +411,13 @@ async fn local_db(path: &Path) -> AppResult<Arc<Database>> {
             "ALTER TABLE assets ADD COLUMN cost_usd_actual INTEGER",
         )
         .await?;
+        ensure_column(
+            &conn,
+            "assets",
+            "ark_asset_id",
+            "ALTER TABLE assets ADD COLUMN ark_asset_id TEXT",
+        )
+        .await?;
         // Local-only, and deliberately not in SCHEMA: an absolute path means
         // nothing in the shared remote database, where the same project is
         // mounted at a different place on every machine. Locally it is what
@@ -496,6 +509,13 @@ async fn open_remote(url: String, token: String) -> AppResult<Connection> {
             "ALTER TABLE assets ADD COLUMN cost_usd_actual INTEGER",
         )
         .await?;
+        ensure_column(
+            &conn,
+            "assets",
+            "ark_asset_id",
+            "ALTER TABLE assets ADD COLUMN ark_asset_id TEXT",
+        )
+        .await?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_assets_generated_by ON assets(project_id, generated_by)",
             (),
@@ -521,7 +541,7 @@ macro_rules! asset_columns {
     () => {
         "id, project_id, rel_path, content_hash, kind, provider, model_id, \
          endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
-         generated_by, cost_usd_actual"
+         generated_by, cost_usd_actual, ark_asset_id"
     };
 }
 // Re-exported by path so `trace` can splice the same column list into its own
@@ -546,6 +566,7 @@ fn row_to_asset(row: &Row) -> AppResult<AssetRecord> {
         deleted_at: opt_string(row, 13)?,
         generated_by: opt_string(row, 14)?,
         cost_usd_actual: row.get::<Option<i64>>(15).map_err(db_err)?.map(|n| n != 0),
+        ark_asset_id: opt_string(row, 16)?,
     })
 }
 
@@ -608,8 +629,8 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
     conn.execute(
         "INSERT INTO assets (id, project_id, rel_path, content_hash, kind, provider, model_id, \
              endpoint, combined_prompt, settings_json, cost_usd, created_at, updated_at, deleted_at, \
-             generated_by, cost_usd_actual)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?15)
+             generated_by, cost_usd_actual, ark_asset_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, ?14, ?15, ?16)
          ON CONFLICT(id) DO UPDATE SET
            project_id=excluded.project_id, rel_path=excluded.rel_path,
            content_hash=excluded.content_hash, kind=excluded.kind, provider=excluded.provider,
@@ -617,7 +638,8 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
            combined_prompt=excluded.combined_prompt, settings_json=excluded.settings_json,
            cost_usd=excluded.cost_usd, updated_at=excluded.updated_at, deleted_at=NULL,
            generated_by=excluded.generated_by,
-           cost_usd_actual=excluded.cost_usd_actual",
+           cost_usd_actual=excluded.cost_usd_actual,
+           ark_asset_id=excluded.ark_asset_id",
         params!(
             record.id.clone(),
             record.project_id.clone(),
@@ -633,7 +655,8 @@ async fn upsert_asset_row(conn: &Connection, record: &AssetRecord) -> AppResult<
             record.created_at.clone(),
             record.updated_at.clone().unwrap_or_default(),
             record.generated_by.clone(),
-            record.cost_usd_actual.map(i64::from)
+            record.cost_usd_actual.map(i64::from),
+            record.ark_asset_id.clone()
         ),
     )
     .await
@@ -1078,6 +1101,9 @@ pub struct TagIndex {
     /// frontend resolves the label from the model registry, which is fresher
     /// than a name stamped into a sidecar at generation time.
     pub model_id: HashMap<String, String>,
+    /// Ark asset-library id per asset, from `assets.ark_asset_id`. Absent for
+    /// everything not registered through the ByteDance Asset Library node.
+    pub ark_asset_id: HashMap<String, String>,
 }
 
 impl TagIndex {
@@ -1095,6 +1121,10 @@ impl TagIndex {
 
     pub fn model_id_for(&self, rel: &str) -> Option<String> {
         self.model_id.get(rel).cloned()
+    }
+
+    pub fn ark_asset_id_for(&self, rel: &str) -> Option<String> {
+        self.ark_asset_id.get(rel).cloned()
     }
 }
 
@@ -1117,7 +1147,7 @@ pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
     let conn = open_local(project_root).await?;
     let mut rows = conn
         .query(
-            "SELECT a.rel_path, t.tag, a.generated_by, a.model_id FROM assets a \
+            "SELECT a.rel_path, t.tag, a.generated_by, a.model_id, a.ark_asset_id FROM assets a \
              LEFT JOIN asset_tags t ON t.asset_id = a.id \
              WHERE a.deleted_at IS NULL",
             (),
@@ -1130,6 +1160,7 @@ pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
         let tag = opt_string(&row, 1)?;
         let generated_by = opt_string(&row, 2)?;
         let model_id = opt_string(&row, 3)?;
+        let ark_asset_id = opt_string(&row, 4)?;
         idx.indexed.insert(rel.clone());
         if let Some(tag) = tag {
             idx.by_rel.entry(rel.clone()).or_default().push(tag);
@@ -1146,6 +1177,9 @@ pub async fn tags_all(project_root: &Path) -> AppResult<TagIndex> {
         // for a trim whose source had no sidecar. Guarding the one read that
         // feeds every scan covers all of them, and matches
         // `model_id_from_sidecar`'s filter on the fallback path.
+        if let Some(ark_asset_id) = ark_asset_id.filter(|s| !s.is_empty()) {
+            idx.ark_asset_id.insert(rel.clone(), ark_asset_id);
+        }
         if let Some(model_id) = model_id.filter(|s| !s.is_empty()) {
             idx.model_id.insert(rel, model_id);
         }
@@ -1624,6 +1658,10 @@ fn reconcile_one_file(
                 deleted_at: None,
                 generated_by: obj
                     .get("generatedBy")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                ark_asset_id: obj
+                    .get("arkAssetId")
                     .and_then(|v| v.as_str())
                     .map(String::from),
             })));
@@ -2136,6 +2174,30 @@ mod tests {
         // model, so it belongs under no model chip.
         assert!(idx.is_indexed("seq1/shot1/SRC/ref.png"));
         assert!(idx.model_id_for("seq1/shot1/SRC/ref.png").is_none());
+    }
+
+    #[tokio::test]
+    async fn tags_all_carries_ark_asset_id_through_upsert() {
+        let project = TestProject::new("db");
+        let root = project.root.clone();
+
+        // Round-trips through the upsert, the column list and the index query.
+        let mut registered = asset("k-a", "seq1/shot1/gen001/char.png");
+        registered.ark_asset_id = Some("asset-abc123".to_string());
+        asset_upsert(&root, registered).await.unwrap();
+        asset_upsert(&root, asset("k-b", "seq1/shot1/gen001/plain.png"))
+            .await
+            .unwrap();
+
+        let idx = tags_all(&root).await.unwrap();
+        assert_eq!(
+            idx.ark_asset_id_for("seq1/shot1/gen001/char.png")
+                .as_deref(),
+            Some("asset-abc123")
+        );
+        assert!(idx
+            .ark_asset_id_for("seq1/shot1/gen001/plain.png")
+            .is_none());
     }
 
     #[tokio::test]

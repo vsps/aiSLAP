@@ -1,6 +1,7 @@
 // Provider abstraction. Hides SDK differences so runJob stays single-purpose.
 
 import { isVideoExt } from "../media";
+import type { ModelKind } from "../types";
 
 export type ProviderProgress =
   | { kind: "queued"; position?: number }
@@ -22,6 +23,10 @@ export type ProviderFile = {
   /** Inline text payload (no URL) written verbatim to a .txt sidecar — used
    *  for non-media outputs like SAM3 image embeddings (base64). */
   inlineText?: string;
+  /** BytePlus Ark asset-library id, when this file was registered as a
+   *  library asset (the ByteDance Asset Library node). Stamped into its
+   *  sidecar as `arkAssetId`. */
+  arkAssetId?: string;
 };
 
 export type ProviderOutput = {
@@ -46,9 +51,16 @@ export interface Provider {
   /** Submit, poll, and return normalized output. Surfaces queue events via `onProgress`.
    *  `hooks.onSubmitted(requestId)` fires the moment the provider returns a
    *  request id (used by the orphan-recovery layer to persist a record before
-   *  we await the result). Optional. */
+   *  we await the result). Optional.
+   *
+   *  `kind` is the node's declared/inferred output kind. It is required, not
+   *  optional, because ByteDance uses it to pick between two unrelated Ark
+   *  APIs (see bytedance.ts) — an implicit `undefined` there would silently
+   *  post an image job to the video task endpoint. Providers that serve one
+   *  API per endpoint ignore it. */
   run(
     endpoint: string,
+    kind: ModelKind,
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,

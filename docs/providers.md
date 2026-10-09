@@ -14,7 +14,7 @@ and caches one instance per name (an unknown or absent name resolves to `"fal"`)
 ```ts
 prepare()                      // one-time setup, e.g. configure the SDK client
 uploadFile(path): Promise<url> // make a local file reachable by the API
-run(input, hooks): Promise<ProviderOutput>
+run(endpoint, kind, input, signal, onProgress, hooks?): Promise<ProviderOutput>
 ```
 
 - `ProviderProgress` — status text pushed to the queue checklist and the log.
@@ -22,6 +22,9 @@ run(input, hooks): Promise<ProviderOutput>
   resolution when a response returns extras) and `inlineText` for text payloads.
 - `ProviderRunHooks` — notably `onSubmitted(requestId)`, which persists the pending
   record *before* the result is awaited. That is the orphan-recovery hook.
+- `kind` is the node's output kind, and is **required** even though only bytedance
+  reads it. Optional would compile at every call site while silently mis-routing one
+  of them; required turns that into a typecheck failure.
 
 ## 2. The four providers
 
@@ -33,17 +36,76 @@ live cost estimate that gets stamped into the sidecar on success.
 
 **replicate** (`replicate.ts`) — `replicate` SDK, prediction polling.
 
-**bytedance** (`bytedance.ts`) — **two unrelated BytePlus APIs behind one `Provider`**:
+**bytedance** (`bytedance.ts`) — **three API surfaces behind one `Provider`**, two of
+them on Ark and one a different BytePlus product entirely:
 
-| | Ark | VOD AI MediaKit |
-|---|---|---|
-| What | Seedance / Seedream generation | video enhancement |
-| Key | `BYTEDANCE_API_KEY` | `BYTEDANCE_MEDIAKIT_API_KEY` |
-| Selected by | anything else | the `"mediakit-enhance-video"` endpoint sentinel |
+| | Ark tasks | Ark images | VOD AI MediaKit |
+|---|---|---|---|
+| What | Seedance video | Seedream images | video enhancement |
+| Shape | async: submit, poll, cancel | synchronous, one request | async: submit, poll |
+| Body | `content[]`-wrapped | flat | flat |
+| Key | `BYTEDANCE_API_KEY` | `BYTEDANCE_API_KEY` | `BYTEDANCE_MEDIAKIT_API_KEY` |
+| Selected by | anything else | node `kind === "image"` | the `"mediakit-enhance-video"` sentinel |
 
-`run()` dispatches on that sentinel; each half has its own base URL, terminal-status
-set and request shape. Uploads for both go through TOS (`tos.ts`), because Ark will
-not accept inline data.
+MediaKit is checked first, on its endpoint sentinel — its node is `video` like
+Seedance, so `kind` cannot separate those two. The **Ark** split then keys on the
+node's `kind` rather than on the endpoint string, because Ark takes a published model
+id or a provisioned `ep-…` endpoint id interchangeably in the same `model` field, and
+an admin can swap one for the other (§3a). A hardcoded list of image-model ids used to
+do this job and would miss every such override — posting an image job to the video task
+API, which fails in a way that looks nothing like the cause.
+
+Each surface has its own base URL, terminal-status set and request shape. Uploads for
+all of them go through TOS (`tos.ts`), because Ark will not accept inline data.
+
+### The private asset library (`ark-asset-create`)
+
+A fourth surface: Ark's **management** OpenAPI (`arkOpenApi.ts`), which registers a
+character image in the account's private asset library ("Advanced Creation Rights").
+Seedance 2.0 / 2.5 then accept it as `asset://<id>` wherever an image URL goes, which is
+how a consistent virtual character gets past the face filters.
+
+| | |
+|---|---|
+| Host | `ark.ap-southeast-1.byteplusapi.com`, `POST /?Action=…&Version=2024-01-01` |
+| Auth | **IAM AK/SK**, OpenAPI V4 `HMAC-SHA256` signing (service `ark`) — *not* the Bearer key. Reuses `tos_ak`/`tos_sk`, so that IAM user needs Ark asset permissions |
+| Errors | `ResponseMetadata.Error`, returned with **HTTP 200** — check it, not just `res.ok` |
+| Selected by | the `"ark-asset-create"` sentinel (its node is `image` like Seedream) |
+| Node | `models/bytedance/asset-library.json` → ByteDance › Utility › Asset Library |
+
+What a run does:
+
+1. The source refs go to TOS as usual. `CreateAsset` takes a public https `URL`, not
+   bytes.
+2. The **first prompt line names the group**: one group per character.
+   `ListAssetGroups`/`CreateAssetGroup` finds it or creates it.
+3. **Every source image** (untagged images sweep into `source`, up to 30) gets a
+   `CreateAsset` named `<group>_01`, `_02`, …
+4. All of them are polled with `GetAsset` until `Active`.
+
+Each output is the registered image itself, written to the version folder with its own
+`arkAssetId` in its sidecar (`ProviderFile.arkAssetId`, so it is per file, not per job).
+An image that is rejected (`Failed`) or never goes Active is logged and skipped, and the
+job only throws when *none* registered. The others already hold library slots, and
+throwing would orphan them with no gallery file.
+
+- **Explicit on purpose.** Library capacity and `CreateAsset` rate are tier-limited and
+  shared with the real-human library, so nothing is ever registered implicitly.
+- **Throttling is retried.** `CreateAsset` is capped at 3/min (Entry), 120 (Advanced)
+  and 300 (Premium). An `ArkApiError` with `isThrottled` waits 21 s and retries, up to 6
+  times, so a large batch on the Entry tier takes minutes, not seconds.
+- **Not cancellable once created.** Abort stops the wait; the asset stays. Delete it in
+  the BytePlus console. There is no list/delete UI in aiSLAP.
+- **`GetAsset`'s `URL` is a temporary signed link.** It is stripped before the response
+  reaches `providerResponse`.
+- **Images only, AIGC groups only.** Real-human (`LivenessFace`) groups need an H5
+  liveness flow that isn't implemented. Video/audio assets exist in the API but are
+  unverified.
+- The Ark project comes from Settings (`Config.arkAssets.projectName`) → shared
+  `ark_project_name` → `ARK_ASSET_DEFAULTS` (`default`). There is no group setting,
+  because the prompt names the group.
+
+How the id is consumed is in [generation-pipeline.md](generation-pipeline.md) §4.
 
 **beeble** (`beeble.ts`) — [Beeble](https://developer.beeble.ai/docs)'s SwitchX
 relighting / background replacement. The simplest of the four: `x-api-key` auth, one
@@ -105,11 +167,27 @@ snake_case key matching the `Config` field. Every field in Settings shows a mous
 hint naming its key, and highlights when its value is inherited rather than typed
 locally.
 
-The same file can also carry a `models:` section — `include`/`exclude` glob lists
-(default `include: ["*"]`) matched against `"<provider>/<node.id>"` — to lock out
-models or whole providers org-wide. That list is YAML-only: aiSLAP never writes it,
-and there is deliberately no Settings UI for it. See
-`commands/models.rs::model_visible`.
+The same file can also carry a `models:` section, keyed throughout against
+`"<provider>/<node.id>"`. It is YAML-only: aiSLAP never writes it, and there is
+deliberately no Settings UI for any of it.
+
+- **`include`/`exclude`** — glob lists (default `include: ["*"]`) that lock out models
+  or whole providers org-wide. See `commands/models.rs::model_visible`.
+- **`endpoints`** — pattern → replacement endpoint, for pointing a shipped model at a
+  private endpoint id. See [model-registry.md](model-registry.md) §9b.
+
+> **`endpoints` is not safe to point at an arbitrary string on every provider.** Three
+> providers read the endpoint as something other than an opaque route:
+>
+> - **beeble** derives `generation_type` from it and **throws** on anything that is not
+>   `switchx-image` or `switchx-video` (`beeble.ts`'s `ENDPOINT_GENERATION_TYPE`).
+> - **replicate** parses it as `owner/model[:version]` and throws without the `/`.
+> - **bytedance**'s `mediakit-enhance-video` and `ark-asset-create` are *routing
+>   sentinels*, not real endpoints — they select the AI MediaKit and asset-library
+>   halves of the provider. Remapping either sends the job to Ark instead.
+>
+> Ark's Seedance/Seedream endpoints are the intended use: Ark accepts a published model
+> id or a provisioned `ep-…` endpoint id in the same `model` field, interchangeably.
 
 ## 4. Adding a provider
 

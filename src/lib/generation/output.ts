@@ -199,6 +199,7 @@ export async function downloadAndWrite(ctx: DownloadCtx): Promise<string[]> {
       ? Math.min(ctx.iterationBase + i, ctx.iterationTotal)
       : ctx.iterationBase;
     const meta = buildMetadataRecord(ctx, iterIdx, identity, costPerFile, geometry);
+    if (f.arkAssetId) meta.arkAssetId = f.arkAssetId;
     await cmd.image_metadata_write(target, meta);
     await recordAsset(ctx.projectPath, target, meta, identity);
     written.push(target);
@@ -343,6 +344,7 @@ export async function recordAsset(
     costUsd: meta.costUsd,
     createdAt: meta.timestamp,
     generatedBy: meta.generatedBy,
+    arkAssetId: meta.arkAssetId,
   };
   await cmd.asset_upsert(projectPath, record).catch(() => {});
 

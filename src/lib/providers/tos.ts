@@ -231,11 +231,11 @@ async function deriveSigningKey(
 
 // ---------- primitives ----------
 
-function utf8(s: string): Uint8Array {
+export function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-async function hmac(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
+export async function hmac(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,
@@ -246,11 +246,11 @@ async function hmac(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayB
   return crypto.subtle.sign("HMAC", cryptoKey, utf8(data));
 }
 
-async function sha256Hex(s: string): Promise<string> {
+export async function sha256Hex(s: string): Promise<string> {
   return toHex(await crypto.subtle.digest("SHA-256", utf8(s)));
 }
 
-function toHex(buf: ArrayBuffer): string {
+export function toHex(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let out = "";
   for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, "0");

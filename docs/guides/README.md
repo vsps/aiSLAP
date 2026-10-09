@@ -7,6 +7,7 @@ Task-shaped walkthroughs. Each one is a single workflow, start to finish.
 | [quickstart.md](quickstart.md) | Install, set a key, make your first image |
 | [quickstart-img2img.md](quickstart-img2img.md) | Reference images, prompt blocks, ref roles, negative prompts |
 | [quickstart-img2video.md](quickstart-img2video.md) | Animate a still with start/end frames |
+| [bytedance-asset-library.md](bytedance-asset-library.md) | Register a character in the ByteDance library and use it in Seedance |
 
 Looking for how it works rather than how to use it? See [../README.md](../README.md).
 

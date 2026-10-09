@@ -12,7 +12,7 @@ use crate::commands::fsutil::{
 };
 use crate::commands::media_id::{file_hash_impl, media_id_embed_impl};
 use crate::commands::refroots;
-use crate::commands::tags::tags_from_sidecar;
+use crate::commands::tags::{ark_asset_id_from_sidecar, tags_from_sidecar};
 use crate::commands::thumbs;
 use crate::db::{self, AssetRecord};
 use crate::domain::{RefScope, ShotSidecar};
@@ -308,6 +308,7 @@ fn reidentify_copy(dest: &Path) -> Option<NewAssetInfo> {
                 .get("generatedBy")
                 .and_then(|v| v.as_str())
                 .map(String::from),
+            ark_asset_id: ark_asset_id_from_sidecar(&obj),
         },
         tags_from_sidecar(&obj),
     ))

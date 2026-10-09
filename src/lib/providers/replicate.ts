@@ -2,6 +2,7 @@ import Replicate from "replicate";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
+import type { ModelKind } from "../types";
 import {
   isVideoUrl,
   type Provider,
@@ -50,6 +51,8 @@ export class ReplicateProvider implements Provider {
 
   async run(
     endpoint: string,
+    // Replicate routes one API per endpoint — the node's kind adds nothing here.
+    _kind: ModelKind,
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,

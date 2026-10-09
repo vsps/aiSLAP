@@ -300,6 +300,10 @@ Notes that are easy to get wrong:
 - **Prefix queries use a range predicate**, not `LIKE` and not a full scan filtered in
   Rust: `rel_path = p OR (rel_path >= "p/" AND rel_path < "p0")`, since `'/' + 1 == '0'`.
   An index can serve that.
+- **`assets.ark_asset_id`** mirrors the sidecar's `arkAssetId` (BytePlus asset-library
+  id, see [providers.md](providers.md)) so a gallery scan can badge library assets from
+  the index. Added by `ensure_column`, locally and remotely; carried by every
+  sidecar→record mapping (`record_from_sidecar`, `reidentify_copy`, reconcile).
 - **Batch writes are batched.** `assets_relink`, `assets_cost_update`, `assets_ingest`
   and `asset_tags_apply` each take a slice and run in one transaction. The per-row
   variants they replaced opened the database once per row.

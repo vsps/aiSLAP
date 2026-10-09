@@ -4,7 +4,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { cmd } from "../tauri";
 import { getSharedConfigCached } from "../metadataCache";
-import type { FalLifecycle } from "../types";
+import type { FalLifecycle, ModelKind } from "../types";
 import {
   isVideoUrl,
   type Provider,
@@ -81,6 +81,8 @@ export class FalProvider implements Provider {
 
   async run(
     endpoint: string,
+    // fal routes one API per endpoint — the node's kind adds nothing here.
+    _kind: ModelKind,
     input: Record<string, unknown>,
     signal: AbortSignal,
     onProgress: (e: ProviderProgress) => void,
