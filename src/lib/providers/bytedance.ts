@@ -3,6 +3,13 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { cmd } from "../tauri";
 import { getSharedConfigCached } from "../metadataCache";
 import {
+  ARK_ASSET_DEFAULTS,
+  arkOpenApi,
+  ensureAssetGroup,
+  type ArkAsset,
+  type ArkCreds,
+} from "./arkOpenApi";
+import {
   ensureRefLifecycleRule,
   TOS_DEFAULTS,
   uploadToTos,
@@ -50,6 +57,29 @@ const MEDIAKIT_TOP_LEVEL_FIELDS = new Set([
   "fps",
   "bit_depth",
 ]);
+
+// Private asset library (Advanced Creation Rights) — registers one character
+// image as an Ark asset whose id Seedance takes as `asset://<id>`. A routing
+// sentinel like MediaKit's: its node is `image` like Seedream, so `kind`
+// cannot separate the two. See arkOpenApi.ts for the management API.
+const ARK_ASSET_CREATE_ENDPOINT = "ark-asset-create";
+
+/** Whether a node takes library refs as `asset://<id>` in place of an upload.
+ *  Seedance only: Seedream rejects `asset://`, and MediaKit is another
+ *  product. Seedance is the ByteDance `video` kind that isn't MediaKit. */
+export function acceptsArkAssetRefs(node: {
+  provider?: string;
+  kind?: string;
+  endpoint: string;
+}): boolean {
+  return (
+    node.provider === "bytedance" &&
+    node.kind === "video" &&
+    node.endpoint !== MEDIAKIT_ENHANCE_ENDPOINT
+  );
+}
+const ASSET_POLL_MS = 3000;
+const ASSET_MAX_POLLS = 100; // ~5 min — registration is normally seconds
 
 type Task = {
   id?: string;
@@ -117,6 +147,9 @@ export class BytedanceProvider implements Provider {
   private key = "";
   private mediaKitKey = "";
   private tos: TosConfig | null = null;
+  private iam: ArkCreds | null = null;
+  private assetGroup: string = ARK_ASSET_DEFAULTS.groupName;
+  private assetProject: string = ARK_ASSET_DEFAULTS.projectName;
 
   async prepare(): Promise<void> {
     const [key, mediaKitKey, ak, sk, cfg, shared] = await Promise.all([
@@ -133,6 +166,12 @@ export class BytedanceProvider implements Provider {
     // throws for its own key at point of use instead.
     this.key = key;
     this.mediaKitKey = mediaKitKey;
+    // The asset library signs with the same IAM AK/SK as TOS.
+    this.iam = ak && sk ? { accessKeyId: ak, secretAccessKey: sk } : null;
+    this.assetGroup =
+      cfg?.arkAssets?.groupName || shared?.ark_asset_group || ARK_ASSET_DEFAULTS.groupName;
+    this.assetProject =
+      cfg?.arkAssets?.projectName || shared?.ark_project_name || ARK_ASSET_DEFAULTS.projectName;
 
     // TOS is only needed to host reference material. A text-only job has no
     // refs and never calls uploadFile, so missing TOS creds must NOT fail
@@ -187,6 +226,9 @@ export class BytedanceProvider implements Provider {
     // endpoint id and must never be remapped by a shared-config override.
     if (endpoint === MEDIAKIT_ENHANCE_ENDPOINT) {
       return this.runMediaKit(input, signal, onProgress, hooks);
+    }
+    if (endpoint === ARK_ASSET_CREATE_ENDPOINT) {
+      return this.runAssetCreate(input, signal, onProgress);
     }
     if (kind === "image") {
       return this.runImageGen(endpoint, input, signal, onProgress);
@@ -350,6 +392,76 @@ export class BytedanceProvider implements Provider {
     return unwrapMediaKit(task);
   }
 
+  // Registers the source image (already on TOS — CreateAsset needs a public
+  // https URL, and uploadRefs handed us a presigned one) and waits for it to
+  // go Active. The output is that same image, so the job lands in the gallery
+  // like any other, with the id stamped into its sidecar. No onSubmitted hook:
+  // recovery.ts only resumes fal jobs.
+  private async runAssetCreate(
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    onProgress: (e: ProviderProgress) => void,
+  ): Promise<ProviderOutput> {
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    if (!this.iam) {
+      throw new Error(
+        "The ByteDance asset library signs with the TOS Access Key ID / Secret Access Key — configure them in Settings → APIs.",
+      );
+    }
+    const imageUrl = toUrlList(input.image_url)[0];
+    if (!imageUrl) throw new Error("Asset Library upload needs one source image.");
+
+    const name = assetNameFrom(input.prompt);
+    const groupId = await ensureAssetGroup(this.iam, this.assetGroup, this.assetProject, signal);
+    onProgress({ kind: "queued" });
+    const created = await arkOpenApi<{ Id?: string }>(
+      "CreateAsset",
+      {
+        GroupId: groupId,
+        URL: imageUrl,
+        AssetType: "Image",
+        Name: name,
+        ProjectName: this.assetProject,
+      },
+      this.iam,
+      signal,
+    );
+    const assetId = created.Id;
+    if (!assetId) throw new Error("Ark CreateAsset returned no asset id.");
+
+    // Not cancellable once created — aborting stops the wait, and the asset
+    // (and its library slot) stays registered. Delete it in the console.
+    let asset: ArkAsset = { Id: assetId };
+    let polls = 0;
+    onProgress({ kind: "running" });
+    while (asset.Status !== "Active") {
+      if (asset.Status === "Failed") {
+        throw new Error(
+          `Ark rejected asset ${assetId}: ${JSON.stringify(stripUrl(asset)).slice(0, 500)}`,
+        );
+      }
+      if (++polls > ASSET_MAX_POLLS) {
+        throw new Error(
+          `Ark asset ${assetId} still "${asset.Status ?? "unknown"}" after ${ASSET_MAX_POLLS} polls — check the BytePlus console.`,
+        );
+      }
+      await sleep(ASSET_POLL_MS, signal);
+      asset = await arkOpenApi<ArkAsset>(
+        "GetAsset",
+        { Id: assetId, ProjectName: this.assetProject },
+        this.iam,
+        signal,
+      );
+    }
+
+    onProgress({ kind: "completed" });
+    return {
+      files: [{ url: imageUrl, isVideo: false }],
+      raw: { ...stripUrl(asset), GroupId: asset.GroupId ?? groupId, GroupName: this.assetGroup },
+      arkAssetId: assetId,
+    };
+  }
+
   private async request<T>(method: string, url: string, key: string, body?: unknown): Promise<T> {
     const res = await tauriFetch(url, {
       method,
@@ -493,6 +605,21 @@ function unwrapMediaKit(task: MediaKitTask): ProviderOutput {
   const videoUrl = task.result?.video_url;
   if (videoUrl) files.push({ url: videoUrl, isVideo: true });
   return { files, raw: task };
+}
+
+/** The prompt box's first line names the asset. The source filename isn't
+ *  available here (the TOS key is a uuid), so an empty prompt gets a
+ *  timestamped placeholder — rename it in the console. */
+function assetNameFrom(prompt: unknown): string {
+  const typed = typeof prompt === "string" ? prompt.trim().split("\n")[0].trim() : "";
+  if (typed) return typed.slice(0, 64);
+  return `aiSLAP ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+}
+
+/** GetAsset's URL is a temporary signed link — never let it reach a sidecar. */
+function stripUrl(asset: ArkAsset): Omit<ArkAsset, "URL"> {
+  const { URL: _url, ...rest } = asset;
+  return rest;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

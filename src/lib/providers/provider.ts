@@ -35,6 +35,10 @@ export type ProviderOutput = {
    *  real billed amount via fal's billing-events API. Undefined for other
    *  providers (no equivalent lookup exists for them). */
   requestId?: string;
+  /** BytePlus Ark asset-library id, when the job registered its input as a
+   *  library asset (the ByteDance Asset Library node). Stamped into the
+   *  sidecar as `arkAssetId`. */
+  arkAssetId?: string;
 };
 
 export interface Provider {

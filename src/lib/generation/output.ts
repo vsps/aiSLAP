@@ -343,6 +343,7 @@ export async function recordAsset(
     costUsd: meta.costUsd,
     createdAt: meta.timestamp,
     generatedBy: meta.generatedBy,
+    arkAssetId: meta.arkAssetId,
   };
   await cmd.asset_upsert(projectPath, record).catch(() => {});
 
@@ -448,6 +449,7 @@ function buildMetadataRecord(
     assetId: identity.assetId,
     contentHash: identity.contentHash,
     generatedBy: currentUsername(),
+    arkAssetId: ctx.out.arkAssetId,
   };
 }
 

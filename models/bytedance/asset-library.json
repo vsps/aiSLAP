@@ -1,0 +1,23 @@
+{
+  "$schema": "../../docs/model.schema.json",
+  "provider": "bytedance",
+  "family": "Asset Library",
+  "category": "ByteDance/Utility",
+  "nodes": [
+    {
+      "id": "bytedance_asset_library_upload",
+      "name": "Upload Character Ref",
+      "endpoint": "ark-asset-create",
+      "inputs": [
+        { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
+      ],
+      "outputs": [
+        { "name": "image", "data_type": "IMAGE", "api_field": "image" }
+      ],
+      "ref_roles": [
+        { "role": "source", "api_field": "image_url", "max": 1 }
+      ]
+    }
+  ]
+}

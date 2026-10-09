@@ -354,6 +354,18 @@ export const Thumbnail = memo(function Thumbnail({
           deployed_code
         </span>
       )}
+      {/* Ark library badge — top-right, which only video/3D tiles otherwise
+          use, and library assets are stills. Marks a file Seedance will send
+          as `asset://<id>` instead of uploading. */}
+      {image.arkAssetId && !image.isVideo && !image.isModel3d && (
+        <span
+          className="absolute top-1 right-1 material-symbols-outlined text-text drop-shadow"
+          style={{ fontSize: 18 }}
+          title={`ByteDance library asset ${image.arkAssetId}`}
+        >
+          badge
+        </span>
+      )}
       {/* Tag dots — always on, top-left (the one free corner), so a tagged
           image reads as tagged without hovering. */}
       {tags.length > 0 && (
@@ -437,6 +449,11 @@ export const Thumbnail = memo(function Thumbnail({
           <div className="font-mono text-text truncate">{image.filename}</div>
           {dimsLabel && (
             <div className="text-dim font-mono truncate">{dimsLabel}</div>
+          )}
+          {(tooltipMeta?.arkAssetId ?? image.arkAssetId) && (
+            <div className="text-dim font-mono truncate">
+              library: {tooltipMeta?.arkAssetId ?? image.arkAssetId}
+            </div>
           )}
           {tooltipPrompt && (
             <div className="text-dim mt-0.5 line-clamp-2 whitespace-pre-wrap">

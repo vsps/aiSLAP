@@ -58,6 +58,41 @@ API, which fails in a way that looks nothing like the cause.
 Each surface has its own base URL, terminal-status set and request shape. Uploads for
 all of them go through TOS (`tos.ts`), because Ark will not accept inline data.
 
+### The private asset library (`ark-asset-create`)
+
+A fourth surface: Ark's **management** OpenAPI (`arkOpenApi.ts`), which registers a
+character image in the account's private asset library ("Advanced Creation Rights").
+Seedance 2.0 / 2.5 then accept it as `asset://<id>` wherever an image URL goes, which is
+how a consistent virtual character gets past the face filters.
+
+| | |
+|---|---|
+| Host | `ark.ap-southeast-1.byteplusapi.com`, `POST /?Action=…&Version=2024-01-01` |
+| Auth | **IAM AK/SK**, OpenAPI V4 `HMAC-SHA256` signing (service `ark`) — *not* the Bearer key. Reuses `tos_ak`/`tos_sk`, so that IAM user needs Ark asset permissions |
+| Errors | `ResponseMetadata.Error`, returned with **HTTP 200** — check it, not just `res.ok` |
+| Selected by | the `"ark-asset-create"` sentinel (its node is `image` like Seedream) |
+| Node | `models/bytedance/asset-library.json` → ByteDance › Utility › Asset Library |
+
+What a run does: the source ref goes to TOS as usual (`CreateAsset` takes a public
+https `URL`, not bytes), then `ListAssetGroups`/`CreateAssetGroup` finds or creates the
+AIGC group, then `CreateAsset` → poll `GetAsset` until `Active` (`Failed` throws). The
+output is the source image itself, landing in the version folder with `arkAssetId` in
+its sidecar. The first prompt line names the asset.
+
+- **Explicit on purpose.** Library capacity and `CreateAsset` rate are tier-limited and
+  shared with the real-human library, so nothing is ever registered implicitly.
+- **Not cancellable once created.** Abort stops the wait; the asset stays. Delete it in
+  the BytePlus console. There is no list/delete UI in aiSLAP.
+- **`GetAsset`'s `URL` is a temporary signed link.** It is stripped before the response
+  reaches `providerResponse`.
+- **Images only, AIGC groups only.** Real-human (`LivenessFace`) groups need an H5
+  liveness flow that isn't implemented. Video/audio assets exist in the API but are
+  unverified.
+- Group and Ark project come from Settings (`Config.arkAssets`) → shared
+  `ark_asset_group`/`ark_project_name` → `ARK_ASSET_DEFAULTS` (`aiSLAP` / `default`).
+
+How the id is consumed is in [generation-pipeline.md](generation-pipeline.md) §4.
+
 **beeble** (`beeble.ts`) — [Beeble](https://developer.beeble.ai/docs)'s SwitchX
 relighting / background replacement. The simplest of the four: `x-api-key` auth, one
 submit endpoint and one status endpoint, and presigned-PUT uploads that need no
@@ -133,9 +168,9 @@ deliberately no Settings UI for any of it.
 > - **beeble** derives `generation_type` from it and **throws** on anything that is not
 >   `switchx-image` or `switchx-video` (`beeble.ts`'s `ENDPOINT_GENERATION_TYPE`).
 > - **replicate** parses it as `owner/model[:version]` and throws without the `/`.
-> - **bytedance**'s `mediakit-enhance-video` is a *routing sentinel*, not a real
->   endpoint — it is what selects the AI MediaKit half of the provider. Remapping it
->   sends the job to Ark instead.
+> - **bytedance**'s `mediakit-enhance-video` and `ark-asset-create` are *routing
+>   sentinels*, not real endpoints — they select the AI MediaKit and asset-library
+>   halves of the provider. Remapping either sends the job to Ark instead.
 >
 > Ark's Seedance/Seedream endpoints are the intended use: Ark accepts a published model
 > id or a provisioned `ep-…` endpoint id in the same `model` field, interchangeably.

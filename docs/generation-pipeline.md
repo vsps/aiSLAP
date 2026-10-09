@@ -75,6 +75,15 @@ A ref carries a `RoleAssignment`, one of:
 Upload goes through `provider.uploadFile`. ByteDance uploads via TOS (`providers/tos.ts`)
 because Ark will not accept inline data.
 
+**Ark library refs skip the upload.** For a Seedance node (`acceptsArkAssetRefs` in
+`bytedance.ts`: ByteDance, `video`, not MediaKit), `uploadRefs` reads each image ref's
+sidecar and, when it carries `arkAssetId`, sends `asset://<id>` in place of a TOS URL.
+The request body is otherwise unchanged; `@ImageN` still counts by position. The sidecar
+is read at run time rather than captured on `RefImage`, because `enrichRefIdentity` is
+fire-and-forget and a run started straight after adding the ref would race it. A copy
+into SRC keeps the id (`reidentify_copy` carries the sidecar over). Seedream is excluded
+on purpose: it rejects `asset://`.
+
 ## 5. `args.ts` — settings + refs → the provider input object
 
 Two rules do most of the work here.

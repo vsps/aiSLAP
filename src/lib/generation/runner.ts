@@ -34,7 +34,8 @@ import type { ProviderProgress } from "../providers";
 import { extractErrorMessage, swallow } from "../errors";
 import { isJobTerminal } from "../jobs";
 import { buildArgs } from "../args";
-import { guessContentType } from "../media";
+import { classifyMedia, guessContentType } from "../media";
+import { acceptsArkAssetRefs } from "../providers/bytedance";
 import { playSound } from "../audio";
 import { downloadAndWrite } from "./output";
 
@@ -288,7 +289,12 @@ async function runJob(spec: JobSpec): Promise<void> {
     const provider = getProvider(spec.node.provider);
     await provider.prepare();
 
-    const uploaded = await uploadRefs(provider, spec.refs, controller.signal);
+    const uploaded = await uploadRefs(
+      provider,
+      spec.refs,
+      controller.signal,
+      acceptsArkAssetRefs(spec.node) ? (msg) => pushLog("INFO", msg, tag, spec.tabId) : null,
+    );
     if (controller.signal.aborted)
       throw new DOMException("aborted", "AbortError");
 
@@ -462,10 +468,25 @@ async function uploadRefs(
   },
   refs: RefImage[],
   signal: AbortSignal,
+  /** Non-null when the node takes Ark library refs (Seedance): an image ref
+   *  whose sidecar carries `arkAssetId` is sent as `asset://<id>` instead of
+   *  being uploaded, and this logs the substitution. */
+  logArkAsset: ((msg: string) => void) | null,
 ): Promise<UploadedRef[]> {
   const out: UploadedRef[] = [];
   for (const r of refs) {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    // Read at run time rather than captured at ref-add time: enrichRefIdentity
+    // is fire-and-forget, so a run started right after adding a ref could
+    // otherwise miss the id and quietly upload the file instead.
+    if (logArkAsset && classifyMedia(r.path) === "image") {
+      const meta = await cmd.image_metadata_read(r.path).catch(() => null);
+      if (meta?.arkAssetId) {
+        logArkAsset(`Using library asset ${meta.arkAssetId} for ${basename(r.path)}`);
+        out.push({ ref: r, url: `asset://${meta.arkAssetId}` });
+        continue;
+      }
+    }
     // fetch() against the asset:// protocol doesn't throw on a missing file —
     // it resolves with a 404 response — so an unchecked .blob() would upload
     // garbage/empty content and fail late with a confusing remote 500. Fail

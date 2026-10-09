@@ -14,7 +14,9 @@ use crate::commands::fsutil::{
     project_root_for, require_dir, sidecar_path, ProjectRoot, SEL_DIR, SHOT_SIDECAR, SRC_DIR,
 };
 use crate::commands::refroots;
-use crate::commands::tags::{generated_by_from_sidecar, model_id_from_sidecar, tags_from_sidecar};
+use crate::commands::tags::{
+    ark_asset_id_from_sidecar, generated_by_from_sidecar, model_id_from_sidecar, tags_from_sidecar,
+};
 use crate::commands::thumbs::ThumbCtx;
 use crate::commands::walk;
 use crate::db::TagIndex;
@@ -262,6 +264,7 @@ pub(crate) struct ResolvedFields {
     pub tags: Vec<String>,
     pub generated_by: Option<String>,
     pub model_id: Option<String>,
+    pub ark_asset_id: Option<String>,
 }
 
 /// Classify a single file as a `GalleryImage`, or `None` if it's not a
@@ -297,6 +300,7 @@ pub(crate) fn try_make_gallery_image(
         tags,
         generated_by,
         model_id,
+        ark_asset_id,
     } = fields;
     Some(GalleryImage {
         filename,
@@ -308,6 +312,7 @@ pub(crate) fn try_make_gallery_image(
         tags,
         generated_by,
         model_id,
+        ark_asset_id,
     })
 }
 
@@ -331,6 +336,7 @@ fn resolved_fields(
                 tags: index.tags_for(&rel),
                 generated_by: index.generated_by_for(&rel),
                 model_id: index.model_id_for(&rel),
+                ark_asset_id: index.ark_asset_id_for(&rel),
             };
         }
     }
@@ -346,6 +352,7 @@ fn resolved_fields(
         tags: tags_from_sidecar(obj),
         generated_by: generated_by_from_sidecar(obj),
         model_id: model_id_from_sidecar(obj),
+        ark_asset_id: ark_asset_id_from_sidecar(obj),
     }
 }
 

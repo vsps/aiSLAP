@@ -91,6 +91,19 @@ pub struct TosConfig {
     pub ref_expiry_days: Option<u32>,
 }
 
+/// BytePlus Ark private asset library targeting — which AIGC group and Ark
+/// project the ByteDance Asset Library node registers characters into.
+/// Credentials are the TOS IAM AK/SK. Defaults live in
+/// `src/lib/providers/arkOpenApi.ts`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArkAssetsConfig {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub group_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub project_name: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColorOverrides {
@@ -155,6 +168,8 @@ pub struct Config {
     /// persisted — Tauri's IPC deserialize had nowhere to put it.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tos: Option<TosConfig>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ark_assets: Option<ArkAssetsConfig>,
     /// Path to a read-only shared YAML config an admin maintains on a network
     /// share (provider keys, Turso, ffmpeg path, etc). Never written by
     /// aiSLAP. See `commands::config::load_shared_config`.
@@ -190,6 +205,7 @@ impl Default for Config {
             auto_check_updates: default_auto_check_updates(),
             last_dismissed_update_version: None,
             tos: None,
+            ark_assets: None,
             shared_config_path: None,
         }
     }
@@ -268,6 +284,10 @@ pub struct SharedConfig {
     pub tos_endpoint: Option<String>,
     #[serde(default)]
     pub tos_ref_expiry_days: Option<u32>,
+    #[serde(default)]
+    pub ark_asset_group: Option<String>,
+    #[serde(default)]
+    pub ark_project_name: Option<String>,
     #[serde(default)]
     pub colors: Option<ColorOverrides>,
 
@@ -468,6 +488,11 @@ pub struct GalleryImage {
     /// been renamed. Absent for SRC/ref images.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub model_id: Option<String>,
+    /// BytePlus Ark asset-library id (`asset-…`) when this file was registered
+    /// through the ByteDance Asset Library node. Drives the gallery's library
+    /// badge and the `asset://` substitution in Seedance runs.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ark_asset_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

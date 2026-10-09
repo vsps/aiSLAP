@@ -229,6 +229,9 @@ export type GalleryImage = {
    *  live registry and so follows a model that has since been renamed. Absent
    *  for SRC/ref images. */
   modelId?: string;
+  /** BytePlus Ark asset-library id (`asset-…`) when this file was registered
+   *  through the ByteDance Asset Library node — drives the library badge. */
+  arkAssetId?: string;
   /** True when the image hasn't been generated yet — renders a placeholder tile. */
   pending?: boolean;
 };
@@ -341,6 +344,14 @@ export type Config = {
     /** Days before uploaded refs auto-expire via the bucket lifecycle rule. */
     refExpiryDays?: number;
   };
+  /** BytePlus Ark private asset library — the AIGC group and Ark project the
+   *  ByteDance Asset Library node registers characters into. Credentials are
+   *  the TOS AK/SK. Absent fields defer to the shared config, then to
+   *  ARK_ASSET_DEFAULTS in lib/providers/arkOpenApi.ts. */
+  arkAssets?: {
+    groupName?: string;
+    projectName?: string;
+  };
   /** Background-check for app updates on launch. Default true. */
   autoCheckUpdates?: boolean;
   /** Version dismissed via the background auto-check's "Later" — suppresses
@@ -376,6 +387,8 @@ export type SharedConfig = {
   tos_region?: string;
   tos_endpoint?: string;
   tos_ref_expiry_days?: number;
+  ark_asset_group?: string;
+  ark_project_name?: string;
   colors?: ColorOverrides;
 
   /** Admin-authored adjustments to the shipped registry — YAML-only, never
@@ -769,6 +782,11 @@ export type ImageMetadata = {
    *  generated what, for how much" query. Absent on sidecars written before
    *  this field existed. */
   generatedBy?: string;
+  /** BytePlus Ark private asset-library id (`asset-…`), stamped by the
+   *  ByteDance Asset Library node. A Seedance run sends a ref carrying it as
+   *  `asset://<id>` instead of uploading the file (see runner.ts uploadRefs).
+   *  Travels with copies, so a ref copied into SRC keeps it. */
+  arkAssetId?: string;
 };
 
 // ---------- Tags ----------
@@ -813,6 +831,7 @@ export type AssetRecord = {
   updatedAt?: string;
   deletedAt?: string;
   generatedBy?: string;
+  arkAssetId?: string;
 };
 
 export type AssetRefRecord = {
