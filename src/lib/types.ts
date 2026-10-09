@@ -344,12 +344,11 @@ export type Config = {
     /** Days before uploaded refs auto-expire via the bucket lifecycle rule. */
     refExpiryDays?: number;
   };
-  /** BytePlus Ark private asset library — the AIGC group and Ark project the
-   *  ByteDance Asset Library node registers characters into. Credentials are
-   *  the TOS AK/SK. Absent fields defer to the shared config, then to
-   *  ARK_ASSET_DEFAULTS in lib/providers/arkOpenApi.ts. */
+  /** BytePlus Ark private asset library — the Ark project the ByteDance Asset
+   *  Library node registers characters into (the group comes from the
+   *  prompt). Credentials are the TOS AK/SK. Absent fields defer to the shared
+   *  config, then to ARK_ASSET_DEFAULTS in lib/providers/arkOpenApi.ts. */
   arkAssets?: {
-    groupName?: string;
     projectName?: string;
   };
   /** Background-check for app updates on launch. Default true. */
@@ -387,7 +386,6 @@ export type SharedConfig = {
   tos_region?: string;
   tos_endpoint?: string;
   tos_ref_expiry_days?: number;
-  ark_asset_group?: string;
   ark_project_name?: string;
   colors?: ColorOverrides;
 

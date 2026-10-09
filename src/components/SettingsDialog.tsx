@@ -259,7 +259,7 @@ export function SettingsDialog({ onClose }: Props) {
   }
 
   // Same one-field-at-a-time rule as setTosField.
-  function setArkAssetsField(key: "groupName" | "projectName", value: string) {
+  function setArkAssetsField(key: "projectName", value: string) {
     setConfig((c) => ({ ...c, arkAssets: { ...c.arkAssets, [key]: value } }));
   }
 
@@ -716,43 +716,27 @@ export function SettingsDialog({ onClose }: Props) {
             </Field>
 
             <Field label="Asset library (ByteDance character refs)">
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={
-                    config.arkAssets?.groupName ??
-                    shared?.ark_asset_group ??
-                    ARK_ASSET_DEFAULTS.groupName
-                  }
-                  onChange={(e) => setArkAssetsField("groupName", e.currentTarget.value)}
-                  className={fieldClass(
-                    "flex-1 bg-inset px-2 py-1 font-mono text-xs",
-                    !config.arkAssets?.groupName && !!shared?.ark_asset_group,
-                  )}
-                  placeholder="asset group"
-                  title="AIGC asset group uploads go into, created on first use. Shared config YAML key: ark_asset_group"
-                />
-                <input
-                  type="text"
-                  value={
-                    config.arkAssets?.projectName ??
-                    shared?.ark_project_name ??
-                    ARK_ASSET_DEFAULTS.projectName
-                  }
-                  onChange={(e) => setArkAssetsField("projectName", e.currentTarget.value)}
-                  className={fieldClass(
-                    "w-32 bg-inset px-2 py-1 font-mono text-xs",
-                    !config.arkAssets?.projectName && !!shared?.ark_project_name,
-                  )}
-                  placeholder="Ark project"
-                  title="Ark project name. Shared config YAML key: ark_project_name"
-                />
-              </div>
+              <input
+                type="text"
+                value={
+                  config.arkAssets?.projectName ??
+                  shared?.ark_project_name ??
+                  ARK_ASSET_DEFAULTS.projectName
+                }
+                onChange={(e) => setArkAssetsField("projectName", e.currentTarget.value)}
+                className={fieldClass(
+                  "w-full bg-inset px-2 py-1 font-mono text-xs",
+                  !config.arkAssets?.projectName && !!shared?.ark_project_name,
+                )}
+                placeholder="Ark project"
+                title="Ark project name. Shared config YAML key: ark_project_name"
+              />
               <div className="text-xs text-dim mt-1">
                 Needs Advanced Creation Rights. Signs with the TOS AK/SK above,
                 so that IAM user needs Ark asset permissions. Upload through
-                the ByteDance › Utility › Asset Library model. Seedance runs then
-                send that image as its library id.
+                the ByteDance › Utility › Asset Library model: the prompt names
+                the group, and each source image becomes one asset in it.
+                Seedance runs then send those images as their library ids.
               </div>
             </Field>
 

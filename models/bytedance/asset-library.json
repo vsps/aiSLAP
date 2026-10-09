@@ -10,13 +10,13 @@
       "endpoint": "ark-asset-create",
       "inputs": [
         { "name": "prompt", "data_type": "STRING", "api_field": "prompt", "required": true },
-        { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "required": true }
+        { "name": "image", "data_type": "IMAGE", "api_field": "image_url", "api_format": "array", "required": true, "max": 30 }
       ],
       "outputs": [
         { "name": "image", "data_type": "IMAGE", "api_field": "image" }
       ],
       "ref_roles": [
-        { "role": "source", "api_field": "image_url", "max": 1 }
+        { "role": "source", "api_field": "image_url", "max": 30 }
       ]
     }
   ]

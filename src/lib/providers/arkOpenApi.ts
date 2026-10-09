@@ -25,9 +25,27 @@ const VERSION = "2024-01-01";
 const ALGORITHM = "HMAC-SHA256";
 
 export const ARK_ASSET_DEFAULTS = {
-  groupName: "aiSLAP",
   projectName: "default",
 } as const;
+
+/** A failed Action call, keeping the HTTP status and API error code so a
+ *  caller can tell throttling (retry later) from a real rejection. */
+export class ArkApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = "ArkApiError";
+  }
+
+  /** 429, or a throttling-shaped error code — CreateAsset is rate-limited
+   *  per tier (3 / 120 / 300 per minute). */
+  get isThrottled(): boolean {
+    return this.status === 429 || /throttl|ratelimit|too ?many|qpm|flowlimit/i.test(this.code);
+  }
+}
 
 export type ArkCreds = {
   accessKeyId: string;
@@ -122,7 +140,11 @@ export async function arkOpenApi<T>(
       [err?.Code, err?.Message].filter(Boolean).join(": ") ||
       text.slice(0, 300) ||
       res.statusText;
-    throw new Error(`Ark ${action} failed (${res.status}): ${detail}`);
+    throw new ArkApiError(
+      `Ark ${action} failed (${res.status}): ${detail}`,
+      res.status,
+      err?.Code ?? "",
+    );
   }
   return (json.Result ?? {}) as T;
 }

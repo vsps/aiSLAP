@@ -91,15 +91,13 @@ pub struct TosConfig {
     pub ref_expiry_days: Option<u32>,
 }
 
-/// BytePlus Ark private asset library targeting — which AIGC group and Ark
-/// project the ByteDance Asset Library node registers characters into.
-/// Credentials are the TOS IAM AK/SK. Defaults live in
+/// BytePlus Ark private asset library targeting — which Ark project the
+/// ByteDance Asset Library node registers characters into (the group comes
+/// from the prompt). Credentials are the TOS IAM AK/SK. Defaults live in
 /// `src/lib/providers/arkOpenApi.ts`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArkAssetsConfig {
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub group_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub project_name: Option<String>,
 }
@@ -284,8 +282,6 @@ pub struct SharedConfig {
     pub tos_endpoint: Option<String>,
     #[serde(default)]
     pub tos_ref_expiry_days: Option<u32>,
-    #[serde(default)]
-    pub ark_asset_group: Option<String>,
     #[serde(default)]
     pub ark_project_name: Option<String>,
     #[serde(default)]

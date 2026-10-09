@@ -23,6 +23,10 @@ export type ProviderFile = {
   /** Inline text payload (no URL) written verbatim to a .txt sidecar — used
    *  for non-media outputs like SAM3 image embeddings (base64). */
   inlineText?: string;
+  /** BytePlus Ark asset-library id, when this file was registered as a
+   *  library asset (the ByteDance Asset Library node). Stamped into its
+   *  sidecar as `arkAssetId`. */
+  arkAssetId?: string;
 };
 
 export type ProviderOutput = {
@@ -35,10 +39,6 @@ export type ProviderOutput = {
    *  real billed amount via fal's billing-events API. Undefined for other
    *  providers (no equivalent lookup exists for them). */
   requestId?: string;
-  /** BytePlus Ark asset-library id, when the job registered its input as a
-   *  library asset (the ByteDance Asset Library node). Stamped into the
-   *  sidecar as `arkAssetId`. */
-  arkAssetId?: string;
 };
 
 export interface Provider {

@@ -10,9 +10,6 @@ reference, which keeps a virtual character consistent across shots.
 - Settings → APIs has the **TOS Access Key ID / Secret Access Key** filled in. The
   library uses the same IAM keys, so that IAM user needs Ark asset permissions as well
   as TOS.
-- Optional: in the same tab, under **Asset library**, set the group name. The default
-  is `aiSLAP`, and the group is created on first upload.
-
 ## 1. Register a character
 
 Library slots are limited, so registering is a deliberate step. Nothing is uploaded to
@@ -20,17 +17,23 @@ the library automatically.
 
 1. Pick **ByteDance › Utility › Asset Library → Upload Character Ref** in the model
    picker.
-2. Add **one** image as the source ref. Check it first:
+2. Add the character's images as refs, up to 30. Leave them untagged; they all count
+   as sources. Check each one first:
    - each side 300–6000 px
    - aspect ratio between 0.4 and 2.5
    - under 30 MB
-3. Type the character's name in the prompt box. The first line becomes the asset's
-   name in the BytePlus console.
-4. Generate. The job registers the image and waits until BytePlus marks it Active,
-   usually a few seconds.
+3. Type the character's name in the prompt box, e.g. `eva_digital_character`. That
+   becomes the **group** in the BytePlus console, and it's created if it doesn't exist.
+   The images become `eva_digital_character_01`, `_02`, and so on. Running it again
+   with the same name adds more images to the same group.
+4. Generate. The job registers every image and waits until BytePlus marks them Active.
+   That usually takes seconds, but on the Entry tier only 3 uploads per minute are
+   allowed, so a big batch takes a few minutes. The log shows when it's waiting on the
+   rate limit.
 
-The result is a copy of your image in the version folder, with a **badge icon in its
-top-right corner**. Hover it to see the library id (`asset-…`).
+You get one copy of each image in the version folder, each with a **badge icon in its
+top-right corner**. Hover a tile to see its library id (`asset-…`). If BytePlus rejects
+an image, the log says why and the rest still go through.
 
 ## 2. Use it in Seedance
 

@@ -73,14 +73,27 @@ how a consistent virtual character gets past the face filters.
 | Selected by | the `"ark-asset-create"` sentinel (its node is `image` like Seedream) |
 | Node | `models/bytedance/asset-library.json` → ByteDance › Utility › Asset Library |
 
-What a run does: the source ref goes to TOS as usual (`CreateAsset` takes a public
-https `URL`, not bytes), then `ListAssetGroups`/`CreateAssetGroup` finds or creates the
-AIGC group, then `CreateAsset` → poll `GetAsset` until `Active` (`Failed` throws). The
-output is the source image itself, landing in the version folder with `arkAssetId` in
-its sidecar. The first prompt line names the asset.
+What a run does:
+
+1. The source refs go to TOS as usual. `CreateAsset` takes a public https `URL`, not
+   bytes.
+2. The **first prompt line names the group**: one group per character.
+   `ListAssetGroups`/`CreateAssetGroup` finds it or creates it.
+3. **Every source image** (untagged images sweep into `source`, up to 30) gets a
+   `CreateAsset` named `<group>_01`, `_02`, …
+4. All of them are polled with `GetAsset` until `Active`.
+
+Each output is the registered image itself, written to the version folder with its own
+`arkAssetId` in its sidecar (`ProviderFile.arkAssetId`, so it is per file, not per job).
+An image that is rejected (`Failed`) or never goes Active is logged and skipped, and the
+job only throws when *none* registered. The others already hold library slots, and
+throwing would orphan them with no gallery file.
 
 - **Explicit on purpose.** Library capacity and `CreateAsset` rate are tier-limited and
   shared with the real-human library, so nothing is ever registered implicitly.
+- **Throttling is retried.** `CreateAsset` is capped at 3/min (Entry), 120 (Advanced)
+  and 300 (Premium). An `ArkApiError` with `isThrottled` waits 21 s and retries, up to 6
+  times, so a large batch on the Entry tier takes minutes, not seconds.
 - **Not cancellable once created.** Abort stops the wait; the asset stays. Delete it in
   the BytePlus console. There is no list/delete UI in aiSLAP.
 - **`GetAsset`'s `URL` is a temporary signed link.** It is stripped before the response
@@ -88,8 +101,9 @@ its sidecar. The first prompt line names the asset.
 - **Images only, AIGC groups only.** Real-human (`LivenessFace`) groups need an H5
   liveness flow that isn't implemented. Video/audio assets exist in the API but are
   unverified.
-- Group and Ark project come from Settings (`Config.arkAssets`) → shared
-  `ark_asset_group`/`ark_project_name` → `ARK_ASSET_DEFAULTS` (`aiSLAP` / `default`).
+- The Ark project comes from Settings (`Config.arkAssets.projectName`) → shared
+  `ark_project_name` → `ARK_ASSET_DEFAULTS` (`default`). There is no group setting,
+  because the prompt names the group.
 
 How the id is consumed is in [generation-pipeline.md](generation-pipeline.md) §4.
 
