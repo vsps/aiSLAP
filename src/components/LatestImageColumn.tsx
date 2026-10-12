@@ -1,4 +1,5 @@
 import { lazy, useEffect, useMemo, useRef, useState } from "react";
+import { PlayableVideo, playablePath } from "./PlayableVideo";
 import {
   imageIndexOf,
   taggedImageIndexOf,
@@ -114,7 +115,7 @@ export function LatestImageColumn() {
     let blobUrl: string | null = null;
     let off: HTMLVideoElement | null = null;
     try {
-      const resp = await fetch(fileSrc(image.path));
+      const resp = await fetch(fileSrc(playablePath(image.path)));
       if (!resp.ok) throw new Error(`fetch failed (${resp.status})`);
       const blob = await resp.blob();
       blobUrl = URL.createObjectURL(blob);
@@ -240,10 +241,10 @@ export function LatestImageColumn() {
           <div className="absolute inset-0 flex items-center justify-center">
             {image ? (
               image.isVideo ? (
-                <video
+                <PlayableVideo
                   ref={videoRef}
                   key={image.path}
-                  src={fileSrc(image.path)}
+                  path={image.path}
                   controls
                   className="max-w-full max-h-full"
                   onContextMenu={onCtx}
@@ -697,9 +698,9 @@ function VideoSlot({
   }, [isActive, playheadSec, clipStartSec, offset]);
 
   return (
-    <video
+    <PlayableVideo
       ref={ref}
-      src={path ? fileSrc(path) : undefined}
+      path={path ?? undefined}
       className={`absolute inset-0 m-auto max-w-full max-h-full ${
         isActive ? "opacity-100 z-10" : "opacity-0 z-0 pointer-events-none"
       }`}

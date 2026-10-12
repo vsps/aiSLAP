@@ -285,6 +285,12 @@ export const cmd = {
     height: number | null;
   }> => rawInvoke("video_info_probe", { videoPath, ffmpegPath }),
 
+  /** H.264 playback proxy for a video the webview can't decode (HEVC 10-bit /
+   *  4:4:4). Transcodes once into the user cache dir; null when ffmpeg is
+   *  missing or the transcode failed. */
+  video_proxy_ensure: (videoPath: string, ffmpegPath: string): Promise<string | null> =>
+    rawInvoke("video_proxy_ensure", { videoPath, ffmpegPath }),
+
   /** Build any missing thumbnails under `root` into the project's cache.
    *  `recursive` walks the whole project and prunes orphans — that's the
    *  "Rebuild thumbnails" case; otherwise it's one shot's folders. Idempotent

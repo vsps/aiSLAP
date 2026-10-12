@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PlayableVideo } from "./PlayableVideo";
 import { fileSrc } from "../lib/assets";
 import { basename } from "../lib/paths";
 import { guessContentType } from "../lib/media";
@@ -247,9 +248,9 @@ export function SamPromptModal({ sourcePath, mediaKind, points, boxes, onSave, o
         {/* Media + pick overlay */}
         <div className="flex-1 min-h-0 flex items-center justify-center relative overflow-hidden">
           {isVideo ? (
-            <video
-              ref={mediaRef}
-              src={src}
+            <PlayableVideo
+              ref={mediaRef as React.Ref<HTMLVideoElement>}
+              path={sourcePath}
               controls
               className="max-h-full max-w-full object-contain select-none"
               onLoadedMetadata={updateBounds}

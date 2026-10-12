@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PlayableVideo } from "./PlayableVideo";
 import type { GalleryImage, ImageMetadata } from "../lib/types";
 import { fileSrc } from "../lib/assets";
 import { IconBtn } from "./IconBtn";
@@ -131,9 +132,9 @@ export function ImageZoomModal({
     <FullscreenModal onClose={onClose} closeOnEscape={false} z={40} onClick={onClose}>
       <div className="flex-1 min-h-0 overflow-auto thin-scroll flex items-center justify-center relative">
         {image.isVideo ? (
-          <video
+          <PlayableVideo
             ref={videoRef}
-            src={src}
+            path={image.path}
             controls
             autoPlay={!subEditorOpen}
             className={fit === "fit" ? "max-h-full max-w-full" : ""}
