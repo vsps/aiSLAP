@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PlayableVideo } from "./PlayableVideo";
 import { fileSrc } from "../lib/assets";
 import { isVideoPath } from "../lib/media";
 import { cmd } from "../lib/tauri";
@@ -225,10 +226,10 @@ export function ComparePreview({
     >
       {pathA &&
         (isVideoA ? (
-          <video
+          <PlayableVideo
             ref={videoARef}
             key={pathA}
-            src={fileSrc(pathA)}
+            path={pathA}
             className="absolute inset-0 m-auto max-w-full max-h-full"
             muted
             loop
@@ -262,10 +263,10 @@ export function ComparePreview({
           }
         >
           {isVideoB ? (
-            <video
+            <PlayableVideo
               ref={videoBRef}
               key={pathB}
-              src={fileSrc(pathB)}
+              path={pathB}
               className="absolute inset-0 m-auto max-w-full max-h-full"
               style={{ transform: `scale(${scaleB})` }}
               muted

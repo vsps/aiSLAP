@@ -77,6 +77,7 @@ pub fn run() {
             commands::thumbs::thumbs_ensure,
             commands::thumbs::thumb_lookup,
             commands::media::video_info_probe,
+            commands::video_proxy::video_proxy_ensure,
             commands::media::timeline_export,
             commands::interchange::timeline_export_interchange,
             commands::media::video_trim,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { PlayableVideo } from "./PlayableVideo";
 import type { GalleryImage, ImageMetadata } from "../lib/types";
-import { fileSrc } from "../lib/assets";
 import { THUMB_SUFFIXES } from "../lib/media";
 import { cmd } from "../lib/tauri";
 import { useSessionStore } from "../stores/sessionStore";
@@ -299,9 +299,9 @@ export function TrimMode({ image, onSave, onCancel }: Props) {
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex-1 min-h-0 flex items-center justify-center relative overflow-hidden">
-        <video
+        <PlayableVideo
           ref={videoRef}
-          src={fileSrc(image.path)}
+          path={image.path}
           className="max-h-full max-w-full object-contain select-none"
           onLoadedMetadata={(e) => {
             const d = e.currentTarget.duration;

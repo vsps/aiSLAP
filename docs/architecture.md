@@ -356,6 +356,7 @@ Told apart so nobody "fixes" a decision, or lives with a bug thinking it is one:
 | A thumbnail cache entry is orphaned by a move made outside aiSLAP | **known gap** | The key contains the project-relative path. In-app moves/renames carry the entry across; anything else leaves it until the next full sweep prunes it. Costs disk, never correctness — a miss re-encodes. See [storage.md](storage.md). |
 | The thumbnail cache lives inside the project, on the share | **deliberate** | One folder per project, so a sweep serves the whole team and travels with an archive. The cost is that it writes into the shared drive, cannot work on a read-only one, and every read still crosses SMB. An `%APPDATA%` cache would read from local disk but be per-user. |
 | Videos have no poster when `ffmpegPath` is unset | **deliberate** | ffmpeg is the only way to get a frame out of a container. `thumbs_ensure` reports the count as `skippedNoFfmpeg` rather than failing, and those tiles mount a real `<video>` to read their own header. |
+| HEVC 10-bit / 4:4:4 videos don't play in the webview | **deliberate** | WebView2 can't decode them. `PlayableVideo` falls back, on a `<video>` error, to an H.264 proxy from `video_proxy_ensure` (`commands/video_proxy.rs`), cached in the user cache dir (`aiSLAP/video-proxy`), never beside the media. The original stays the master: export, trim and sidecars ignore the proxy. The proxy is 8-bit 4:2:0, so playback colour is approximate. Needs ffmpeg. |
 
 ---
 

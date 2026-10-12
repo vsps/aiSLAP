@@ -21,4 +21,5 @@ pub mod system;
 pub mod tags;
 pub mod thumbs;
 pub mod timeline;
+pub mod video_proxy;
 pub mod walk;
